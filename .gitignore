@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest-tmp/
+.ruff_cache/
+.mypy_cache/
+
+# 虚拟环境
+.venv/
+
+# 运行产物
+runs/
+*.sqlite
+*.sqlite3
+*.db
+
+# 密钥与本地配置
+.env
+.env.*
+
+# 构建产物
+dist/
+build/
+*.egg-info/
