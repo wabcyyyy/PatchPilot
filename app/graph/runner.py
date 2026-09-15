@@ -10,7 +10,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from app.config import get_settings
 from app.errors import TaskError
 from app.gitops.differ import working_tree_diff
 from app.graph.builder import build_graph
@@ -40,7 +39,6 @@ def run_task_graph(
     """
     from app.evals.driver import TaskResult  # 延迟导入,避免循环依赖
 
-    settings = get_settings()
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     task_id = task_id or f"{bug.id}-{stamp}-{uuid.uuid4().hex[:6]}"
     run_dir = (Path(run_dir) if run_dir else Path(runs_root) / task_id).resolve()

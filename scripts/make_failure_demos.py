@@ -17,9 +17,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app.evals.bugset import load_bug
-from app.graph.runner import run_task_graph
-from app.llm.fake import FakeLLM
+from app.evals.bugset import load_bug  # noqa: E402  (需先注入 sys.path)
+from app.graph.runner import run_task_graph  # noqa: E402
+from app.llm.fake import FakeLLM  # noqa: E402
 
 BUGS = ROOT / "bugs"
 

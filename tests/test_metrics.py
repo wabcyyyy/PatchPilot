@@ -33,7 +33,7 @@ def _write_report(run_dir: Path, **fields) -> Path:
 
 
 def test_collect_and_annotate_with_real_bug(tmp_path: Path) -> None:
-    run_dir = _write_report(
+    _write_report(
         tmp_path / "BUG-001-20260916-000000-aaaa",
         changed_files=["src/dateparse.py"],
         verdict="resolved",
