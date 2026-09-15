@@ -33,7 +33,9 @@ def test_whitelist_rejects_unknown_executable() -> None:
 
 def test_whitelist_rejects_shell_metachars() -> None:
     with pytest.raises(GateError):
-        check_cmd_allowed([PYTHON, "-c", "x']; import os; os.system('pwned')"], whitelist=("python",))
+        check_cmd_allowed(
+            [PYTHON, "-c", "x']; import os; os.system('pwned')"], whitelist=("python",)
+        )
     with pytest.raises(GateError):
         check_cmd_allowed([PYTHON, "-m", "pytest", "a;rm -rf /"], whitelist=("python",))
     with pytest.raises(GateError):
@@ -71,7 +73,7 @@ def test_run_tests_timeout_kills_process_tree(tmp_path: Path) -> None:
     parent_code = (
         "import subprocess, sys\n"
         "child = subprocess.Popen([sys.executable, '-c', "
-        f"'import time; open(r\"{pid_file.as_posix()}\", \"w\").write(str(__import__(\"os\").getpid())); time.sleep(120)'])\n"
+        f'\'import time; open(r"{pid_file.as_posix()}", "w").write(str(__import__("os").getpid())); time.sleep(120)\'])\n'
         "print(child.pid, flush=True)\n"
         "import time; time.sleep(120)\n"
     )
@@ -87,7 +89,9 @@ def test_run_tests_timeout_kills_process_tree(tmp_path: Path) -> None:
     if pid_file.exists():
         child_pid = int(pid_file.read_text(encoding="utf-8").strip())
         time.sleep(1.0)
-        probe = subprocess.run(["tasklist", "/FI", f"PID eq {child_pid}"], capture_output=True, check=False)
+        probe = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {child_pid}"], capture_output=True, check=False
+        )
         # 中文 Windows 上 tasklist 输出 GBK,手动容错解码;PID 是 ASCII,成员判断不受影响
         out = probe.stdout.decode("utf-8", errors="replace")
         assert str(child_pid) not in out, f"child {child_pid} survived the tree kill"
@@ -151,7 +155,10 @@ def test_signature_normalizes_content() -> None:
 
 def test_no_tests_collected_flag(demo_ws: Path, tmp_path: Path) -> None:
     report, _ = run_pytest(
-        PYTHON, demo_ws, test_ids=["tests/test_dateparse.py::test_does_not_exist"], report_path=tmp_path / "n.xml"
+        PYTHON,
+        demo_ws,
+        test_ids=["tests/test_dateparse.py::test_does_not_exist"],
+        report_path=tmp_path / "n.xml",
     )
     # pytest 对"用例不存在"返回 usage error(rc=4);无论哪种非零码,都不能当作通过
     assert report.exit_code == 4

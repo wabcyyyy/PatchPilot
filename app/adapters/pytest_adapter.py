@@ -89,7 +89,9 @@ def parse_junit_xml(path: Path) -> PytestReport:
     if not path.exists():
         report.errors = 1
         report.failed_cases.append(
-            FailedCase("(report)", "(report)", "error", "junit xml not generated", "error: no junit xml")
+            FailedCase(
+                "(report)", "(report)", "error", "junit xml not generated", "error: no junit xml"
+            )
         )
         return report
 
@@ -147,6 +149,10 @@ def run_pytest(
     report.no_tests_collected = run.exit_code == RC_NO_TESTS_COLLECTED and not report.timed_out
     log.info(
         "pytest: rc=%s passed=%s failed=%s errors=%s (timed_out=%s)",
-        report.exit_code, report.passed, report.failed, report.errors, report.timed_out,
+        report.exit_code,
+        report.passed,
+        report.failed,
+        report.errors,
+        report.timed_out,
     )
     return report, run

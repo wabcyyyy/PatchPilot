@@ -115,5 +115,7 @@ def run_tests(
         duration_ms=duration_ms,
         timed_out=timed_out,
     )
-    log.info("run_tests done rc=%s in %sms (timed_out=%s)", result.exit_code, duration_ms, timed_out)
+    log.info(
+        "run_tests done rc=%s in %sms (timed_out=%s)", result.exit_code, duration_ms, timed_out
+    )
     return result

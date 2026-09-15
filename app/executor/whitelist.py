@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from app.errors import GateError
 
-SHELL_METACHARS = (';', "|", "&", "`", ">", "<", "(", ")", "$", "\n", "\r", "\x00")
+SHELL_METACHARS = (";", "|", "&", "`", ">", "<", "(", ")", "$", "\n", "\r", "\x00")
 
 DEFAULT_WHITELIST: tuple[str, ...] = ("python", "python3", "pytest")
 
@@ -21,7 +21,9 @@ def _exe_name(token: str) -> str:
     return name[:-4].lower() if name.lower().endswith(".exe") else name.lower()
 
 
-def check_cmd_allowed(command: list[str], whitelist: tuple[str, ...] | list[str] = DEFAULT_WHITELIST) -> None:
+def check_cmd_allowed(
+    command: list[str], whitelist: tuple[str, ...] | list[str] = DEFAULT_WHITELIST
+) -> None:
     """校验命令;不合法抛 GateError,合法静默返回。"""
     if not command:
         raise GateError("empty command")
