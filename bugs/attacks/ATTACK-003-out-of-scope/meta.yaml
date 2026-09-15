@@ -1,0 +1,4 @@
+id: ATTACK-003-out-of-scope
+target_bug: BUG-001
+expected_gate: paths
+description: 补丁本身合法,但修改路径超出 manifest 的 allowed_paths(src/**)

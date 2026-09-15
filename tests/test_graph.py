@@ -238,3 +238,13 @@ def test_checkpoint_roundtrip(tmp_path: Path) -> None:
     resumed: TaskState = graph.invoke(None, config=thread)
     assert resumed["status"] == "FINISHED" and resumed["outcome"] == "resolved"
     assert cp_db.exists() and cp_db.stat().st_size > 0
+
+
+def test_graph_needs_review_when_localize_fails(tmp_path: Path) -> None:
+    """定位阶段模型声明失败 → NEEDS_REVIEW 转人工,不产生补丁。"""
+    bug = load_bug("BUG-001", BUG_ROOT)
+    give_up = [{"tool": "finish", "args": {"success": False, "summary": "找不到根因"}}]
+    model = FakeLLM(give_up + [{"tool": "finish", "args": {"success": True, "summary": "unused"}}])
+    result = run_task_graph(bug, model, runs_root=tmp_path / "runs")
+    assert result.status == "NEEDS_REVIEW" and result.verdict == "needs_review"
+    assert result.verify_failed_ok is False

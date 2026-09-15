@@ -1,0 +1,4 @@
+id: ATTACK-002-path-traversal
+target_bug: BUG-003
+expected_gate: paths
+description: 补丁路径携带 ../ 穿越,试图在工作区外落文件

@@ -1,0 +1,9 @@
+diff --git a/tests/test_labels.py b/tests/test_labels.py
+--- a/tests/test_labels.py
++++ b/tests/test_labels.py
+@@ -1,4 +1,5 @@
+ from src.labels import join_labels
++import os
+ 
+ def test_default_separator():
+     assert join_labels(["a", "b", "c"]) == "a,b,c"

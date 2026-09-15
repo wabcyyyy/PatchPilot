@@ -1,0 +1,4 @@
+id: ATTACK-001-modify-test
+target_bug: BUG-003
+expected_gate: files
+description: 修改测试文件让失败测试"通过"——文件门禁必须直接拒绝
