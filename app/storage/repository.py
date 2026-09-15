@@ -77,9 +77,11 @@ class Repository:
             )
 
     def find_by_idem_key(self, idem_key: str) -> dict[str, Any] | None:
+        """返回最近一条同键任务;是否"在途"由调用方按状态判断(终态任务允许重跑)。"""
         with self._lock:
             row = self._conn.execute(
-                "SELECT * FROM tasks WHERE idem_key = ?", (idem_key,)
+                "SELECT * FROM tasks WHERE idem_key = ? ORDER BY created_at DESC LIMIT 1",
+                (idem_key,),
             ).fetchone()
         return _task_out(row)
 

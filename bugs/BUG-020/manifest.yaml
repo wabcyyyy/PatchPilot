@@ -1,0 +1,13 @@
+id: BUG-020
+category: 跨文件定位
+difficulty: medium
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_cart.py::test_discount_applies_at_threshold
+regression_tests:
+  - tests/test_cart.py::test_no_discount_items
+  - tests/test_cart.py::test_mixed_items
+allowed_paths:
+  - src/pricing.py
+  - src/cart.py
+max_rounds: 5

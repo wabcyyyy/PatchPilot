@@ -1,0 +1,13 @@
+id: BUG-010
+category: 边界条件
+difficulty: simple
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_units.py::test_above_range_clamped
+  - tests/test_units.py::test_negative_clamped
+regression_tests:
+  - tests/test_units.py::test_normal_value
+  - tests/test_units.py::test_boundary_one
+allowed_paths:
+  - src/**
+max_rounds: 5

@@ -1,0 +1,8 @@
+--- a/src/seq.py
++++ b/src/seq.py
+@@ -2,4 +2,4 @@
+     """取中位元素;偶数长度取靠前的一个。"""
+     if not items:
+         raise ValueError("empty sequence")
+-    return items[len(items) // 2]
++    return items[(len(items) - 1) // 2]

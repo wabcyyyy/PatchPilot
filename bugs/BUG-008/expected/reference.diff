@@ -1,0 +1,9 @@
+--- a/src/text_stats.py
++++ b/src/text_stats.py
+@@ -3,4 +3,6 @@
+ 
+ def count_vowels(text):
+     """统计元音字母个数;None 视为 0。"""
++    if text is None:
++        return 0
+     return sum(1 for ch in text if ch in VOWELS)

@@ -1,0 +1,13 @@
+id: BUG-016
+category: 数据访问
+difficulty: medium
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_tabular.py::test_missing_column_is_skipped
+regression_tests:
+  - tests/test_tabular.py::test_found_returns_index
+  - tests/test_tabular.py::test_not_found_returns_minus_one
+  - tests/test_tabular.py::test_empty_rows
+allowed_paths:
+  - src/**
+max_rounds: 5

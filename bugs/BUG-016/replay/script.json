@@ -1,0 +1,39 @@
+[
+  {
+    "tool": "search_code",
+    "args": {
+      "keyword": "index_of"
+    }
+  },
+  {
+    "tool": "read_file",
+    "args": {
+      "path": "src/tabular.py"
+    }
+  },
+  {
+    "tool": "apply_patch",
+    "args": {
+      "diff_text": "--- a/src/tabular.py\n+++ b/src/tabular.py\n@@ -1,6 +1,8 @@\n def index_of(rows, column, value):\n     \"\"\"返回第一个 rows[i][column] == value 的下标;找不到返回 -1;缺列的行跳过。\"\"\"\n     for i, row in enumerate(rows):\n+        if column not in row:\n+            continue\n         if row[column] == value:\n             return i\n     return -1\n"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "failed"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "regression"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "修复 src/tabular.py 并通过全部测试"
+    }
+  }
+]

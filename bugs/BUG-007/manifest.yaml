@@ -1,0 +1,13 @@
+id: BUG-007
+category: 边界条件
+difficulty: simple
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_seq.py::test_even_length_takes_earlier
+regression_tests:
+  - tests/test_seq.py::test_odd_length
+  - tests/test_seq.py::test_single_element
+  - tests/test_seq.py::test_empty_raises
+allowed_paths:
+  - src/**
+max_rounds: 5

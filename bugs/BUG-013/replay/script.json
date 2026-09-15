@@ -1,0 +1,39 @@
+[
+  {
+    "tool": "search_code",
+    "args": {
+      "keyword": "get_or_set"
+    }
+  },
+  {
+    "tool": "read_file",
+    "args": {
+      "path": "src/caching.py"
+    }
+  },
+  {
+    "tool": "apply_patch",
+    "args": {
+      "diff_text": "--- a/src/caching.py\n+++ b/src/caching.py\n@@ -1,5 +1,5 @@\n def get_or_set(cache, key, fn):\n     \"\"\"key 不存在时用 fn() 计算并缓存;返回缓存值。\"\"\"\n     if key not in cache:\n-        cache[key] = fn\n+        cache[key] = fn()\n     return cache[key]\n"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "failed"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "regression"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "修复 src/caching.py 并通过全部测试"
+    }
+  }
+]

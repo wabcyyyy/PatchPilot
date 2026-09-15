@@ -1,0 +1,12 @@
+id: BUG-019
+category: 异常处理
+difficulty: simple
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_seq_first.py::test_empty_returns_default
+  - tests/test_seq_first.py::test_default_is_none
+regression_tests:
+  - tests/test_seq_first.py::test_returns_first
+allowed_paths:
+  - src/**
+max_rounds: 5

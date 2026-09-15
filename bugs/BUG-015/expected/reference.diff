@@ -1,0 +1,10 @@
+--- a/src/fileio.py
++++ b/src/fileio.py
+@@ -3,5 +3,7 @@
+ 
+ def read_head(path, n):
+     """返回文件前 n 行(不含换行符);文件不存在返回 []。"""
++    if not Path(path).exists():
++        return []
+     lines = Path(path).read_text(encoding="utf-8").splitlines()
+     return lines[:n]

@@ -1,0 +1,8 @@
+--- a/src/math_ops.py
++++ b/src/math_ops.py
+@@ -1,3 +1,5 @@
+ def safe_divide(a, b):
+     """安全除法:除数为 0 返回 None,其余返回 a/b。"""
++    if b == 0:
++        return None
+     return a / b

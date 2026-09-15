@@ -1,0 +1,13 @@
+id: BUG-006
+category: 异常处理
+difficulty: simple
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_math_ops.py::test_zero_divisor_returns_none
+regression_tests:
+  - tests/test_math_ops.py::test_normal_division
+  - tests/test_math_ops.py::test_negative_divisor
+  - tests/test_math_ops.py::test_float_result
+allowed_paths:
+  - src/**
+max_rounds: 5

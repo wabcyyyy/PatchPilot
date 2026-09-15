@@ -1,0 +1,12 @@
+id: BUG-017
+category: 类型错误
+difficulty: simple
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_stats.py::test_fractional_average
+regression_tests:
+  - tests/test_stats.py::test_integer_average
+  - tests/test_stats.py::test_empty_raises
+allowed_paths:
+  - src/**
+max_rounds: 5

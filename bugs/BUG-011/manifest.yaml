@@ -1,0 +1,13 @@
+id: BUG-011
+category: 异常处理
+difficulty: simple
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_strconv.py::test_invalid_returns_default
+  - tests/test_strconv.py::test_custom_default
+regression_tests:
+  - tests/test_strconv.py::test_valid_number
+  - tests/test_strconv.py::test_whitespace_number
+allowed_paths:
+  - src/**
+max_rounds: 5

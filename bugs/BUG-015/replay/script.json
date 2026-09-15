@@ -1,0 +1,39 @@
+[
+  {
+    "tool": "search_code",
+    "args": {
+      "keyword": "read_head"
+    }
+  },
+  {
+    "tool": "read_file",
+    "args": {
+      "path": "src/fileio.py"
+    }
+  },
+  {
+    "tool": "apply_patch",
+    "args": {
+      "diff_text": "--- a/src/fileio.py\n+++ b/src/fileio.py\n@@ -3,5 +3,7 @@\n \n def read_head(path, n):\n     \"\"\"返回文件前 n 行(不含换行符);文件不存在返回 []。\"\"\"\n+    if not Path(path).exists():\n+        return []\n     lines = Path(path).read_text(encoding=\"utf-8\").splitlines()\n     return lines[:n]\n"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "failed"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "regression"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "修复 src/fileio.py 并通过全部测试"
+    }
+  }
+]

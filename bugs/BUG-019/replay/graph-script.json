@@ -1,0 +1,46 @@
+[
+  {
+    "tool": "search_code",
+    "args": {
+      "keyword": "first_or"
+    }
+  },
+  {
+    "tool": "read_file",
+    "args": {
+      "path": "src/seq.py"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "根因定位:src/seq.py"
+    }
+  },
+  {
+    "tool": "apply_patch",
+    "args": {
+      "diff_text": "--- a/src/seq.py\n+++ b/src/seq.py\n@@ -1,3 +1,5 @@\n def first_or(items, default=None):\n     \"\"\"返回第一个元素;空序列返回 default。\"\"\"\n+    if not items:\n+        return default\n     return items[0]\n"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "failed"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "regression"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "修复 src/seq.py 并通过全部测试"
+    }
+  }
+]

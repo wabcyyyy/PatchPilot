@@ -1,0 +1,46 @@
+[
+  {
+    "tool": "search_code",
+    "args": {
+      "keyword": "def middle"
+    }
+  },
+  {
+    "tool": "read_file",
+    "args": {
+      "path": "src/seq.py"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "根因定位:src/seq.py"
+    }
+  },
+  {
+    "tool": "apply_patch",
+    "args": {
+      "diff_text": "--- a/src/seq.py\n+++ b/src/seq.py\n@@ -2,4 +2,4 @@\n     \"\"\"取中位元素;偶数长度取靠前的一个。\"\"\"\n     if not items:\n         raise ValueError(\"empty sequence\")\n-    return items[len(items) // 2]\n+    return items[(len(items) - 1) // 2]\n"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "failed"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "regression"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "修复 src/seq.py 并通过全部测试"
+    }
+  }
+]

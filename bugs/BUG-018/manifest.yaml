@@ -1,0 +1,13 @@
+id: BUG-018
+category: 边界条件
+difficulty: simple
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_calendar_ops.py::test_century_non_leap
+regression_tests:
+  - tests/test_calendar_ops.py::test_regular_leap_year
+  - tests/test_calendar_ops.py::test_common_year
+  - tests/test_calendar_ops.py::test_400_year_is_leap
+allowed_paths:
+  - src/**
+max_rounds: 5

@@ -1,0 +1,12 @@
+id: BUG-009
+category: 数据访问
+difficulty: simple
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_dictops.py::test_inputs_not_mutated
+regression_tests:
+  - tests/test_dictops.py::test_extra_overrides_base
+  - tests/test_dictops.py::test_empty_extra
+allowed_paths:
+  - src/**
+max_rounds: 5

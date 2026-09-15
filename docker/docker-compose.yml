@@ -1,0 +1,26 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/api.Dockerfile
+    ports:
+      - "8001:8000"
+    environment:
+      PATCHPILOT_REDIS_URL: redis://redis:6379/0
+      PATCHPILOT_DB_PATH: /data/patchpilot.sqlite3
+      PATCHPILOT_RUNS_ROOT: /data/runs
+    volumes:
+      - api-data:/data
+      - ../bugs:/app/bugs:ro
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+volumes:
+  api-data:

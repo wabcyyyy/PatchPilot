@@ -138,9 +138,14 @@ def run_pytest(
     timeout_seconds: int | None = None,
     extra_args: list[str] | None = None,
 ) -> tuple[PytestReport, TestRunResult]:
-    """执行 pytest 并解析报告;报告缺失/超时都反映在返回值里。"""
+    """执行 pytest 并解析报告;报告缺失/超时都反映在返回值里。
+
+    basetemp 显式指向报告目录:目标仓库测试里的 tmp_path fixture 不再依赖
+    系统临时目录(权限/容量不可控),也不污染被验证的工作区。
+    """
     junit = report_path or (Path(cwd) / ".patchpilot_junit.xml")
     cmd = build_pytest_cmd(python_exe, test_ids, junit, extra_args)
+    cmd.append(f"--basetemp={(junit.parent / 'basetemp').as_posix()}")
     run = run_tests(cmd, cwd, timeout_seconds or get_settings().test_timeout_seconds)
     report = parse_junit_xml(junit)
     report.exit_code = run.exit_code

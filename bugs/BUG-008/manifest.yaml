@@ -1,0 +1,13 @@
+id: BUG-008
+category: 类型错误
+difficulty: simple
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_text_stats.py::test_none_counts_zero
+regression_tests:
+  - tests/test_text_stats.py::test_counts_vowels
+  - tests/test_text_stats.py::test_no_vowels
+  - tests/test_text_stats.py::test_empty_string
+allowed_paths:
+  - src/**
+max_rounds: 5

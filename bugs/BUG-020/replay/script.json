@@ -1,0 +1,39 @@
+[
+  {
+    "tool": "search_code",
+    "args": {
+      "keyword": "unit_price"
+    }
+  },
+  {
+    "tool": "read_file",
+    "args": {
+      "path": "src/pricing.py"
+    }
+  },
+  {
+    "tool": "apply_patch",
+    "args": {
+      "diff_text": "--- a/src/pricing.py\n+++ b/src/pricing.py\n@@ -6,8 +6,8 @@\n \n \n def unit_price(name):\n-    \"\"\"单价:原价超过 BULK_THRESHOLD 打 BULK_DISCOUNT 折。\"\"\"\n+    \"\"\"单价:原价达到 BULK_THRESHOLD 打 BULK_DISCOUNT 折。\"\"\"\n     price = PRICE_LIST[name]\n-    if price > BULK_THRESHOLD:\n+    if price >= BULK_THRESHOLD:\n         return price * BULK_DISCOUNT\n     return price\n"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "failed"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "regression"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "修复 src/pricing.py 并通过全部测试"
+    }
+  }
+]

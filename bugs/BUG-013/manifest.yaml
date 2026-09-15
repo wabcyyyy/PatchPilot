@@ -1,0 +1,12 @@
+id: BUG-013
+category: 数据访问
+difficulty: simple
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_caching.py::test_computes_and_caches_value
+  - tests/test_caching.py::test_fn_called_once
+regression_tests:
+  - tests/test_caching.py::test_existing_value_returned
+allowed_paths:
+  - src/**
+max_rounds: 5

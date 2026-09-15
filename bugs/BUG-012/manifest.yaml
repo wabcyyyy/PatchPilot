@@ -1,0 +1,13 @@
+id: BUG-012
+category: 类型错误
+difficulty: simple
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_collections_ops.py::test_list_and_tuple
+  - tests/test_collections_ops.py::test_strings_sequence
+  - tests/test_collections_ops.py::test_empty_inputs
+regression_tests:
+  - tests/test_collections_ops.py::test_two_lists
+allowed_paths:
+  - src/**
+max_rounds: 5

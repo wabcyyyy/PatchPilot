@@ -1,0 +1,46 @@
+[
+  {
+    "tool": "search_code",
+    "args": {
+      "keyword": "def average"
+    }
+  },
+  {
+    "tool": "read_file",
+    "args": {
+      "path": "src/stats.py"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "根因定位:src/stats.py"
+    }
+  },
+  {
+    "tool": "apply_patch",
+    "args": {
+      "diff_text": "--- a/src/stats.py\n+++ b/src/stats.py\n@@ -2,4 +2,4 @@\n     \"\"\"算术平均;空序列抛 ValueError。\"\"\"\n     if not numbers:\n         raise ValueError(\"empty sequence\")\n-    return sum(numbers) // len(numbers)\n+    return sum(numbers) / len(numbers)\n"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "failed"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "regression"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "修复 src/stats.py 并通过全部测试"
+    }
+  }
+]

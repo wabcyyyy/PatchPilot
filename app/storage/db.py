@@ -8,7 +8,7 @@ from pathlib import Path
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
-  idem_key TEXT UNIQUE,
+  idem_key TEXT,
   bug_id TEXT NOT NULL,
   repo_path TEXT,
   issue_text TEXT,
@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   finished_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_idem ON tasks(idem_key);
 
 CREATE TABLE IF NOT EXISTS trajectory_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

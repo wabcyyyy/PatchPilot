@@ -1,0 +1,10 @@
+--- a/src/strconv.py
++++ b/src/strconv.py
+@@ -1,3 +1,6 @@
+ def parse_int(text, default=None):
+     """把字符串解析为 int;失败返回 default。"""
+-    return int(text)
++    try:
++        return int(text)
++    except (TypeError, ValueError):
++        return default

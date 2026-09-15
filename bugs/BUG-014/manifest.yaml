@@ -1,0 +1,13 @@
+id: BUG-014
+category: 边界条件
+difficulty: simple
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_slicing.py::test_even_split
+  - tests/test_slicing.py::test_remainder_chunk
+regression_tests:
+  - tests/test_slicing.py::test_invalid_n_raises
+  - tests/test_slicing.py::test_empty_input
+allowed_paths:
+  - src/**
+max_rounds: 5

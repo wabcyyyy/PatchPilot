@@ -1,0 +1,39 @@
+[
+  {
+    "tool": "search_code",
+    "args": {
+      "keyword": "def merge"
+    }
+  },
+  {
+    "tool": "read_file",
+    "args": {
+      "path": "src/dictops.py"
+    }
+  },
+  {
+    "tool": "apply_patch",
+    "args": {
+      "diff_text": "--- a/src/dictops.py\n+++ b/src/dictops.py\n@@ -1,4 +1,5 @@\n def merge(base, extra):\n     \"\"\"合并字典:extra 覆盖 base,返回新字典,不修改入参。\"\"\"\n-    base.update(extra)\n-    return base\n+    merged = dict(base)\n+    merged.update(extra)\n+    return merged\n"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "failed"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "regression"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "修复 src/dictops.py 并通过全部测试"
+    }
+  }
+]

@@ -1,0 +1,46 @@
+[
+  {
+    "tool": "search_code",
+    "args": {
+      "keyword": "safe_divide"
+    }
+  },
+  {
+    "tool": "read_file",
+    "args": {
+      "path": "src/math_ops.py"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "根因定位:src/math_ops.py"
+    }
+  },
+  {
+    "tool": "apply_patch",
+    "args": {
+      "diff_text": "--- a/src/math_ops.py\n+++ b/src/math_ops.py\n@@ -1,3 +1,5 @@\n def safe_divide(a, b):\n     \"\"\"安全除法:除数为 0 返回 None,其余返回 a/b。\"\"\"\n+    if b == 0:\n+        return None\n     return a / b\n"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "failed"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "regression"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "修复 src/math_ops.py 并通过全部测试"
+    }
+  }
+]

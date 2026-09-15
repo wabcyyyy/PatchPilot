@@ -1,0 +1,13 @@
+--- a/src/pricing.py
++++ b/src/pricing.py
+@@ -6,8 +6,8 @@
+ 
+ 
+ def unit_price(name):
+-    """单价:原价超过 BULK_THRESHOLD 打 BULK_DISCOUNT 折。"""
++    """单价:原价达到 BULK_THRESHOLD 打 BULK_DISCOUNT 折。"""
+     price = PRICE_LIST[name]
+-    if price > BULK_THRESHOLD:
++    if price >= BULK_THRESHOLD:
+         return price * BULK_DISCOUNT
+     return price

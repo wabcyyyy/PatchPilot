@@ -1,0 +1,12 @@
+id: BUG-015
+category: 异常处理
+difficulty: simple
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_fileio.py::test_missing_file_returns_empty
+regression_tests:
+  - tests/test_fileio.py::test_reads_first_lines
+  - tests/test_fileio.py::test_n_larger_than_file
+allowed_paths:
+  - src/**
+max_rounds: 5
