@@ -31,14 +31,19 @@ def run_task_graph(
     max_rounds: int | None = None,
     max_turns: int = 20,
     use_checkpoint: bool = True,
+    task_id: str | None = None,
+    run_dir: Path | None = None,
 ) -> Any:
-    """执行一个任务(状态机引擎);返回与 plain 引擎一致的 TaskResult。"""
+    """执行一个任务(状态机引擎);返回与 plain 引擎一致的 TaskResult。
+
+    task_id/run_dir 可由调用方(API 服务)指定,保证产物目录与服务记录一致。
+    """
     from app.evals.driver import TaskResult  # 延迟导入,避免循环依赖
 
     settings = get_settings()
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    task_id = f"{bug.id}-{stamp}-{uuid.uuid4().hex[:6]}"
-    run_dir = (Path(runs_root) / task_id).resolve()
+    task_id = task_id or f"{bug.id}-{stamp}-{uuid.uuid4().hex[:6]}"
+    run_dir = (Path(run_dir) if run_dir else Path(runs_root) / task_id).resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
     report_dir = run_dir / "reports"
 

@@ -70,13 +70,18 @@ def run_task(
     runs_root: Path,
     max_turns: int = 20,
     engine: str = "plain",
+    task_id: str | None = None,
+    run_dir: Path | None = None,
 ) -> TaskResult:
-    """执行一个任务:基线 → 工具循环 → 验证 → 判定,全程落盘。"""
+    """执行一个任务:基线 → 工具循环 → 验证 → 判定,全程落盘。
+
+    task_id/run_dir 可由调用方(API 服务)指定,保证产物目录与服务记录一致。
+    """
     settings = get_settings()
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    task_id = f"{bug.id}-{stamp}-{uuid.uuid4().hex[:6]}"
+    task_id = task_id or f"{bug.id}-{stamp}-{uuid.uuid4().hex[:6]}"
     # 绝对路径:junit 等报告若以相对路径传入,会被 pytest 相对 cwd 写进工作区,污染 diff
-    run_dir = (Path(runs_root) / task_id).resolve()
+    run_dir = (Path(run_dir) if run_dir else Path(runs_root) / task_id).resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
     report_dir = run_dir / "reports"
 
