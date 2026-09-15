@@ -15,7 +15,7 @@ from app.errors import BudgetError
 from app.gitops.differ import working_tree_diff
 from app.llm.base import Model, messages_tokens
 from app.prompts import SYSTEM_PROMPT
-from app.tools.base import ToolContext
+from app.tools.base import ToolContext, ToolResult
 from app.tools.registry import FINISH_TOOL, execute, tool_schemas
 
 log = logging.getLogger(__name__)
@@ -47,8 +47,12 @@ def run_plain_loop(
     round_no: int = 0,
     state_label: str = "LOOP",
     extra_system: str = "",
+    allowed_tools: list[str] | None = None,
 ) -> LoopOutcome:
-    """工具循环:模型输出 → 解析工具调用 → 执行 → 结果回填 → 直到 finish。"""
+    """工具循环:模型输出 → 解析工具调用 → 执行 → 结果回填 → 直到 finish。
+
+    allowed_tools 限定本阶段可用的工具(如定位阶段禁用 apply_patch);None 不限制。
+    """
     settings = get_settings()
     token_budget = settings.task_timeout_seconds * 0  # 占位:token 预算由调用方配置
     system = SYSTEM_PROMPT + (f"\n\n{extra_system}" if extra_system else "")
@@ -101,7 +105,21 @@ def run_plain_loop(
                 log.info("loop finished: success=%s turns=%s", success, turn_no)
                 return outcome
 
-            result = execute(ctx, call.name, call.arguments, round_no=round_no, state=state_label)
+            if allowed_tools is not None and call.name not in allowed_tools:
+                result = ToolResult.fail(
+                    f"tool {call.name!r} is not allowed in phase {state_label}"
+                )
+                ctx.tracker.record(
+                    tool=call.name,
+                    round_no=round_no,
+                    state=state_label,
+                    input_payload={"blocked": True},
+                    error=result.error,
+                )
+            else:
+                result = execute(
+                    ctx, call.name, call.arguments, round_no=round_no, state=state_label
+                )
             payload = result.output if result.ok else {"error": result.error}
             content = json.dumps(payload, ensure_ascii=False, default=str)
             if len(content) > 8000:

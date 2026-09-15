@@ -29,16 +29,15 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = get_settings()
     bug = load_bug(args.bug)
-    script = load_replay_script(bug) if args.model == "fake" else None
+    script = load_replay_script(bug, kind=args.engine) if args.model == "fake" else None
     model = build_model(args.model, settings, script=script)
 
-    result = run_task(
-        bug,
-        model,
-        runs_root=Path(args.out),
-        max_turns=args.max_turns,
-        engine=args.engine,
-    )
+    if args.engine == "graph":
+        from app.graph.runner import run_task_graph
+
+        result = run_task_graph(bug, model, runs_root=Path(args.out))
+    else:
+        result = run_task(bug, model, runs_root=Path(args.out), max_turns=args.max_turns)
     print(json.dumps(result.as_dict(), ensure_ascii=False, indent=2))
     print(f"\n[{bug.id}] status={result.status} verdict={result.verdict} -> {result.run_dir}")
     return 0 if result.verdict == "resolved" else 1

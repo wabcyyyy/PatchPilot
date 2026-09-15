@@ -98,9 +98,17 @@ def list_bug_ids(root: Path | str = BUGS_ROOT) -> list[str]:
     return sorted(p.name for p in base.iterdir() if p.is_dir() and p.name.startswith("BUG-"))
 
 
-def load_replay_script(bug: BugTask) -> list[dict[str, Any]]:
+def load_replay_script(bug: BugTask, kind: str = "plain") -> list[dict[str, Any]]:
+    """加载回放脚本:plain=script.json;graph=graph-script.json(分阶段)。"""
     if bug.replay_script_path is None:
         raise TaskError(f"no replay script for {bug.id}")
+    if kind == "graph":
+        graph_script = bug.root / "replay" / "graph-script.json"
+        if graph_script.exists():
+            data = json.loads(graph_script.read_text(encoding="utf-8"))
+            steps = data if isinstance(data, list) else data.get("steps", [])
+            if steps:
+                return steps
     data = json.loads(bug.replay_script_path.read_text(encoding="utf-8"))
     steps = data if isinstance(data, list) else data.get("steps", [])
     if not steps:

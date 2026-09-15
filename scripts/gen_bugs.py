@@ -373,6 +373,7 @@ def unified_diff(module_path: str, buggy: str, fixed: str) -> str:
 
 
 def replay_script(spec: dict, diff_text: str) -> list[dict]:
+    """plain 引擎回放脚本:单个循环走完全部步骤。"""
     return [
         {"tool": "search_code", "args": {"keyword": spec["search_hint"]}},
         {"tool": "read_file", "args": {"path": spec["module"]}},
@@ -384,6 +385,29 @@ def replay_script(spec: dict, diff_text: str) -> list[dict]:
             "args": {"success": True, "summary": f"修复 {spec['module']} 并通过全部测试"},
         },
     ]
+
+
+def graph_replay_script(spec: dict, diff_text: str) -> list[dict]:
+    """graph 引擎回放脚本:定位(只读)与补丁(写工具)两段拼接。
+
+    两阶段共用一个 FakeLLM 时按顺序消费;定位段不能出现写工具,
+    否则会在 LOCALIZE 阶段被阶段限制拦截、脚本错位。
+    """
+    localize = [
+        {"tool": "search_code", "args": {"keyword": spec["search_hint"]}},
+        {"tool": "read_file", "args": {"path": spec["module"]}},
+        {"tool": "finish", "args": {"success": True, "summary": f"根因定位:{spec['module']}"}},
+    ]
+    propose = [
+        {"tool": "apply_patch", "args": {"diff_text": diff_text}},
+        {"tool": "run_tests", "args": {"test_set": "failed"}},
+        {"tool": "run_tests", "args": {"test_set": "regression"}},
+        {
+            "tool": "finish",
+            "args": {"success": True, "summary": f"修复 {spec['module']} 并通过全部测试"},
+        },
+    ]
+    return localize + propose
 
 
 def gen_bug(spec: dict) -> Path:
@@ -424,6 +448,11 @@ def gen_bug(spec: dict) -> Path:
     script = replay_script(spec, diff_text)
     (bug_dir / "replay" / "script.json").write_text(
         json.dumps(script, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n"
+    )
+    (bug_dir / "replay" / "graph-script.json").write_text(
+        json.dumps(graph_replay_script(spec, diff_text), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+        newline="\n",
     )
     print(f"[gen] {spec['id']} ({spec['category']}/{spec['difficulty']})")
     return bug_dir

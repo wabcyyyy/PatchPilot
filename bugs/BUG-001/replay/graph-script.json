@@ -1,0 +1,46 @@
+[
+  {
+    "tool": "search_code",
+    "args": {
+      "keyword": "parse_date"
+    }
+  },
+  {
+    "tool": "read_file",
+    "args": {
+      "path": "src/dateparse.py"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "根因定位:src/dateparse.py"
+    }
+  },
+  {
+    "tool": "apply_patch",
+    "args": {
+      "diff_text": "--- a/src/dateparse.py\n+++ b/src/dateparse.py\n@@ -9,6 +9,8 @@\n     \"\"\"解析日期字符串;空输入返回 None,非法格式抛 ValueError。\"\"\"\n     if value is None:\n         return None\n+    if not value.strip():\n+        return None\n     for fmt in DATE_FORMATS:\n         try:\n             return datetime.strptime(value, fmt).date()\n"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "failed"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "regression"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "修复 src/dateparse.py 并通过全部测试"
+    }
+  }
+]
