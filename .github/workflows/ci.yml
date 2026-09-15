@@ -22,3 +22,17 @@ jobs:
           ruff format --check .
       - name: Test
         run: pytest -q
+      - name: Smoke eval (replay, BUG-001..003)
+        run: |
+          python scripts/gen_bugs.py BUG-001 BUG-002 BUG-003
+          for b in BUG-001 BUG-002 BUG-003; do
+            python -m app.evals.run_single --bug "$b" --model fake --engine graph --out runs/ci || exit 1
+          done
+      - name: Upload eval artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-runs
+          path: |
+            runs/ci/**/report.json
+            runs/ci/**/trajectory.jsonl
+          if-no-files-found: error

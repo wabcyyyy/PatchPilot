@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -12,8 +11,6 @@ from typing import Any
 from app.graph.gates import parse_diff_files
 
 log = logging.getLogger(__name__)
-
-_RUN_DIR_RE = re.compile(r"^(?P<bug>BUG-\d+)-(?P<stamp>\d{8}-\d{6})-(?P<hash>[0-9a-f]+)$")
 
 
 @dataclass
@@ -36,6 +33,7 @@ class RunRow:
     verify_failed_ok: bool
     verify_regression_ok: bool
     error: str | None = None
+    finished_stamp: float = 0.0  # report.json 修改时间:目录名格式各异,以文件时间为准
     localized: bool = False
     patch_applied: bool = False
     regression_introduced: bool = False
@@ -70,6 +68,7 @@ def load_run(run_dir: Path) -> RunRow | None:
         verify_failed_ok=data.get("verify_failed_ok", False),
         verify_regression_ok=data.get("verify_regression_ok", False),
         error=data.get("error"),
+        finished_stamp=report_path.stat().st_mtime,
     )
 
 
@@ -89,10 +88,8 @@ def collect_runs(runs_root: Path | str) -> list[RunRow]:
 def latest_per_bug(rows: list[RunRow]) -> list[RunRow]:
     """同一 bug 多次运行时取最新一次(按目录名时间戳)。"""
 
-    def sort_key(row: RunRow) -> tuple[str, str]:
-        match = _RUN_DIR_RE.match(row.run_dir.name)
-        stamp = match.group("stamp") if match else "00000000-000000"
-        return row.bug_id, stamp
+    def sort_key(row: RunRow) -> tuple[str, float]:
+        return row.bug_id, row.finished_stamp
 
     latest: dict[str, RunRow] = {}
     for row in sorted(rows, key=sort_key):

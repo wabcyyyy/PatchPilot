@@ -66,6 +66,7 @@ def test_metrics_on_mixed_rows(tmp_path: Path) -> None:
     )
     _write_report(
         tmp_path / "BUG-002-20260916-000003-cccc",
+        bug_id="BUG-002",
         changed_files=["src/unrelated.py"],
         verdict="failed",
         status="VERIFY_FAILED",
