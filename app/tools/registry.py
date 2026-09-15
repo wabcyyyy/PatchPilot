@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from app.tools.base import ToolContext, ToolResult
 from app.tools.execution import run_tests

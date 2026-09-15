@@ -1,0 +1,13 @@
+id: BUG-004
+category: 数据访问
+difficulty: simple
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_config.py::test_fallback_to_default
+  - tests/test_config.py::test_unknown_key_returns_none
+  - tests/test_config.py::test_partial_store
+regression_tests:
+  - tests/test_config.py::test_store_value_wins
+allowed_paths:
+  - src/**
+max_rounds: 5

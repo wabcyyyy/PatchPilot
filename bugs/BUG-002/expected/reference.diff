@@ -1,0 +1,9 @@
+--- a/src/pagination.py
++++ b/src/pagination.py
+@@ -6,5 +6,5 @@
+     if page < 1 or size < 1:
+         raise ValueError("page and size must be >= 1")
+     start = (page - 1) * size
+-    end = start + size - 1
++    end = start + size
+     return list(items[start:end])

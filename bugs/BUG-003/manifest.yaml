@@ -1,0 +1,13 @@
+id: BUG-003
+category: 类型错误
+difficulty: simple
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_labels.py::test_default_separator
+regression_tests:
+  - tests/test_labels.py::test_custom_separator
+  - tests/test_labels.py::test_empty_list
+  - tests/test_labels.py::test_single_label
+allowed_paths:
+  - src/**
+max_rounds: 5

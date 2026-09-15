@@ -1,0 +1,14 @@
+--- a/src/labels.py
++++ b/src/labels.py
+@@ -3,9 +3,10 @@
+ 
+ def join_labels(labels, sep=None):
+     """把标签列表连成字符串;sep 缺省为逗号。"""
++    separator = "," if sep is None else sep
+     result = ""
+     for index, label in enumerate(labels):
+         if index > 0:
+-            result += sep
++            result += separator
+         result += label
+     return result

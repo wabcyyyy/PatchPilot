@@ -1,0 +1,39 @@
+[
+  {
+    "tool": "search_code",
+    "args": {
+      "keyword": "join_labels"
+    }
+  },
+  {
+    "tool": "read_file",
+    "args": {
+      "path": "src/labels.py"
+    }
+  },
+  {
+    "tool": "apply_patch",
+    "args": {
+      "diff_text": "--- a/src/labels.py\n+++ b/src/labels.py\n@@ -3,9 +3,10 @@\n \n def join_labels(labels, sep=None):\n     \"\"\"把标签列表连成字符串;sep 缺省为逗号。\"\"\"\n+    separator = \",\" if sep is None else sep\n     result = \"\"\n     for index, label in enumerate(labels):\n         if index > 0:\n-            result += sep\n+            result += separator\n         result += label\n     return result\n"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "failed"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "regression"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "修复 src/labels.py 并通过全部测试"
+    }
+  }
+]

@@ -9,9 +9,8 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, field
-from fnmatch import fnmatch
 
-from app.errors import BudgetError, GateError
+from app.errors import BudgetError
 from app.tools.paths import is_test_file, normalize_rel, path_allowed
 
 _DIFF_GIT_RE = re.compile(r"^diff --git a/(.+) b/(.+)$", re.MULTILINE)

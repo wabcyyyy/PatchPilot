@@ -1,0 +1,15 @@
+id: BUG-001
+category: 异常处理
+difficulty: simple
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_dateparse.py::test_empty_string_returns_none
+  - tests/test_dateparse.py::test_whitespace_returns_none
+regression_tests:
+  - tests/test_dateparse.py::test_iso_format
+  - tests/test_dateparse.py::test_slash_format
+  - tests/test_dateparse.py::test_invalid_format_raises
+  - tests/test_dateparse.py::test_none_returns_none
+allowed_paths:
+  - src/**
+max_rounds: 5

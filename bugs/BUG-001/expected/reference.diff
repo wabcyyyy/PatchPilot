@@ -1,0 +1,11 @@
+--- a/src/dateparse.py
++++ b/src/dateparse.py
+@@ -9,6 +9,8 @@
+     """解析日期字符串;空输入返回 None,非法格式抛 ValueError。"""
+     if value is None:
+         return None
++    if not value.strip():
++        return None
+     for fmt in DATE_FORMATS:
+         try:
+             return datetime.strptime(value, fmt).date()

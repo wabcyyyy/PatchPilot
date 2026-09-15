@@ -62,7 +62,7 @@ class FakeLLM:
         )
 
     @classmethod
-    def from_json_file(cls, path) -> "FakeLLM":
+    def from_json_file(cls, path) -> FakeLLM:
         import pathlib
 
         data = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))

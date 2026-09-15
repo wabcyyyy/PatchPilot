@@ -1,0 +1,10 @@
+--- a/src/config.py
++++ b/src/config.py
+@@ -5,4 +5,6 @@
+ 
+ def lookup_setting(store, key):
+     """读取配置项:store 优先,未设置回退 DEFAULTS,未知键返回 None。"""
+-    return store[key]
++    if key in store:
++        return store[key]
++    return DEFAULTS.get(key)

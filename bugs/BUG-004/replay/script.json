@@ -1,0 +1,39 @@
+[
+  {
+    "tool": "search_code",
+    "args": {
+      "keyword": "lookup_setting"
+    }
+  },
+  {
+    "tool": "read_file",
+    "args": {
+      "path": "src/config.py"
+    }
+  },
+  {
+    "tool": "apply_patch",
+    "args": {
+      "diff_text": "--- a/src/config.py\n+++ b/src/config.py\n@@ -5,4 +5,6 @@\n \n def lookup_setting(store, key):\n     \"\"\"读取配置项:store 优先,未设置回退 DEFAULTS,未知键返回 None。\"\"\"\n-    return store[key]\n+    if key in store:\n+        return store[key]\n+    return DEFAULTS.get(key)\n"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "failed"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "regression"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "修复 src/config.py 并通过全部测试"
+    }
+  }
+]

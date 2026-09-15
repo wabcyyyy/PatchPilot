@@ -1,0 +1,13 @@
+id: BUG-005
+category: 跨文件定位
+difficulty: medium
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_pipeline.py::test_tabs_and_newlines
+regression_tests:
+  - tests/test_pipeline.py::test_clean_entry
+  - tests/test_pipeline.py::test_inner_whitespace_preserved
+allowed_paths:
+  - src/helpers.py
+  - src/pipeline.py
+max_rounds: 5

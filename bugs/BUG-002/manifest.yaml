@@ -1,0 +1,13 @@
+id: BUG-002
+category: 边界条件
+difficulty: simple
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_pagination.py::test_first_page_full
+  - tests/test_pagination.py::test_last_page_partial
+regression_tests:
+  - tests/test_pagination.py::test_invalid_page_raises
+  - tests/test_pagination.py::test_page_beyond_end_is_empty
+allowed_paths:
+  - src/**
+max_rounds: 5

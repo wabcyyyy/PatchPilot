@@ -1,0 +1,8 @@
+--- a/src/helpers.py
++++ b/src/helpers.py
+@@ -3,4 +3,4 @@
+ 
+ def clean_text(text):
+     """压缩文本:去掉首尾的全部空白字符。"""
+-    return text.strip(" ")
++    return text.strip()
