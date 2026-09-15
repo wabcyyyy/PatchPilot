@@ -73,7 +73,8 @@ def test_list_files_skips_git_and_lists_sources(task_ctx: ToolContext) -> None:
     assert result.ok
     files = result.output["files"]
     assert "src/dateparse.py" in files and "tests/test_dateparse.py" in files
-    assert not any(f.startswith(".git") for f in files)
+    # 排除的是 .git 目录;.gitignore 是合法的被列出文件
+    assert not any(f == ".git" or f.startswith(".git/") for f in files)
 
 
 def test_read_file_offset_and_missing(task_ctx: ToolContext) -> None:
