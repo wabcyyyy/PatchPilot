@@ -108,6 +108,25 @@ def test_cancel_finished_conflicts(client: TestClient) -> None:
     assert resp.json()["code"] == "conflict"
 
 
+def test_create_task_rejects_openai_when_llm_disabled(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """总开关默认关闭:model=openai 同步被拒(404),不创建任务。"""
+    from app.config import get_settings
+
+    monkeypatch.setenv("PATCHPILOT_LLM_ENABLED", "false")
+    get_settings.cache_clear()
+    try:
+        resp = client.post(
+            "/api/tasks", json={"bug_id": "BUG-003", "engine": "plain", "model": "openai"}
+        )
+    finally:
+        get_settings.cache_clear()
+    assert resp.status_code == 404
+    body = resp.json()
+    assert body["code"] == "invalid_task" and "PATCHPILOT_LLM_ENABLED" in body["message"]
+
+
 def test_boot_recovery_marks_stale_running(tmp_path: Path) -> None:
     """重启恢复:上一进程的 RUNNING 任务在新服务启动时转 NEEDS_REVIEW。"""
     from app.storage.repository import Repository

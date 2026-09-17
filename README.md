@@ -41,7 +41,11 @@ python -m app.evals.run_single --bug BUG-001 --model fake --engine graph --out r
 python -m app.evals.report --runs runs/m9 --out docs/eval-report.md
 ```
 
-接入真实模型:复制 `.env.example` 为 `.env`,配置 OpenAI 兼容端点后 `--model openai`。
+接入真实模型:复制 `.env.example` 为 `.env`,配置 OpenAI 兼容端点,并**显式设置
+`PATCHPILOT_LLM_ENABLED=true`**(总开关,默认关闭以防误配 key 即产生花费)后,
+才允许 `--model openai` / API `model="openai"`。每次调用受
+`PATCHPILOT_LLM_MAX_TOKENS`、`PATCHPILOT_LLM_TIMEOUT_SECONDS` 与
+`PATCHPILOT_TOKEN_BUDGET`(单任务累计 token 预算)约束。
 
 ## Docker Compose
 

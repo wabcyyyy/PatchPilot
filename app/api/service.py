@@ -69,6 +69,11 @@ class TaskService:
         max_rounds: int | None = None,
     ) -> dict[str, Any]:
         bug = load_bug(bug_id, self.bugs_root)  # TaskError → 404/422 由路由层转
+        if model == "openai":
+            # 前置校验:总开关未开/凭据缺失时同步失败,不建任务、不拿锁、不烧钱
+            from app.llm.openai_client import build_model
+
+            build_model(model, get_settings())
         idem_key = hashlib.sha256(f"{bug.id}|{engine}|{model}".encode()).hexdigest()
 
         existing = self.repo.find_by_idem_key(idem_key)

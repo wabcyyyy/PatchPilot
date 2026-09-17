@@ -69,7 +69,7 @@ class OpenAICompatModel:
 
 
 def build_model(provider: str, settings: Settings, script: list[dict[str, Any]] | None = None):
-    """provider 工厂:fake(需脚本)/ openai(需配置)。"""
+    """provider 工厂:fake(需脚本)/ openai(需配置+总开关)。"""
     if provider == "fake":
         if script is None:
             raise TaskError("fake provider requires a replay script")
@@ -77,5 +77,9 @@ def build_model(provider: str, settings: Settings, script: list[dict[str, Any]] 
 
         return FakeLLM(script)
     if provider == "openai":
+        if not settings.llm_enabled:
+            raise TaskError(
+                "openai provider is disabled; set PATCHPILOT_LLM_ENABLED=true to allow real LLM calls"
+            )
         return OpenAICompatModel(settings)
     raise TaskError(f"unknown model provider: {provider}")

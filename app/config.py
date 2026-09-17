@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     db_path: Path = Path("patchpilot.sqlite3")
 
     # 模型(OpenAI 兼容端点;留空则仅回放模式可用)
+    llm_enabled: bool = False  # 真实 LLM 调用总开关,默认关闭以防误配 key 即产生花费
     llm_base_url: str = ""
     llm_api_key: str = ""
     llm_model: str = "gpt-4o-mini"

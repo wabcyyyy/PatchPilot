@@ -3,6 +3,7 @@
 用法:
     python -m app.evals.run_single --bug BUG-001 --model fake --out runs
     python -m app.evals.run_single --bug bugs/BUG-002 --model openai --out runs
+    (--model openai 需在 .env 配好端点凭据,且 PATCHPILOT_LLM_ENABLED=true)
 """
 
 from __future__ import annotations

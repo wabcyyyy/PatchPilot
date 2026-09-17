@@ -31,20 +31,31 @@ def test_build_model_rejects_unknown_provider() -> None:
         build_model("anthropic", _settings())
 
 
-def test_build_model_openai_constructs_offline() -> None:
-    model = build_model("openai", _settings(llm_model="test-model"))
+def test_build_model_openai_disabled_by_default() -> None:
+    """总开关默认关闭:即使配好凭据,openai 提供方也必须显式开启。"""
+    with pytest.raises(TaskError) as exc_info:
+        build_model("openai", _settings(llm_enabled=False))
+    assert "PATCHPILOT_LLM_ENABLED" in str(exc_info.value)
+
+
+def test_build_model_openai_enabled_constructs_offline() -> None:
+    model = build_model("openai", _settings(llm_enabled=True, llm_model="test-model"))
     assert model.model_name == "test-model"
     assert model.provider == "openai"
 
 
 def test_client_uses_configured_timeout_and_retries() -> None:
-    model = OpenAICompatModel(_settings(llm_timeout_seconds=7.5, llm_max_retries=0))
+    model = OpenAICompatModel(
+        _settings(llm_enabled=True, llm_timeout_seconds=7.5, llm_max_retries=0)
+    )
     assert model._client.timeout == 7.5
     assert model._client.max_retries == 0
 
 
 def test_complete_sends_max_tokens_and_maps_response(monkeypatch: pytest.MonkeyPatch) -> None:
-    model = OpenAICompatModel(_settings(llm_model="test-model", llm_max_tokens=1234))
+    model = OpenAICompatModel(
+        _settings(llm_enabled=True, llm_model="test-model", llm_max_tokens=1234)
+    )
     captured: dict[str, Any] = {}
 
     def fake_create(**kwargs: Any) -> SimpleNamespace:
@@ -73,7 +84,7 @@ def test_complete_sends_max_tokens_and_maps_response(monkeypatch: pytest.MonkeyP
 def test_complete_handles_bad_json_arguments_and_missing_usage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    model = OpenAICompatModel(_settings())
+    model = OpenAICompatModel(_settings(llm_enabled=True))
 
     def fake_create(**kwargs: Any) -> SimpleNamespace:
         message = SimpleNamespace(content="纯文本回复", tool_calls=None)
