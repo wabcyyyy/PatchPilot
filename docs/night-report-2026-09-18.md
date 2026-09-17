@@ -82,6 +82,8 @@ tests/test_custom_task.py(11,含参数化攻击用例)、tests/test_backend.py(7
    不回填历史任务、不做计费(按 SPEC 非目标)。
 3. **graph 引擎的 cancel 无专门单测**:API 集成测试覆盖 plain/driver 路径;
    graph 侧走 nodes 新增 except 分支 → runner 捕获,逻辑简单但未直接测试,建议白天补一条。
+   *(已补:`b1c1550` 新增 `test_graph_cancelled_when_event_preset`,事件预置 + 拒绝调用的
+   stub 模型,断言 CANCELLED 收敛、报告落盘、现场保留;171 passed。)*
 4. **N6 只到骨架**:`run_tests_by_backend` 未接入任何真实执行路径,接线点分析、
    两个候选方案与白天验证清单(Windows 挂载语法、junit 路径映射、镜像内依赖、
    超时杀树语义等)见 `docs/docker-backend-notes.md`。`docker_available()` 带 lru_cache,
