@@ -32,12 +32,14 @@ def run_task_graph(
     use_checkpoint: bool = True,
     task_id: str | None = None,
     run_dir: Path | None = None,
+    model_name: str = "",
 ) -> Any:
     """执行一个任务(状态机引擎);返回与 plain 引擎一致的 TaskResult。
 
     task_id/run_dir 可由调用方(API 服务)指定,保证产物目录与服务记录一致。
     """
     from app.evals.driver import TaskResult  # 延迟导入,避免循环依赖
+    from app.evals.pricing import estimate_cost
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     task_id = task_id or f"{bug.id}-{stamp}-{uuid.uuid4().hex[:6]}"
@@ -49,6 +51,7 @@ def run_task_graph(
         task_id=task_id,
         bug_id=bug.id,
         model_provider=getattr(model, "provider", "unknown"),
+        model_name=model_name,
         engine="graph",
         run_dir=str(run_dir),
     )
@@ -124,6 +127,9 @@ def run_task_graph(
             result.error = f"{type(exc).__name__}: {exc}"
     finally:
         result.duration_ms = int((time.monotonic() - started) * 1000)
+        result.cost_usd = estimate_cost(
+            result.model_name, result.tokens_prompt, result.tokens_completion
+        )
         (run_dir / "report.json").write_text(
             json.dumps(result.as_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
         )

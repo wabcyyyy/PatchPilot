@@ -243,6 +243,9 @@ class Repository:
             "rounds",
             "tokens",
             "duration_ms",
+            "cost_usd",
+            "tokens_prompt",
+            "tokens_completion",
         ]
         values = [fields.get(k) for k in keys]
         with self._lock, self._conn:

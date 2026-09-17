@@ -117,12 +117,19 @@ class TaskService:
             from app.llm.openai_client import build_model
 
             model = build_model(model_name, settings, script=script)
+            # 真实模型名:openai 时取 Settings.llm_model,供成本核算(fake 为空 → 成本恒 n/a)
+            real_model_name = settings.llm_model if model_name == "openai" else ""
 
             if engine == "graph":
                 from app.graph.runner import run_task_graph
 
                 result = run_task_graph(
-                    bug, model, runs_root=self.runs_root, task_id=task_id, run_dir=run_dir
+                    bug,
+                    model,
+                    runs_root=self.runs_root,
+                    task_id=task_id,
+                    run_dir=run_dir,
+                    model_name=real_model_name,
                 )
             else:
                 from app.evals.driver import run_task
@@ -134,6 +141,7 @@ class TaskService:
                     engine=engine,
                     task_id=task_id,
                     run_dir=run_dir,
+                    model_name=real_model_name,
                 )
 
             # 终态回写(CANCELLED 不被覆盖)
@@ -190,6 +198,9 @@ class TaskService:
             rounds=report.get("rounds"),
             tokens=report.get("tokens_used"),
             duration_ms=report.get("duration_ms"),
+            cost_usd=report.get("cost_usd"),
+            tokens_prompt=report.get("tokens_prompt"),
+            tokens_completion=report.get("tokens_completion"),
         )
 
     # ---------- 查询与控制 ----------

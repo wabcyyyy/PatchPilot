@@ -18,6 +18,7 @@ from typing import Any
 from app.adapters.pytest_adapter import run_pytest
 from app.config import get_settings
 from app.errors import BudgetError, TaskError
+from app.evals.pricing import estimate_cost
 from app.gitops.differ import working_tree_diff
 from app.gitops.testing import materialize_repo
 from app.graph.gates import run_gates
@@ -38,12 +39,14 @@ class TaskResult:
     status: str = "CREATED"
     verdict: str = "needs_review"
     model_provider: str = ""
+    model_name: str = ""  # 真实模型名(openai 时来自 Settings.llm_model;fake 为空)
     engine: str = "plain"
     rounds: int = 1
     turns: int = 0
     tokens_used: int = 0
     tokens_prompt: int = 0
     tokens_completion: int = 0
+    cost_usd: float | None = None  # 约值;fake 或未收录模型为 None
     duration_ms: int = 0
     error: str | None = None
     gate_violations: list[str] = field(default_factory=list)
@@ -74,6 +77,7 @@ def run_task(
     engine: str = "plain",
     task_id: str | None = None,
     run_dir: Path | None = None,
+    model_name: str = "",
 ) -> TaskResult:
     """执行一个任务:基线 → 工具循环 → 验证 → 判定,全程落盘。
 
@@ -91,6 +95,7 @@ def run_task(
         task_id=task_id,
         bug_id=bug.id,
         model_provider=getattr(model, "provider", "unknown"),
+        model_name=model_name,
         engine=engine,
         run_dir=str(run_dir),
     )
@@ -187,6 +192,9 @@ def run_task(
         )
     finally:
         result.duration_ms = int((time.monotonic() - started) * 1000)
+        result.cost_usd = estimate_cost(
+            result.model_name, result.tokens_prompt, result.tokens_completion
+        )
         _write_report(result, run_dir)
         log.info(
             "task %s -> %s/%s (%sms)", task_id, result.status, result.verdict, result.duration_ms

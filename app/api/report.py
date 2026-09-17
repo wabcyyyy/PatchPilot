@@ -14,6 +14,8 @@ VERDICT_BADGE = {
 def render_markdown(result: dict[str, Any]) -> str:
     """把 report.json 的内容渲染为可读 Markdown。"""
     bug_id = result.get("bug_id", "?")
+    cost = result.get("cost_usd")
+    cost_text = f"${cost:.4f}" if isinstance(cost, (int, float)) else "n/a"
     lines = [
         f"# 任务报告:{result.get('task_id', '?')}",
         "",
@@ -21,6 +23,8 @@ def render_markdown(result: dict[str, Any]) -> str:
         f"- 题目:{bug_id} | 引擎:{result.get('engine')} | 模型:{result.get('model_provider')}",
         f"- 轮数:{result.get('rounds')} | 步数:{result.get('turns')} | token:{result.get('tokens_used')}"
         f" | 耗时:{result.get('duration_ms')}ms",
+        f"- 成本(约值):{cost_text} | 输入 token:{result.get('tokens_prompt')}"
+        f" | 输出 token:{result.get('tokens_completion')}",
         "",
         "## 判定过程",
         "",

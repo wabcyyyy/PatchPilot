@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     redis_url: str = ""
     docker_image: str = "python:3.11-slim"
     api_token: str = ""  # API Bearer Token;空 = 不鉴权(本地与现有测试不受影响)
+    price_overrides: str = ""  # 可选 JSON 文件路径(同构 PRICES,优先级高于内置价目)
 
     # 预算与限制(企划书第 9 节资源门禁的默认值)
     token_budget: int = 200_000  # 单任务累计 token 预算;0 = 不限制
