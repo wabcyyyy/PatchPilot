@@ -27,7 +27,13 @@ class OpenAICompatModel:
             from openai import OpenAI
         except ImportError as exc:  # pragma: no cover
             raise TaskError("openai package not installed; pip install 'patchpilot[llm]'") from exc
-        self._client = OpenAI(base_url=settings.llm_base_url, api_key=settings.llm_api_key)
+        self._client = OpenAI(
+            base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key,
+            timeout=settings.llm_timeout_seconds,
+            max_retries=settings.llm_max_retries,
+        )
+        self._max_tokens = settings.llm_max_tokens
         self.model_name = settings.llm_model
 
     def complete(
@@ -37,6 +43,7 @@ class OpenAICompatModel:
             model=self.model_name,
             messages=messages,  # type: ignore[arg-type]
             tools=[{"type": "function", "function": tool} for tool in tools] if tools else None,  # type: ignore[arg-type]
+            max_tokens=self._max_tokens or None,
         )
         choice = response.choices[0]
         message = choice.message

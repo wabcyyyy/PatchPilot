@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     llm_base_url: str = ""
     llm_api_key: str = ""
     llm_model: str = "gpt-4o-mini"
+    llm_max_tokens: int = 4096  # 单次 completion 输出上限;0 = 不限制
+    llm_timeout_seconds: float = 120  # 单次请求超时(SDK 默认 600s,过长会拖垮任务)
+    llm_max_retries: int = 1
 
     # 基础设施(可选)
     redis_url: str = ""
