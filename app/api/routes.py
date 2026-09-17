@@ -6,14 +6,15 @@ import json
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
+from app.api.auth import require_token
 from app.api.report import render_markdown
 from app.api.schemas import TaskCreateIn, TrajectoryPage
 from app.errors import PatchPilotError, TaskError
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api", dependencies=[Depends(require_token)])
 
 
 def _service(request: Request) -> Any:
