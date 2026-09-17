@@ -4,7 +4,8 @@ services:
       context: ..
       dockerfile: docker/api.Dockerfile
     ports:
-      - "8001:8000"
+      # 仅绑定回环地址:API 无鉴权,不应暴露到局域网
+      - "127.0.0.1:8001:8000"
     environment:
       PATCHPILOT_REDIS_URL: redis://redis:6379/0
       PATCHPILOT_DB_PATH: /data/patchpilot.sqlite3
@@ -19,7 +20,8 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      # 无密码,仅限本机访问
+      - "127.0.0.1:6379:6379"
     restart: unless-stopped
 
 volumes:

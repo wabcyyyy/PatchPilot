@@ -18,6 +18,7 @@ runs/
 # 密钥与本地配置
 .env
 .env.*
+!.env.example
 
 # 构建产物
 dist/
