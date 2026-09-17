@@ -1,0 +1,15 @@
+id: CAND-004
+category: 格式化注入
+difficulty: medium
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_render.py::test_unknown_placeholder_kept_literal
+  - tests/test_render.py::test_placeholder_does_not_evaluate_attributes
+  - tests/test_render.py::test_secret_attribute_not_leaked
+regression_tests:
+  - tests/test_render.py::test_simple_substitution
+  - tests/test_render.py::test_repeated_placeholder
+  - tests/test_render.py::test_multiple_values
+allowed_paths:
+  - src/**
+max_rounds: 5

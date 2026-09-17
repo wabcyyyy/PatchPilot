@@ -1,0 +1,13 @@
+id: CAND-005
+category: 生成器语义
+difficulty: simple
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_stats.py::test_summarize_generator
+  - tests/test_stats.py::test_summarize_map_object
+regression_tests:
+  - tests/test_stats.py::test_summarize_list
+  - tests/test_stats.py::test_summarize_tuple
+allowed_paths:
+  - src/**
+max_rounds: 5

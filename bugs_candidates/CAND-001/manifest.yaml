@@ -1,0 +1,12 @@
+id: CAND-001
+category: 可变默认参数
+difficulty: simple
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_notes.py::test_default_calls_are_isolated
+regression_tests:
+  - tests/test_notes.py::test_explicit_list_is_mutated
+  - tests/test_notes.py::test_explicit_empty_list
+allowed_paths:
+  - src/**
+max_rounds: 5

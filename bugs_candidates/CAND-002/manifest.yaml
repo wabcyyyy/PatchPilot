@@ -1,0 +1,12 @@
+id: CAND-002
+category: 状态共享
+difficulty: simple
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_carts.py::test_carts_are_independent
+regression_tests:
+  - tests/test_carts.py::test_add_accumulates_in_one_cart
+  - tests/test_carts.py::test_items_lookup_by_product
+allowed_paths:
+  - src/**
+max_rounds: 5

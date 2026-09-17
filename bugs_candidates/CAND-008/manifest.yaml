@@ -1,0 +1,14 @@
+id: CAND-008
+category: 浮点精度
+difficulty: medium
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_accounting.py::test_single_price_converts_exactly
+  - tests/test_accounting.py::test_sum_below_boundary_rounds_up
+regression_tests:
+  - tests/test_accounting.py::test_whole_yuan_prices
+  - tests/test_accounting.py::test_half_values
+  - tests/test_accounting.py::test_empty_list
+allowed_paths:
+  - src/**
+max_rounds: 5

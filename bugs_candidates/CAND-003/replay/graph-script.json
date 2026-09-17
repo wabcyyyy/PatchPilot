@@ -1,0 +1,46 @@
+[
+  {
+    "tool": "search_code",
+    "args": {
+      "keyword": "is_due"
+    }
+  },
+  {
+    "tool": "read_file",
+    "args": {
+      "path": "src/schedule.py"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "根因定位:src/schedule.py"
+    }
+  },
+  {
+    "tool": "apply_patch",
+    "args": {
+      "diff_text": "--- a/src/schedule.py\n+++ b/src/schedule.py\n@@ -3,7 +3,14 @@\n from datetime import UTC, datetime\n \n \n+def _ensure_utc(value):\n+    \"\"\"naive 时间按 UTC 解释;aware 原样返回。\"\"\"\n+    if value.tzinfo is None:\n+        return value.replace(tzinfo=UTC)\n+    return value\n+\n+\n def is_due(deadline, now=None):\n     \"\"\"deadline 已过期返回 True;now 缺省取当前 UTC 时间。\"\"\"\n-    now = now or datetime.now(UTC)\n-    return now > deadline\n+    now = _ensure_utc(now or datetime.now(UTC))\n+    return now > _ensure_utc(deadline)\n"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "failed"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "regression"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "新增 _ensure_utc,把 naive 时间统一按 UTC 解释后再比较"
+    }
+  }
+]

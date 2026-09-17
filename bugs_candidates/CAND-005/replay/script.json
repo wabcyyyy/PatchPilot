@@ -1,0 +1,39 @@
+[
+  {
+    "tool": "search_code",
+    "args": {
+      "keyword": "summarize"
+    }
+  },
+  {
+    "tool": "read_file",
+    "args": {
+      "path": "src/stats.py"
+    }
+  },
+  {
+    "tool": "apply_patch",
+    "args": {
+      "diff_text": "--- a/src/stats.py\n+++ b/src/stats.py\n@@ -3,6 +3,5 @@\n \n def summarize(rows):\n     \"\"\"返回 (总和, 行数);rows 是任意可迭代对象。\"\"\"\n-    total = sum(rows)\n-    count = len(list(rows))\n-    return total, count\n+    data = list(rows)\n+    return sum(data), len(data)\n"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "failed"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "regression"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "先物化为 list 再统计,避免生成器被 sum 消耗后为空"
+    }
+  }
+]

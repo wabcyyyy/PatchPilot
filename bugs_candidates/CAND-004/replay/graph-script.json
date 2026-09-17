@@ -1,0 +1,46 @@
+[
+  {
+    "tool": "search_code",
+    "args": {
+      "keyword": "def render"
+    }
+  },
+  {
+    "tool": "read_file",
+    "args": {
+      "path": "src/render.py"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "根因定位:src/render.py"
+    }
+  },
+  {
+    "tool": "apply_patch",
+    "args": {
+      "diff_text": "--- a/src/render.py\n+++ b/src/render.py\n@@ -1,6 +1,15 @@\n-\"\"\"模板渲染:把用户模板中的占位符替换为值。\"\"\"\n+\"\"\"模板渲染:把用户模板中的占位符替换为值(不解析属性访问)。\"\"\"\n+\n+import re\n+\n+_PLACEHOLDER = re.compile(r\"\\{([a-zA-Z_][a-zA-Z0-9_]*)\\}\")\n \n \n def render(template, values):\n-    \"\"\"渲染模板:占位符 {name} 替换为 values[name]。\"\"\"\n-    return template.format(**values)\n+    \"\"\"仅替换 {name} 简单占位符;其余内容原样保留。\"\"\"\n+\n+    def _sub(match):\n+        name = match.group(1)\n+        return str(values[name]) if name in values else match.group(0)\n+\n+    return _PLACEHOLDER.sub(_sub, template)\n"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "failed"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "regression"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "改为白名单正则替换,只允许简单占位符,属性访问原样保留"
+    }
+  }
+]

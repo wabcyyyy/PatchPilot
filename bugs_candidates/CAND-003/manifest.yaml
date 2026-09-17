@@ -1,0 +1,15 @@
+id: CAND-003
+category: 时区比较
+difficulty: medium
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_schedule.py::test_naive_deadline_treated_as_utc
+  - tests/test_schedule.py::test_naive_future_deadline_not_due
+  - tests/test_schedule.py::test_naive_now_compared_to_aware_deadline
+regression_tests:
+  - tests/test_schedule.py::test_aware_deadline_past
+  - tests/test_schedule.py::test_aware_deadline_future
+  - tests/test_schedule.py::test_explicit_now_comparison
+allowed_paths:
+  - src/**
+max_rounds: 5

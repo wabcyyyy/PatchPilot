@@ -1,0 +1,13 @@
+id: CAND-007
+category: 顺序语义
+difficulty: simple
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_dedup.py::test_preserves_first_seen_order
+regression_tests:
+  - tests/test_dedup.py::test_deduplicates
+  - tests/test_dedup.py::test_no_duplicates_kept
+  - tests/test_dedup.py::test_empty_input
+allowed_paths:
+  - src/**
+max_rounds: 5

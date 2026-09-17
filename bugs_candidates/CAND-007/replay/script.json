@@ -1,0 +1,39 @@
+[
+  {
+    "tool": "search_code",
+    "args": {
+      "keyword": "unique"
+    }
+  },
+  {
+    "tool": "read_file",
+    "args": {
+      "path": "src/dedup.py"
+    }
+  },
+  {
+    "tool": "apply_patch",
+    "args": {
+      "diff_text": "--- a/src/dedup.py\n+++ b/src/dedup.py\n@@ -3,4 +3,10 @@\n \n def unique(items):\n     \"\"\"去重;保持首次出现的顺序。\"\"\"\n-    return list(set(items))\n+    seen: set = set()\n+    result = []\n+    for item in items:\n+        if item not in seen:\n+            seen.add(item)\n+            result.append(item)\n+    return result\n"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "failed"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "regression"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "用 seen 集合按首次出现顺序收集,替代 set 的无序去重"
+    }
+  }
+]

@@ -1,0 +1,12 @@
+id: CAND-006
+category: 闭包绑定
+difficulty: medium
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_dispatch.py::test_each_handler_knows_its_task
+regression_tests:
+  - tests/test_dispatch.py::test_handlers_return_right_count
+  - tests/test_dispatch.py::test_single_task_handler
+allowed_paths:
+  - src/**
+max_rounds: 5
