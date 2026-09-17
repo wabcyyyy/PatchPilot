@@ -1,4 +1,4 @@
-id: CAND-005
+id: BUG-025
 category: 生成器语义
 difficulty: simple
 test_cmd: "{python} -m pytest"

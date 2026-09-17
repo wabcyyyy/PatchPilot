@@ -1,0 +1,15 @@
+--- a/src/carts.py
++++ b/src/carts.py
+@@ -2,9 +2,10 @@
+ 
+ 
+ class Cart:
+-    """购物车;items 记录商品 → 数量。"""
++    """购物车;items 记录商品 → 数量(实例独享)。"""
+ 
+-    items = {}
++    def __init__(self):
++        self.items = {}
+ 
+     def add(self, product, quantity=1):
+         self.items[product] = self.items.get(product, 0) + quantity

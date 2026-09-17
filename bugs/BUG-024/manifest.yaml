@@ -1,4 +1,4 @@
-id: CAND-004
+id: BUG-024
 category: 格式化注入
 difficulty: medium
 test_cmd: "{python} -m pytest"

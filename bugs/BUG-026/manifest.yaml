@@ -1,4 +1,4 @@
-id: CAND-006
+id: BUG-026
 category: 闭包绑定
 difficulty: medium
 test_cmd: "{python} -m pytest"

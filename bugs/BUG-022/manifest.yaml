@@ -1,4 +1,4 @@
-id: CAND-002
+id: BUG-022
 category: 状态共享
 difficulty: simple
 test_cmd: "{python} -m pytest"

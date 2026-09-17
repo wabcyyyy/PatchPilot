@@ -1,4 +1,4 @@
-id: CAND-007
+id: BUG-027
 category: 顺序语义
 difficulty: simple
 test_cmd: "{python} -m pytest"

@@ -1,0 +1,11 @@
+--- a/src/stats.py
++++ b/src/stats.py
+@@ -3,6 +3,5 @@
+ 
+ def summarize(rows):
+     """返回 (总和, 行数);rows 是任意可迭代对象。"""
+-    total = sum(rows)
+-    count = len(list(rows))
+-    return total, count
++    data = list(rows)
++    return sum(data), len(data)

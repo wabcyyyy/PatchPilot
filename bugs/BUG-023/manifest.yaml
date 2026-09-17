@@ -1,4 +1,4 @@
-id: CAND-003
+id: BUG-023
 category: 时区比较
 difficulty: medium
 test_cmd: "{python} -m pytest"

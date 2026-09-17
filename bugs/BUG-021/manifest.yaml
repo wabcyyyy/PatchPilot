@@ -1,4 +1,4 @@
-id: CAND-001
+id: BUG-021
 category: 可变默认参数
 difficulty: simple
 test_cmd: "{python} -m pytest"

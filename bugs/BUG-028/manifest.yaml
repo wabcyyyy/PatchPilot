@@ -1,4 +1,4 @@
-id: CAND-008
+id: BUG-028
 category: 浮点精度
 difficulty: medium
 test_cmd: "{python} -m pytest"

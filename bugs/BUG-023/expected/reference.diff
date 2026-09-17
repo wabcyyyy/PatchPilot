@@ -1,0 +1,19 @@
+--- a/src/schedule.py
++++ b/src/schedule.py
+@@ -3,7 +3,14 @@
+ from datetime import UTC, datetime
+ 
+ 
++def _ensure_utc(value):
++    """naive 时间按 UTC 解释;aware 原样返回。"""
++    if value.tzinfo is None:
++        return value.replace(tzinfo=UTC)
++    return value
++
++
+ def is_due(deadline, now=None):
+     """deadline 已过期返回 True;now 缺省取当前 UTC 时间。"""
+-    now = now or datetime.now(UTC)
+-    return now > deadline
++    now = _ensure_utc(now or datetime.now(UTC))
++    return now > _ensure_utc(deadline)
