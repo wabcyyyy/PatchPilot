@@ -14,7 +14,7 @@ from typing import Any
 
 from app.adapters.pytest_adapter import run_pytest
 from app.config import get_settings
-from app.errors import TaskError
+from app.errors import BudgetError, TaskError
 from app.gitops.differ import working_tree_diff
 from app.gitops.testing import materialize_repo
 from app.graph.gates import ensure_budget, run_gates
@@ -148,6 +148,12 @@ class TaskNodes:
                 state_label="LOCALIZE",
                 allowed_tools=READ_TOOLS,
             )
+        except BudgetError as exc:
+            return {
+                "status": "BUDGET_EXCEEDED",
+                "outcome": "failed",
+                "error": f"localize: {exc}",
+            }
         except Exception as exc:  # noqa: BLE001
             return {
                 "status": "NEEDS_REVIEW",
@@ -181,7 +187,7 @@ class TaskNodes:
                 round_no=state["round_no"],
                 max_rounds=self.max_rounds,
                 tokens_used=state.get("tokens_used", 0),
-                token_budget=0,
+                token_budget=get_settings().token_budget,
                 started_monotonic=self.started_monotonic,
                 time_budget_seconds=get_settings().task_timeout_seconds,
             )
@@ -201,6 +207,12 @@ class TaskNodes:
                 state_label="PROPOSE_PATCH",
                 allowed_tools=WRITE_TOOLS,
             )
+        except BudgetError as exc:
+            return {
+                "status": "BUDGET_EXCEEDED",
+                "outcome": "failed",
+                "error": f"propose: {exc}",
+            }
         except Exception as exc:  # noqa: BLE001
             return {"status": "NEEDS_REVIEW", "outcome": "needs_review", "error": f"propose: {exc}"}
 

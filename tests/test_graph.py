@@ -6,6 +6,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from app.errors import BudgetError
 from app.evals.bugset import load_bug
 from app.graph.builder import build_graph
 from app.graph.nodes import READ_TOOLS, TaskNodes
@@ -248,3 +249,17 @@ def test_graph_needs_review_when_localize_fails(tmp_path: Path) -> None:
     result = run_task_graph(bug, model, runs_root=tmp_path / "runs")
     assert result.status == "NEEDS_REVIEW" and result.verdict == "needs_review"
     assert result.verify_failed_ok is False
+
+
+def test_graph_budget_exceeded_when_localize_blows_budget(tmp_path: Path) -> None:
+    """定位阶段 token 预算耗尽 → BUDGET_EXCEEDED,不再被吞成 NEEDS_REVIEW。"""
+    bug = load_bug("BUG-001", BUG_ROOT)
+
+    class OverBudgetModel:
+        provider = "fake-replay"
+
+        def complete(self, messages, tools):
+            raise BudgetError("agent loop tokens 999999 exceed budget 1000")
+
+    result = run_task_graph(bug, OverBudgetModel(), runs_root=tmp_path / "runs")
+    assert result.status == "BUDGET_EXCEEDED" and result.verdict == "failed"

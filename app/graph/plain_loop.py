@@ -48,23 +48,31 @@ def run_plain_loop(
     state_label: str = "LOOP",
     extra_system: str = "",
     allowed_tools: list[str] | None = None,
+    token_budget: int | None = None,
 ) -> LoopOutcome:
     """工具循环:模型输出 → 解析工具调用 → 执行 → 结果回填 → 直到 finish。
 
     allowed_tools 限定本阶段可用的工具(如定位阶段禁用 apply_patch);None 不限制。
+    token_budget 是本循环的 token 上限(None → 取 Settings.token_budget;0 不限制),
+    按累计响应 token + 当前上下文 token 检查,超限抛 BudgetError。
     """
     settings = get_settings()
-    token_budget = settings.task_timeout_seconds * 0  # 占位:token 预算由调用方配置
+    budget = settings.token_budget if token_budget is None else token_budget
     system = SYSTEM_PROMPT + (f"\n\n{extra_system}" if extra_system else "")
     messages: list[dict[str, object]] = [
         {"role": "system", "content": system},
         {"role": "user", "content": issue_text},
     ]
+    tokens_spent = 0
 
     for turn_no in range(1, max_turns + 1):
-        tokens_used = messages_tokens(messages)
-        _ = token_budget  # 预算控制的状态机版本在 M5 落地;此处仅统计
+        context_tokens = messages_tokens(messages)
+        if budget > 0 and tokens_spent + context_tokens > budget:
+            raise BudgetError(
+                f"agent loop tokens {tokens_spent + context_tokens} exceed budget {budget}"
+            )
         response = model.complete(messages, tool_schemas())  # type: ignore[arg-type]
+        tokens_spent += response.usage_tokens
 
         if not response.is_tool_call:
             messages.append({"role": "assistant", "content": response.content or ""})
@@ -90,7 +98,7 @@ def run_plain_loop(
                     success=success,
                     summary=summary,
                     turns=turn_no,
-                    tokens_used=tokens_used + response.usage_tokens,
+                    tokens_used=tokens_spent,
                     patch_applied=_has_patch(ctx),
                     finish_declared=True,
                 )

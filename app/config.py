@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     docker_image: str = "python:3.11-slim"
 
     # 预算与限制(企划书第 9 节资源门禁的默认值)
+    token_budget: int = 200_000  # 单任务累计 token 预算;0 = 不限制
     default_max_rounds: int = 5
     task_timeout_seconds: int = 900
     round_timeout_seconds: int = 300

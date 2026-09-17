@@ -11,6 +11,7 @@ from app.errors import BudgetError
 from app.gitops.differ import working_tree_diff
 from app.gitops.snapshot import create_workspace
 from app.graph.plain_loop import run_plain_loop
+from app.llm.base import AssistantTurn
 from app.llm.fake import FakeLLM
 from app.tools.base import ToolContext
 from app.tools.tracker import Tracker
@@ -105,9 +106,31 @@ def test_loop_finishes_false_when_script_exhausted(ctx: ToolContext) -> None:
 def test_loop_raises_budget_error_on_endless_content(ctx: ToolContext) -> None:
     class ChattyModel:
         def complete(self, messages, tools):
-            from app.llm.base import AssistantTurn
-
             return AssistantTurn(content="思考中……", finish_reason="stop")
 
     with pytest.raises(BudgetError):
         run_plain_loop(ctx, ChattyModel(), "issue", max_turns=3)
+
+
+def test_loop_raises_budget_error_when_tokens_exhausted(ctx: ToolContext) -> None:
+    """累计 token 超预算 → BudgetError,且先于 max_turns 触发。"""
+
+    class SpendthriftModel:
+        def complete(self, messages, tools):
+            return AssistantTurn(content="x", finish_reason="stop", usage_tokens=100_000)
+
+    with pytest.raises(BudgetError) as exc_info:
+        run_plain_loop(ctx, SpendthriftModel(), "issue", max_turns=10, token_budget=50_000)
+    assert "exceed budget" in str(exc_info.value)
+
+
+def test_loop_token_budget_zero_disables_token_check(ctx: ToolContext) -> None:
+    """token_budget=0 表示不限制:大用量模型也要到 max_turns 才耗尽。"""
+
+    class SpendthriftModel:
+        def complete(self, messages, tools):
+            return AssistantTurn(content="x", finish_reason="stop", usage_tokens=100_000)
+
+    with pytest.raises(BudgetError) as exc_info:
+        run_plain_loop(ctx, SpendthriftModel(), "issue", max_turns=3, token_budget=0)
+    assert "max_turns" in str(exc_info.value)
