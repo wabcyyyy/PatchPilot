@@ -35,6 +35,12 @@ def create_task(payload: TaskCreateIn, request: Request):
             engine=payload.engine,
             model=payload.model,
             max_rounds=payload.max_rounds,
+            repo_path=payload.repo_path,
+            issue_text=payload.issue_text,
+            failed_tests=payload.failed_tests,
+            regression_tests=payload.regression_tests,
+            allowed_paths=payload.allowed_paths,
+            replay_script=payload.replay_script,
         )
     except TaskError as exc:
         return _error(404, "invalid_task", str(exc))

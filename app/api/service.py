@@ -22,7 +22,7 @@ from typing import Any
 from app.api.cancellation import CancelRegistry
 from app.config import get_settings
 from app.errors import PatchPilotError, TaskError
-from app.evals.bugset import BUGS_ROOT, load_bug, load_replay_script
+from app.evals.bugset import BUGS_ROOT, build_custom_bug, load_bug, load_replay_script
 from app.storage.locks import BaseLock, build_lock
 from app.storage.repository import Repository
 
@@ -66,12 +66,35 @@ class TaskService:
     def create_task(
         self,
         *,
-        bug_id: str,
+        bug_id: str | None = None,
         engine: str = "graph",
         model: str = "fake",
         max_rounds: int | None = None,
+        repo_path: str | None = None,
+        issue_text: str | None = None,
+        failed_tests: list[str] | None = None,
+        regression_tests: list[str] | None = None,
+        allowed_paths: list[str] | None = None,
+        replay_script: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        bug = load_bug(bug_id, self.bugs_root)  # TaskError → 404/422 由路由层转
+        if repo_path is not None:
+            resolved = Path(repo_path).resolve()
+            if not resolved.is_dir():
+                raise TaskError(f"repo_path not found or not a directory: {repo_path}")
+            if model == "fake" and not replay_script:
+                raise TaskError(
+                    "custom repo task with model='fake' requires a replay_script;"
+                    " provide replay_script or use model='openai'"
+                )
+            bug = build_custom_bug(
+                repo_path=resolved,
+                issue_text=issue_text or "",
+                failed_tests=failed_tests or [],
+                regression_tests=regression_tests or [],
+                allowed_paths=allowed_paths,
+            )
+        else:
+            bug = load_bug(bug_id, self.bugs_root)  # TaskError → 404/422 由路由层转
         if model == "openai":
             # 前置校验:总开关未开/凭据缺失时同步失败,不建任务、不拿锁、不烧钱
             from app.llm.openai_client import build_model
@@ -107,7 +130,15 @@ class TaskService:
         # 提交前先注册取消事件,保证 create 返回后的任何 cancel 都不会丢失
         cancel_event = self._cancels.register(task_id)
         self._pool.submit(
-            self._execute, task_id, bug, engine, model, run_dir, lock_key, cancel_event
+            self._execute,
+            task_id,
+            bug,
+            engine,
+            model,
+            run_dir,
+            lock_key,
+            cancel_event,
+            replay_script,
         )
         return self.repo.get_task(task_id)  # type: ignore[return-value]
 
@@ -122,12 +153,14 @@ class TaskService:
         run_dir: Path,
         lock_key: str,
         cancel_event,
+        replay_script: list[dict[str, Any]] | None = None,
     ) -> None:
         try:
             settings = get_settings()
             script = None
             if model_name == "fake":
-                script = load_replay_script(bug, kind=engine)
+                # 自定义任务的回放脚本来自请求内存对象;正式题从 bugs/ 目录加载
+                script = replay_script if replay_script else load_replay_script(bug, kind=engine)
             from app.llm.openai_client import build_model
 
             model = build_model(model_name, settings, script=script)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -87,6 +88,35 @@ def load_bug(path_or_id: str | Path, root: Path | str = BUGS_ROOT) -> BugTask:
         category=str(data.get("category", "")),
         difficulty=str(data.get("difficulty", "simple")),
         replay_script_path=replay if replay.exists() else None,
+    )
+
+
+def build_custom_bug(
+    *,
+    repo_path: Path | str,
+    issue_text: str,
+    failed_tests: list[str],
+    regression_tests: list[str],
+    allowed_paths: list[str] | None = None,
+    max_rounds: int = 5,
+) -> BugTask:
+    """内存构造自定义任务(任意仓库接入):不经 bugs/ 目录结构,无回放脚本文件。
+
+    id 含随机段,天然不与正式题冲突;安全语义与正式题完全一致
+    (禁改测试文件由门禁 forbid_test_files=True 无条件兜底,与本辅助无关)。
+    """
+    root = Path(repo_path).resolve()
+    return BugTask(
+        id=f"CUSTOM-{uuid.uuid4().hex[:8]}",
+        root=root,
+        repo_dir=root,
+        issue_text=issue_text,
+        failed_tests=list(failed_tests),
+        regression_tests=list(regression_tests),
+        allowed_paths=[str(p) for p in allowed_paths] if allowed_paths else None,
+        max_rounds=max_rounds,
+        category="custom",
+        replay_script_path=None,
     )
 
 
