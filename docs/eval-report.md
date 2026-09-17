@@ -1,7 +1,7 @@
 # PatchPilot 评测报告
 
-- 生成时间:2026-09-15 18:21 UTC
-- 运行目录:`runs\m9`(共 20 次运行,每题取最新 20 题)
+- 生成时间:2026-09-17 23:28 UTC
+- 运行目录:`runs\m9`(共 50 次运行,每题取最新 28 题)
 - 模型提供方:**fake-replay**
 
 > **数据来源声明**:本报告由 `python -m app.evals.report` 从运行产物自动生成;
@@ -18,8 +18,8 @@
 | 回归引入率 | 0.0 |
 | 越权拦截 | 0 次(另有攻击样例 4/4 被门禁拦截) |
 | 平均修复轮数 | 1.0 |
-| 平均耗时 | 8335 ms |
-| 平均 Token | 820 |
+| 平均耗时 | 6664 ms |
+| 平均 Token | 163 |
 
 ## 分题结果
 
@@ -45,6 +45,14 @@
 | BUG-018 | ✅ resolved | FINISHED | 1 | `src/calendar_ops.py` | 命中 | 通过 |
 | BUG-019 | ✅ resolved | FINISHED | 1 | `src/seq.py` | 命中 | 通过 |
 | BUG-020 | ✅ resolved | FINISHED | 1 | `src/pricing.py` | 命中 | 通过 |
+| BUG-021 | ✅ resolved | FINISHED | 1 | `src/notes.py` | 命中 | 通过 |
+| BUG-022 | ✅ resolved | FINISHED | 1 | `src/carts.py` | 命中 | 通过 |
+| BUG-023 | ✅ resolved | FINISHED | 1 | `src/schedule.py` | 命中 | 通过 |
+| BUG-024 | ✅ resolved | FINISHED | 1 | `src/render.py` | 命中 | 通过 |
+| BUG-025 | ✅ resolved | FINISHED | 1 | `src/stats.py` | 命中 | 通过 |
+| BUG-026 | ✅ resolved | FINISHED | 1 | `src/dispatch.py` | 命中 | 通过 |
+| BUG-027 | ✅ resolved | FINISHED | 1 | `src/dedup.py` | 命中 | 通过 |
+| BUG-028 | ✅ resolved | FINISHED | 1 | `src/accounting.py` | 命中 | 通过 |
 
 ## 失败任务复盘索引
 

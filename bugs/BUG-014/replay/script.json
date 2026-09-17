@@ -14,7 +14,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/slicing.py\n+++ b/src/slicing.py\n@@ -2,4 +2,4 @@\n     \"\"\"把序列切成每批最多 n 条。\"\"\"\n     if n < 1:\n         raise ValueError(\"n must be >= 1\")\n-    return [items[i:i + n + 1] for i in range(0, len(items), n)]\n+    return [items[i:i + n] for i in range(0, len(items), n)]\n"
+      "diff_text": "--- a/src/slicing.py\n+++ b/src/slicing.py\n@@ -2,4 +2,4 @@\n     \"\"\"把序列切成每批最多 n 条。\"\"\"\n     if n < 1:\n         raise ValueError(\"n must be >= 1\")\n-    return [items[i : i + n + 1] for i in range(0, len(items), n)]\n+    return [items[i : i + n] for i in range(0, len(items), n)]\n"
     }
   },
   {
