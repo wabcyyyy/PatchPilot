@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 
 from app.errors import BudgetError
@@ -263,3 +265,25 @@ def test_graph_budget_exceeded_when_localize_blows_budget(tmp_path: Path) -> Non
 
     result = run_task_graph(bug, OverBudgetModel(), runs_root=tmp_path / "runs")
     assert result.status == "BUDGET_EXCEEDED" and result.verdict == "failed"
+
+
+def test_graph_cancelled_when_event_preset(tmp_path: Path) -> None:
+    """取消事件预置:定位阶段 turn 边界抛 TaskCancelled → 收敛 CANCELLED,
+    不被 localize/propose 的兜底吞成 NEEDS_REVIEW,报告正常落盘。"""
+    bug = load_bug("BUG-001", BUG_ROOT)
+    event = threading.Event()
+    event.set()
+
+    class NeverModel:
+        provider = "fake-replay"
+
+        def complete(self, messages, tools):
+            raise AssertionError("取消已置位,模型不应再被调用")
+
+    result = run_task_graph(bug, NeverModel(), runs_root=tmp_path / "runs", cancel_event=event)
+    assert result.status == "CANCELLED" and result.verdict == "cancelled"
+    assert "cancelled at turn 1 boundary" in (result.error or "")
+
+    report = json.loads((Path(result.run_dir) / "report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "CANCELLED"
+    assert (Path(result.run_dir) / "trajectory.jsonl").exists()  # 现场保留
