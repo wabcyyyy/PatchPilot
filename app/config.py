@@ -5,6 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,6 +31,14 @@ class Settings(BaseSettings):
     docker_image: str = "python:3.11-slim"
     api_token: str = ""  # API Bearer Token;空 = 不鉴权(本地与现有测试不受影响)
     price_overrides: str = ""  # 可选 JSON 文件路径(同构 PRICES,优先级高于内置价目)
+    execution_backend: str = "local"  # 测试执行后端:local | docker(容器集成留待人工验证)
+
+    @field_validator("execution_backend")
+    @classmethod
+    def _check_execution_backend(cls, value: str) -> str:
+        if value not in {"local", "docker"}:
+            raise ValueError(f"execution_backend must be 'local' or 'docker', got {value!r}")
+        return value
 
     # 预算与限制(企划书第 9 节资源门禁的默认值)
     token_budget: int = 200_000  # 单任务累计 token 预算;0 = 不限制
