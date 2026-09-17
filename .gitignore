@@ -24,3 +24,6 @@ runs/
 dist/
 build/
 *.egg-info/
+
+# ZCode 会话工作区配置
+.zcode/
