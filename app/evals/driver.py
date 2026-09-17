@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -17,7 +18,7 @@ from typing import Any
 
 from app.adapters.pytest_adapter import run_pytest
 from app.config import get_settings
-from app.errors import BudgetError, TaskError
+from app.errors import BudgetError, TaskCancelled, TaskError
 from app.evals.pricing import estimate_cost
 from app.gitops.differ import working_tree_diff
 from app.gitops.testing import materialize_repo
@@ -78,6 +79,7 @@ def run_task(
     task_id: str | None = None,
     run_dir: Path | None = None,
     model_name: str = "",
+    cancel_event: threading.Event | None = None,
 ) -> TaskResult:
     """执行一个任务:基线 → 工具循环 → 验证 → 判定,全程落盘。
 
@@ -142,7 +144,9 @@ def run_task(
 
         # LOCALIZE + PROPOSE_PATCH:工具循环(plain 引擎单轮多步)
         tracker.record(tool="start_loop", state="LOCALIZE", input_payload={"max_turns": max_turns})
-        outcome = run_plain_loop(ctx, model, bug.issue_text, max_turns=max_turns)
+        outcome = run_plain_loop(
+            ctx, model, bug.issue_text, max_turns=max_turns, cancel_event=cancel_event
+        )
         result.turns = outcome.turns
         result.tokens_used = outcome.tokens_used
         result.tokens_prompt = outcome.tokens_prompt
@@ -181,6 +185,9 @@ def run_task(
 
     except BudgetError as exc:
         result.status, result.verdict, result.error = "BUDGET_EXCEEDED", "failed", str(exc)
+    except TaskCancelled as exc:
+        # 协作式取消:保留现场落盘;DB 状态由 cancel_task 置 CANCELLED,回写时让位
+        result.status, result.verdict, result.error = "CANCELLED", "cancelled", str(exc)
     except TaskError as exc:
         result.status, result.verdict, result.error = "INVALID_TASK", "failed", str(exc)
     except Exception as exc:  # noqa: BLE001 - 驱动器必须把异常收敛为可复盘报告

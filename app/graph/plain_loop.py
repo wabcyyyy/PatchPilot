@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from dataclasses import dataclass
 
 from app.config import get_settings
-from app.errors import BudgetError
+from app.errors import BudgetError, TaskCancelled
 from app.gitops.differ import working_tree_diff
 from app.llm.base import Model, messages_tokens
 from app.prompts import SYSTEM_PROMPT
@@ -51,12 +52,15 @@ def run_plain_loop(
     extra_system: str = "",
     allowed_tools: list[str] | None = None,
     token_budget: int | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> LoopOutcome:
     """工具循环:模型输出 → 解析工具调用 → 执行 → 结果回填 → 直到 finish。
 
     allowed_tools 限定本阶段可用的工具(如定位阶段禁用 apply_patch);None 不限制。
     token_budget 是本循环的 token 上限(None → 取 Settings.token_budget;0 不限制),
     按累计响应 token + 当前上下文 token 检查,超限抛 BudgetError。
+    cancel_event 在每个 turn 开头(model.complete 之前)检查:已 set → 抛 TaskCancelled,
+    即中断在下个 turn 边界生效,正在跑的一次 pytest/LLM 调用会先完成。
     """
     settings = get_settings()
     budget = settings.token_budget if token_budget is None else token_budget
@@ -70,6 +74,8 @@ def run_plain_loop(
     tokens_completion = 0
 
     for turn_no in range(1, max_turns + 1):
+        if cancel_event is not None and cancel_event.is_set():
+            raise TaskCancelled(f"cancelled at turn {turn_no} boundary")
         context_tokens = messages_tokens(messages)
         if budget > 0 and tokens_spent + context_tokens > budget:
             raise BudgetError(

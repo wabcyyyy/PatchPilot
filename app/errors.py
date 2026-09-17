@@ -41,3 +41,9 @@ class BudgetError(PatchPilotError):
     """超过轮数/时间/token 预算(BUDGET_EXCEEDED)。"""
 
     code = "budget"
+
+
+class TaskCancelled(PatchPilotError):
+    """任务被协作式取消:在下个 turn 边界生效(正在跑的 pytest/LLM 调用先完成)。"""
+
+    code = "cancelled"

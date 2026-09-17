@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from app.errors import TaskError
+from app.errors import TaskCancelled, TaskError
 from app.gitops.differ import working_tree_diff
 from app.graph.builder import build_graph
 from app.graph.checkpoint import make_sqlite_checkpointer
@@ -33,6 +34,7 @@ def run_task_graph(
     task_id: str | None = None,
     run_dir: Path | None = None,
     model_name: str = "",
+    cancel_event: threading.Event | None = None,
 ) -> Any:
     """执行一个任务(状态机引擎);返回与 plain 引擎一致的 TaskResult。
 
@@ -68,6 +70,7 @@ def run_task_graph(
             max_rounds=max_rounds if max_rounds is not None else bug.max_rounds,
             max_turns=max_turns,
             started_monotonic=started,
+            cancel_event=cancel_event,
         )
         checkpointer = (
             make_sqlite_checkpointer(run_dir / "checkpoints.sqlite") if use_checkpoint else None
@@ -111,6 +114,11 @@ def run_task_graph(
         diff = working_tree_diff(run_dir / "workspace")
         (run_dir / "diff.patch").write_text(diff.diff_text, encoding="utf-8")
 
+    except TaskCancelled as exc:
+        result.status = "CANCELLED"
+        result.outcome = "cancelled"
+        result.verdict = "cancelled"
+        result.error = str(exc)
     except Exception as exc:  # noqa: BLE001
         if isinstance(exc, TaskError):
             result.status, result.outcome, result.verdict, result.error = (

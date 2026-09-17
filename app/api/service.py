@@ -4,7 +4,8 @@
 - 幂等键 = bug_id + engine + model(同键任务未到终态时直接返回原任务);
 - 锁:Redis(可用时)或进程内兜底,防止同键任务并发执行;
 - 崩溃恢复:服务启动时把 RUNNING/QUEUED 僵尸任务标记 NEEDS_REVIEW;
-- cancel:标记 CANCELLED(执行线程不中断,终态回写时让位于 CANCELLED),保留现场。
+- cancel:先置 CANCELLED,再经 CancelRegistry 通知执行线程在 turn 边界协作式中断
+  (正在跑的一次 pytest/LLM 调用先完成),终态回写时让位于 CANCELLED,保留现场。
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app.api.cancellation import CancelRegistry
 from app.config import get_settings
 from app.errors import PatchPilotError, TaskError
 from app.evals.bugset import BUGS_ROOT, load_bug, load_replay_script
@@ -56,6 +58,7 @@ class TaskService:
         self.runs_root = (runs_root or get_settings().runs_root).resolve()
         self.bugs_root = Path(bugs_root)
         self.lock = lock or build_lock(redis_url or get_settings().redis_url)
+        self._cancels = CancelRegistry()
         self._pool = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="patchpilot")
 
     # ---------- 创建 ----------
@@ -101,13 +104,24 @@ class TaskService:
             run_dir=str(run_dir),
         )
         self.repo.update_task_status(task_id, "RUNNING")
-        self._pool.submit(self._execute, task_id, bug, engine, model, run_dir, lock_key)
+        # 提交前先注册取消事件,保证 create 返回后的任何 cancel 都不会丢失
+        cancel_event = self._cancels.register(task_id)
+        self._pool.submit(
+            self._execute, task_id, bug, engine, model, run_dir, lock_key, cancel_event
+        )
         return self.repo.get_task(task_id)  # type: ignore[return-value]
 
     # ---------- 执行 ----------
 
     def _execute(
-        self, task_id: str, bug, engine: str, model_name: str, run_dir: Path, lock_key: str
+        self,
+        task_id: str,
+        bug,
+        engine: str,
+        model_name: str,
+        run_dir: Path,
+        lock_key: str,
+        cancel_event,
     ) -> None:
         try:
             settings = get_settings()
@@ -130,6 +144,7 @@ class TaskService:
                     task_id=task_id,
                     run_dir=run_dir,
                     model_name=real_model_name,
+                    cancel_event=cancel_event,
                 )
             else:
                 from app.evals.driver import run_task
@@ -142,13 +157,15 @@ class TaskService:
                     task_id=task_id,
                     run_dir=run_dir,
                     model_name=real_model_name,
+                    cancel_event=cancel_event,
                 )
 
-            # 终态回写(CANCELLED 不被覆盖)
+            # 先落产物,再翻终态:轮询方见到终态时轨迹/报告必然已可查;
+            # CANCELLED 保护放在终态写入前的最后一刻,不让自然完成覆盖取消
+            self._persist_artifacts(task_id, result, run_dir)
             current = self.repo.get_task(task_id) or {}
             if current.get("status") != "CANCELLED":
                 self.repo.update_task_status(task_id, result.status, result.verdict)
-            self._persist_artifacts(task_id, result, run_dir)
         except TaskError as exc:
             self.repo.update_task_status(task_id, "INVALID_TASK", "failed")
             log.error("task %s invalid: %s", task_id, exc)
@@ -159,6 +176,7 @@ class TaskService:
             log.exception("task %s crashed", task_id)
             _ = exc
         finally:
+            self._cancels.unregister(task_id)
             self.lock.release(lock_key)
 
     def _persist_artifacts(self, task_id: str, result: Any, run_dir: Path) -> None:
@@ -221,6 +239,8 @@ class TaskService:
         if task["status"] in TERMINAL_STATUSES:
             raise PatchPilotError(f"task {task_id} already finished ({task['status']})")
         self.repo.update_task_status(task_id, "CANCELLED")
+        # 状态落库后通知执行线程;中断在下个 turn 边界生效
+        self._cancels.request_cancel(task_id)
         return self.repo.get_task(task_id)  # type: ignore[return-value]
 
     def recover_stale(self) -> int:
