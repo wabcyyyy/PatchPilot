@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -120,3 +121,114 @@ def test_custom_tasks_never_idempotent(client: TestClient, custom_repo: Path) ->
     first = client.post("/api/tasks", json=_custom_payload(custom_repo)).json()
     second = client.post("/api/tasks", json=_custom_payload(custom_repo)).json()
     assert first["task_id"] != second["task_id"]
+
+
+# ---------- N4b:e2e 与攻击面 ----------
+
+
+def wait_terminal(client: TestClient, task_id: str, timeout_s: int = 120) -> dict:
+    import time
+
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        task = client.get(f"/api/tasks/{task_id}").json()
+        if task["status"] in TERMINAL:
+            return task
+        time.sleep(0.2)
+    pytest.fail(f"task {task_id} did not finish in {timeout_s}s")
+
+
+def _repair_script() -> list[dict]:
+    """在临时副本上生成 demo_repo 的正确修复 diff,作为内存回放脚本。"""
+    import shutil
+    import tempfile
+
+    from app.gitops.differ import working_tree_diff
+    from app.gitops.snapshot import create_workspace
+
+    tmp = Path(tempfile.mkdtemp(prefix="customfix-"))
+    try:
+        repo_src = tmp / "src"
+        materialize_repo(Path(__file__).parent / "fixtures" / "demo_repo", repo_src)
+        create_workspace(repo_src, tmp / "ws")
+        target = tmp / "ws" / "src" / "dateparse.py"
+        text = target.read_text(encoding="utf-8")
+        target.write_text(
+            text.replace(
+                "    if value is None:\n        return None\n",
+                "    if value is None:\n        return None\n    if not value.strip():\n        return None\n",
+            ),
+            encoding="utf-8",
+            newline="\n",
+        )
+        diff = working_tree_diff(tmp / "ws").diff_text
+        return [
+            {"tool": "apply_patch", "args": {"diff_text": diff}},
+            {"tool": "run_tests", "args": {"test_set": "failed"}},
+            {"tool": "run_tests", "args": {"test_set": "regression"}},
+            {"tool": "finish", "args": {"success": True, "summary": "空字符串早退分支已补"}},
+        ]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _evil_diff(target: str) -> str:
+    return (
+        f"diff --git a/{target} b/{target}\n"
+        f"--- a/{target}\n"
+        f"+++ b/{target}\n"
+        "@@ -1,1 +1,2 @@\n"
+        "+injected\n"
+    )
+
+
+def test_custom_task_e2e_resolved(client: TestClient, custom_repo: Path) -> None:
+    """自定义仓库 + 正确修复脚本 → 全链路离线跑通,判定 resolved。"""
+    resp = client.post(
+        "/api/tasks", json=_custom_payload(custom_repo, replay_script=_repair_script())
+    )
+    assert resp.status_code == 201, resp.text
+    task_id = resp.json()["task_id"]
+
+    final = wait_terminal(client, task_id)
+    assert final["status"] == "FINISHED", final
+    assert final["verdict"] == "resolved"
+
+    # 三件套齐全:轨迹 / 报告 / 补丁,且报告标注 CUSTOM 来源
+    run_dir = Path(final["run_dir"])
+    assert (run_dir / "trajectory.jsonl").exists()
+    assert (run_dir / "diff.patch").exists()
+    report = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
+    assert report["bug_id"].startswith("CUSTOM-") and report["verdict"] == "resolved"
+    assert report["changed_files"] == ["src/dateparse.py"]
+
+    traj = client.get(f"/api/tasks/{task_id}/trajectory?limit=100").json()
+    assert traj["total_returned"] > 0
+    assert {"apply_patch", "run_tests", "finish"} <= {e["tool"] for e in traj["events"]}
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "tests/test_dateparse.py",  # 试图修改测试文件作弊
+        "../../escaped.txt",  # 试图路径穿越逃出工作区
+    ],
+)
+def test_custom_task_malicious_patch_rejected(
+    client: TestClient, custom_repo: Path, target: str
+) -> None:
+    """恶意脚本被门禁拦截:补丁落不了盘 → 判定 PATCH_REJECTED,现场保留。"""
+    malicious = [
+        {"tool": "apply_patch", "args": {"diff_text": _evil_diff(target)}},
+        {"tool": "finish", "args": {"success": True, "summary": f"试图改 {target}"}},
+    ]
+    resp = client.post("/api/tasks", json=_custom_payload(custom_repo, replay_script=malicious))
+    assert resp.status_code == 201, resp.text
+    final = wait_terminal(client, resp.json()["task_id"])
+    assert final["status"] == "PATCH_REJECTED", final
+
+    run_dir = Path(final["run_dir"])
+    report = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
+    assert report["verdict"] == "failed"
+    assert report["changed_files"] == []  # 恶意补丁没有落盘
+    assert (run_dir / "trajectory.jsonl").exists()  # 现场保留
