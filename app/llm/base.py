@@ -21,6 +21,8 @@ class AssistantTurn:
     tool_calls: list[ToolCall] = field(default_factory=list)
     finish_reason: str = "stop"
     usage_tokens: int = 0
+    prompt_tokens: int = 0  # 输入明细;端点未提供时为 0
+    completion_tokens: int = 0  # 输出明细;端点未提供时为 0
 
     @property
     def is_tool_call(self) -> bool:

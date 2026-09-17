@@ -97,3 +97,42 @@ def test_complete_handles_bad_json_arguments_and_missing_usage(
     assert turn.content == "纯文本回复"
     assert not turn.is_tool_call
     assert turn.usage_tokens > 0  # usage 缺失时回退到字符估算
+
+
+def test_complete_parses_prompt_completion_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    """N2a:usage 三元组(prompt/completion/total)全部解析进回合。"""
+    model = OpenAICompatModel(_settings(llm_enabled=True))
+    usage = SimpleNamespace(total_tokens=321, prompt_tokens=100, completion_tokens=221)
+    message = SimpleNamespace(content="ok", tool_calls=None)
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=message, finish_reason="stop")], usage=usage
+    )
+    monkeypatch.setattr(model._client.chat.completions, "create", lambda **kw: response)
+    turn = model.complete([{"role": "user", "content": "hi"}], [])
+    assert turn.usage_tokens == 321
+    assert turn.prompt_tokens == 100
+    assert turn.completion_tokens == 221
+
+
+def test_complete_without_usage_zeroes_token_detail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """usage 缺失时明细回退 0,total 仍走字符估算(现状不变)。"""
+    model = OpenAICompatModel(_settings(llm_enabled=True))
+    message = SimpleNamespace(content="回复内容", tool_calls=None)
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=message, finish_reason="stop")], usage=None
+    )
+    monkeypatch.setattr(model._client.chat.completions, "create", lambda **kw: response)
+    turn = model.complete([{"role": "user", "content": "hi"}], [])
+    assert turn.usage_tokens > 0
+    assert turn.prompt_tokens == 0 and turn.completion_tokens == 0
+
+
+def test_fake_llm_token_detail_is_estimate_only() -> None:
+    """FakeLLM:prompt=0,completion=估算值,与 usage_tokens 一致。"""
+    from app.llm.fake import FakeLLM
+
+    turn = FakeLLM([{"tool": "finish", "args": {"success": True, "summary": "done"}}]).complete(
+        [{"role": "user", "content": "hi"}], []
+    )
+    assert turn.prompt_tokens == 0
+    assert turn.completion_tokens == turn.usage_tokens > 0

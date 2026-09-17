@@ -112,3 +112,13 @@ def test_crash_converges_to_needs_review(tmp_path: Path, monkeypatch: pytest.Mon
     result = run_task(bug, model, runs_root=tmp_path / "runs")
     assert result.status == "NEEDS_REVIEW" and result.verdict == "needs_review"
     assert "boom" in (result.error or "")
+
+
+def test_report_contains_token_detail(tmp_path: Path) -> None:
+    """N2a:report.json 落盘 tokens_prompt/tokens_completion 且与 fake 语义一致。"""
+    bug = load_bug("BUG-001", BUG_ROOT)
+    result = run_task(bug, FakeLLM(load_replay_script(bug)), runs_root=tmp_path / "runs")
+    report = json.loads((Path(result.run_dir) / "report.json").read_text(encoding="utf-8"))
+    assert report["tokens_prompt"] >= 0 and report["tokens_completion"] >= 0
+    assert result.tokens_prompt == 0
+    assert result.tokens_completion == result.tokens_used > 0

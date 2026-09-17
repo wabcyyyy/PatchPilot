@@ -95,6 +95,8 @@ def run_task_graph(
         result.rounds = max(1, final.get("round_no", 1))
         result.turns = final.get("turns", 0)
         result.tokens_used = final.get("tokens_used", 0)
+        result.tokens_prompt = final.get("tokens_prompt", 0)
+        result.tokens_completion = final.get("tokens_completion", 0)
         result.error = final.get("error")
         result.gate_violations = list(final.get("gate_violations", []))
         result.baseline_failed = final.get("baseline_failed", 0)

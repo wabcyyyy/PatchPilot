@@ -31,6 +31,8 @@ class LoopOutcome:
     tokens_used: int
     patch_applied: bool
     finish_declared: bool
+    tokens_prompt: int = 0
+    tokens_completion: int = 0
 
 
 def _has_patch(ctx: ToolContext) -> bool:
@@ -64,6 +66,8 @@ def run_plain_loop(
         {"role": "user", "content": issue_text},
     ]
     tokens_spent = 0
+    tokens_prompt = 0
+    tokens_completion = 0
 
     for turn_no in range(1, max_turns + 1):
         context_tokens = messages_tokens(messages)
@@ -73,6 +77,8 @@ def run_plain_loop(
             )
         response = model.complete(messages, tool_schemas())  # type: ignore[arg-type]
         tokens_spent += response.usage_tokens
+        tokens_prompt += response.prompt_tokens
+        tokens_completion += response.completion_tokens
 
         if not response.is_tool_call:
             messages.append({"role": "assistant", "content": response.content or ""})
@@ -101,6 +107,8 @@ def run_plain_loop(
                     tokens_used=tokens_spent,
                     patch_applied=_has_patch(ctx),
                     finish_declared=True,
+                    tokens_prompt=tokens_prompt,
+                    tokens_completion=tokens_completion,
                 )
                 ctx.tracker.record(
                     tool=FINISH_TOOL,

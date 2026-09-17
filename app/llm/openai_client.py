@@ -49,6 +49,8 @@ class OpenAICompatModel:
         message = choice.message
         usage = getattr(response, "usage", None)
         tokens = getattr(usage, "total_tokens", 0) if usage else 0
+        prompt_tokens = getattr(usage, "prompt_tokens", 0) if usage else 0
+        completion_tokens = getattr(usage, "completion_tokens", 0) if usage else 0
 
         calls: list[ToolCall] = []
         for item in getattr(message, "tool_calls", None) or []:
@@ -65,6 +67,8 @@ class OpenAICompatModel:
             tool_calls=calls,
             finish_reason=choice.finish_reason or "stop",
             usage_tokens=int(tokens) or estimate_tokens(text or ""),
+            prompt_tokens=int(prompt_tokens or 0),
+            completion_tokens=int(completion_tokens or 0),
         )
 
 

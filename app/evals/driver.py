@@ -42,6 +42,8 @@ class TaskResult:
     rounds: int = 1
     turns: int = 0
     tokens_used: int = 0
+    tokens_prompt: int = 0
+    tokens_completion: int = 0
     duration_ms: int = 0
     error: str | None = None
     gate_violations: list[str] = field(default_factory=list)
@@ -138,6 +140,8 @@ def run_task(
         outcome = run_plain_loop(ctx, model, bug.issue_text, max_turns=max_turns)
         result.turns = outcome.turns
         result.tokens_used = outcome.tokens_used
+        result.tokens_prompt = outcome.tokens_prompt
+        result.tokens_completion = outcome.tokens_completion
 
         # VERIFY:用平台自己的执行器重新验证,不信任模型的声明
         verify_failed, _ = run_pytest(

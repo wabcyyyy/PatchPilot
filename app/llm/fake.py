@@ -50,7 +50,11 @@ class FakeLLM:
 
         if "content" in step:
             return AssistantTurn(
-                content=str(step["content"]), finish_reason="stop", usage_tokens=usage
+                content=str(step["content"]),
+                finish_reason="stop",
+                usage_tokens=usage,
+                prompt_tokens=0,
+                completion_tokens=usage,
             )
 
         name = str(step["tool"])
@@ -59,6 +63,8 @@ class FakeLLM:
             tool_calls=[ToolCall(id=f"call_{self._cursor}", name=name, arguments=args)],
             finish_reason="tool_calls",
             usage_tokens=usage,
+            prompt_tokens=0,
+            completion_tokens=usage,
         )
 
     @classmethod

@@ -61,5 +61,7 @@ class TaskState(TypedDict, total=False):
     # 预算与结论
     turns: int
     tokens_used: int
+    tokens_prompt: int
+    tokens_completion: int
     error: str | None
     outcome: str  # resolved | failed | needs_review | invalid

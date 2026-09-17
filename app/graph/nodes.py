@@ -167,6 +167,8 @@ class TaskNodes:
                 "findings": outcome.summary,
                 "turns": state.get("turns", 0) + outcome.turns,
                 "tokens_used": state.get("tokens_used", 0) + outcome.tokens_used,
+                "tokens_prompt": state.get("tokens_prompt", 0) + outcome.tokens_prompt,
+                "tokens_completion": state.get("tokens_completion", 0) + outcome.tokens_completion,
             }
         return {
             "status": "NEEDS_REVIEW",
@@ -219,6 +221,8 @@ class TaskNodes:
         update: dict[str, Any] = {
             "turns": state.get("turns", 0) + outcome.turns,
             "tokens_used": state.get("tokens_used", 0) + outcome.tokens_used,
+            "tokens_prompt": state.get("tokens_prompt", 0) + outcome.tokens_prompt,
+            "tokens_completion": state.get("tokens_completion", 0) + outcome.tokens_completion,
         }
         if outcome.finish_declared and not outcome.success and not outcome.patch_applied:
             # 模型声明放弃且没有任何补丁 → VERIFY_FAILED 终态

@@ -134,3 +134,12 @@ def test_loop_token_budget_zero_disables_token_check(ctx: ToolContext) -> None:
     with pytest.raises(BudgetError) as exc_info:
         run_plain_loop(ctx, SpendthriftModel(), "issue", max_turns=3, token_budget=0)
     assert "max_turns" in str(exc_info.value)
+
+
+def test_loop_accumulates_prompt_completion_tokens(ctx: ToolContext) -> None:
+    """N2a:循环累计 prompt/completion 明细;fake 下 prompt=0、completion=总量。"""
+    model = FakeLLM([{"tool": "finish", "args": {"success": True, "summary": "s"}}])
+    outcome = run_plain_loop(ctx, model, "issue")
+    assert outcome.tokens_prompt == 0
+    assert outcome.tokens_completion > 0
+    assert outcome.tokens_used == outcome.tokens_completion
