@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.config import get_settings
+from app.errors import ExecError
 from app.executor.local_runner import TestRunResult, run_tests
 
 log = logging.getLogger(__name__)
@@ -142,11 +143,17 @@ def run_pytest(
 
     basetemp 显式指向报告目录:目标仓库测试里的 tmp_path fixture 不再依赖
     系统临时目录(权限/容量不可控),也不污染被验证的工作区。
+    execution_backend="docker" 时改在临时容器内执行(隔离边界见 docker_runner),
+    签名与返回结构不变,上层无感知;镜像需预装 pytest(见 docker/executor.Dockerfile)。
     """
+    settings = get_settings()
+    timeout = timeout_seconds or settings.test_timeout_seconds
     junit = report_path or (Path(cwd) / ".patchpilot_junit.xml")
+    if settings.execution_backend == "docker":
+        return _run_pytest_in_container(cwd, test_ids, junit, timeout)
     cmd = build_pytest_cmd(python_exe, test_ids, junit, extra_args)
     cmd.append(f"--basetemp={(junit.parent / 'basetemp').as_posix()}")
-    run = run_tests(cmd, cwd, timeout_seconds or get_settings().test_timeout_seconds)
+    run = run_tests(cmd, cwd, timeout)
     report = parse_junit_xml(junit)
     report.exit_code = run.exit_code
     report.duration_ms = run.duration_ms
@@ -154,6 +161,36 @@ def run_pytest(
     report.no_tests_collected = run.exit_code == RC_NO_TESTS_COLLECTED and not report.timed_out
     log.info(
         "pytest: rc=%s passed=%s failed=%s errors=%s (timed_out=%s)",
+        report.exit_code,
+        report.passed,
+        report.failed,
+        report.errors,
+        report.timed_out,
+    )
+    return report, run
+
+
+def _run_pytest_in_container(
+    cwd: Path | str,
+    test_ids: list[str] | None,
+    junit: Path,
+    timeout_seconds: int,
+) -> tuple[PytestReport, TestRunResult]:
+    """docker 后端的 pytest 执行:复用 docker_runner 的双挂载与 junit 回传。
+
+    与 local 路径的差异:extra_args 不下发(容器内命令由 docker_runner 组装,
+    当前生产调用方未使用该参数);basetemp 用容器内可弃临时目录。
+    """
+    from app.executor.docker_runner import docker_available, run_tests_in_container
+
+    if not docker_available():
+        raise ExecError("execution_backend='docker' but docker daemon is not available")
+    report, run = run_tests_in_container(
+        cwd, test_ids or [], report_dir=junit.parent, timeout_seconds=timeout_seconds
+    )
+    report.no_tests_collected = run.exit_code == RC_NO_TESTS_COLLECTED and not run.timed_out
+    log.info(
+        "pytest(容器内): rc=%s passed=%s failed=%s errors=%s (timed_out=%s)",
         report.exit_code,
         report.passed,
         report.failed,

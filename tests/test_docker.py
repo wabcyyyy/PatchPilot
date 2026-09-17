@@ -50,3 +50,45 @@ def test_container_pytest_baseline_and_pass(tmp_path: Path) -> None:
     assert report2.all_passed and report2.passed == 2
     # junit 报告落在宿主的 reports 目录,不污染工作区
     assert len(list(reports.glob("junit-*.xml"))) == 2
+
+
+def test_run_pytest_docker_backend_end_to_end(tmp_path: Path, monkeypatch) -> None:
+    """N6 接线验收:backend=docker 时 run_pytest 全链路容器化——
+    基线失败集在容器内报失败,修复后在容器内转通过,junit 仍回传宿主。"""
+    monkeypatch.setenv("PATCHPILOT_EXECUTION_BACKEND", "docker")
+    monkeypatch.setenv("PATCHPILOT_DOCKER_IMAGE", "patchpilot-executor:latest")
+    from app.adapters.pytest_adapter import run_pytest
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        work = tmp_path / "ws"
+        materialize_repo(BUG_ROOT / "BUG-003" / "repo", work, extra_commit=False)
+        reports = tmp_path / "reports"
+        failed_ids = ["tests/test_labels.py::test_default_separator"]
+        keep_ids = ["tests/test_labels.py::test_custom_separator"]
+
+        report, run = run_pytest(
+            "python", work, failed_ids, report_path=reports / "baseline-junit.xml"
+        )
+        assert not report.all_passed and report.failed == 1
+        assert not run.timed_out
+
+        labels = work / "src" / "labels.py"
+        labels.write_text(
+            '"""标签拼接工具。"""\n\n\ndef join_labels(labels, sep=None):\n'
+            '    separator = "," if sep is None else sep\n'
+            '    result = ""\n'
+            "    for index, label in enumerate(labels):\n"
+            "        if index > 0:\n            result += separator\n        result += label\n"
+            "    return result\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        report2, _ = run_pytest(
+            "python", work, failed_ids + keep_ids, report_path=reports / "verify-junit.xml"
+        )
+        assert report2.all_passed and report2.passed == 2
+        assert len(list(reports.glob("junit-*.xml"))) == 2  # junit 回传宿主,不污染工作区
+    finally:
+        get_settings.cache_clear()

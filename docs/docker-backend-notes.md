@@ -1,59 +1,47 @@
-# Docker 执行后端:接线点分析与设计笔记(N6 骨架的白天续作)
+# Docker 执行后端:设计笔记(已接线,2026-09-18)
 
-> 状态:骨架已落地(`app/executor/backend.py` + `Settings.execution_backend`),
-> **未接入任何真实执行路径**。本文档记录哪些调用点可以切、哪些在禁区、白天怎么接。
+> 状态:**已接线并真机验证**。`app/adapters/pytest_adapter.py::run_pytest` 按
+> `Settings.execution_backend` 分发:local 直跑(默认,docker 路径零影响);
+> docker 时经 `docker_runner.run_tests_in_container` 在临时容器内执行,
+> 签名与返回结构不变,验证链路(nodes/driver)与 Agent 工具层(tools/execution)
+> 同时容器化。真机验收:BUG-001 全链路回放在 backend=docker 下 FINISHED/resolved
+> (`test_run_pytest_docker_backend_end_to_end` 常驻回归,守护进程不可用时自动跳过)。
 
-## 现状
+## 使用前提
 
-- `Settings.execution_backend: str = "local"`(local|docker,非法值在构造 `Settings()` 时报错);
-- `app/executor/backend.py`:
-  - `build_docker_command(command, *, image, workspace, memory, cpus)` 把宿主命令包进
-    `docker run --rm --network none --memory ... --cpus ... -v ws:ws -w ws <image> ...`;
-  - `run_tests_by_backend(command, cwd, timeout)` 按 settings 分发;
-    docker 路径先 `docker_available()` 探测,再经 `local_runner.run_tests` 执行
-    `docker run` 子进程(与 `docker_runner.run_tests_in_container` 的内部实现同构)。
-- 隔离旗标与 `docker_runner` 一致;镜像默认 `Settings.docker_image`(python:3.11-slim)。
+```bash
+docker build -t patchpilot-executor:latest docker/   # 镜像需预装 pytest(python:3.11-slim 没有)
+export PATCHPILOT_EXECUTION_BACKEND=docker
+export PATCHPILOT_DOCKER_IMAGE=patchpilot-executor:latest   # 默认 python:3.11-slim 无 pytest
+```
 
-## 执行调用点全景(谁在真正跑 pytest)
+## 接线点(当年分析的结论,现照此落地)
 
-| 调用点 | 位置 | 禁区? | 说明 |
+| 调用点 | 位置 | 是否容器化 | 说明 |
 |---|---|---|---|
-| 基线/验证测试 | `app/graph/nodes.py` → `run_pytest` | `app/graph/` 语义冻结 | 只允许"加参数/加字段"式扩展,换后端需要讨论 |
-| plain 引擎验证 | `app/evals/driver.py` → `run_pytest` | 判定逻辑在 metrics,driver 本体可改 | 与上共用 `run_pytest` |
-| Agent 自跑测试 | `app/tools/execution.py` → `run_tests` | `app/tools/` 边界校验冻结 | 命令白名单边界不可动 |
-| 执行器本体 | `app/executor/local_runner.py` | 边界冻结(签名/进程树清理) | 不改,`docker run` 也由它执行 |
-| 隔离执行器(已有) | `app/executor/docker_runner.py` | 非禁区但本次未动 | 挂载 reports 传回 junit 的现成实现 |
+| 基线/验证测试 | `app/graph/nodes.py` → `run_pytest` | ✅(经由 run_pytest 分发) | 上层无感知 |
+| plain 引擎验证 | `app/evals/driver.py` → `run_pytest` | ✅(同上) | 判定逻辑未动 |
+| Agent 自跑测试 | `app/tools/execution.py` → `run_pytest` | ✅(同上) | 命令白名单边界原样保留 |
+| 通用执行器 | `app/executor/local_runner.py` | 未动 | `docker run` 子进程也由它执行 |
+| 隔离执行器 | `app/executor/docker_runner.py` | 复用 | 双挂载 + junit 回传的现成实现 |
 
-关键事实:两条链路最终都收敛到 `app/adapters/pytest_adapter.py::run_pytest`
-(签名规则冻结),它内部调用 `local_runner.run_tests`。**最小侵入的接线点就是
-`run_pytest` 内部的这一次 `run_tests` 调用**。
+**选择方案 A 的原因**:`run_pytest` 是全部 pytest 执行的唯一汇聚点,在这里分支一次,
+三条链路同时生效;签名不变,不触碰禁区语义。
 
-## 白天接线方案(建议)
+## 已知差异与坑(仍然有效)
 
-1. **方案 A(最小侵入,推荐)**:在 `pytest_adapter.run_pytest` 里把
-   `run_tests(...)` 换成 `backend.run_tests_by_backend(...)`,签名不变、判定不变。
-   - 需要解决:junit 报告路径。容器内写 `/reports/junit-*.xml` 才能传回宿主
-     (见 `docker_runner.run_tests_in_container` 的挂载做法),`run_pytest` 的
-     junit 输出路径参数需要做"宿主路径 → 容器路径"映射;
-   - 需要解决:镜像内依赖。`python:3.11-slim` 没有被测项目的依赖与 pytest,
-     要么构建含依赖的题内镜像,要么约定 `pip install -e .` 的预跑步骤。
-2. **方案 B(复用现有实现)**:`run_pytest` 增加 `in_container: bool = False`
-   参数,为真时走 `docker_runner.run_tests_in_container`(向后兼容的加参数扩展,
-   符合禁区约束),由上层(driver/nodes)决定是否传 True。
-3. **不建议**:在 `tools/execution.py` 层切换后端——Agent 自跑测试属于
-   白名单边界保护的攻击面,容器化它需要单独的威胁模型讨论。
-
-## 已知坑(白天验证清单)
-
-- [ ] Windows 宿主路径挂载语法(`D:\...` → `//d/...` 或 `-v //c/...`),`docker run` 的
-      `-v` 对盘符路径的兼容性要在真实环境验证;
-- [ ] 容器内进程的用户/权限与挂载目录的写权限(junit 写 `/reports`);
-- [ ] `--network none` 下 pytest 插件是否尝试联网(缓存/遥测)导致慢或失败;
-- [ ] 超时语义:`local_runner` 杀的是宿主进程树,`docker run` 的子进程在容器内,
-      超时后要确认容器确实被 `--rm` 回收(必要时改用 `--name` + `docker kill`);
-- [ ] `docker_available()` 有 lru_cache:守护进程中途启动/停掉时进程内缓存不会刷新。
+- `extra_args` 不下发容器路径(容器内命令由 docker_runner 组装;当前生产调用方未用该参数);
+- 容器路径 basetemp 用容器内可弃临时目录(容器销毁即清理,无需指向报告目录);
+- Windows 宿主路径挂载:`docker_runner` 直接挂载绝对路径,Docker Desktop 桌面版已验证可用;
+- `--network none` 下容器无网:被测仓库的测试若尝试联网会失败——这正是隔离语义;
+- 超时杀的是宿主 `docker run` 进程,容器靠 `--rm` 在退出后回收;
+- `docker_available()` 带 lru_cache:守护进程中途启停不会刷新(进程内);
+- 镜像内只有 pytest:被测仓库若引入第三方依赖,需要扩展 `docker/executor.Dockerfile` 或换题内镜像。
 
 ## 测试怎么保持离线
 
-`tests/test_backend.py` 对 docker 路径全部 monkeypatch(`run_tests` 捕获拼装命令、
-`docker_available` 打桩),不拉真容器;local 路径只跑 `sys.executable -c` 级别的真子进程。
+- `tests/test_backend.py`:docker 路径全部 monkeypatch(run_tests_in_container 捕获、
+  docker_available 打桩),不拉真容器;
+- `tests/test_docker.py::test_run_pytest_docker_backend_end_to_end`:真实容器回归,
+  守护进程不可用时自动 skip(与该文件既有约定一致);
+- 全量 pytest 套件在 backend 默认 local 下运行,不依赖 docker。

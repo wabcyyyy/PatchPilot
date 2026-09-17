@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -110,3 +111,61 @@ def test_build_docker_command_shape(tmp_path) -> None:
         "-m",
         "pytest",
     ]
+
+
+def test_run_pytest_routes_to_container_backend(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """backend=docker 时 run_pytest 走容器执行器,返回结构与 local 完全一致。"""
+    from app.adapters.pytest_adapter import PytestReport, run_pytest
+
+    captured: dict = {}
+    fake_report = PytestReport(exit_code=0, passed=2)
+    fake_run = TestRunResult(
+        command=["docker", "run"], exit_code=0, stdout_tail="", stderr_tail="", duration_ms=1
+    )
+
+    def fake_container(workspace, test_ids, *, report_dir, timeout_seconds=None, **kwargs):
+        captured.update(workspace=workspace, test_ids=list(test_ids or []), report_dir=report_dir)
+        return fake_report, fake_run
+
+    monkeypatch.setenv("PATCHPILOT_EXECUTION_BACKEND", "docker")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setattr("app.executor.docker_runner.run_tests_in_container", fake_container)
+    monkeypatch.setattr("app.executor.docker_runner.docker_available", lambda: True)
+    reports = tmp_path.parent / "reports"
+    try:
+        report, run = run_pytest(
+            sys.executable,
+            tmp_path,
+            ["tests/test_a.py::test_one"],
+            report_path=reports / "junit.xml",
+        )
+    finally:
+        get_settings.cache_clear()
+
+    assert report is fake_report and run is fake_run
+    assert captured["workspace"] == tmp_path
+    assert captured["test_ids"] == ["tests/test_a.py::test_one"]
+    assert captured["report_dir"] == reports
+
+
+def test_run_pytest_docker_unavailable_raises(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from app.adapters.pytest_adapter import run_pytest
+    from app.errors import ExecError
+
+    monkeypatch.setenv("PATCHPILOT_EXECUTION_BACKEND", "docker")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setattr("app.executor.docker_runner.docker_available", lambda: False)
+    try:
+        with pytest.raises(ExecError) as exc_info:
+            run_pytest(sys.executable, tmp_path)
+    finally:
+        get_settings.cache_clear()
+    assert "not available" in str(exc_info.value)
