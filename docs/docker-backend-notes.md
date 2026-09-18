@@ -58,17 +58,23 @@ export PATCHPILOT_DOCKER_IMAGE=patchpilot-executor:latest   # 默认 python:3.11
 | 第三方依赖(固定、通用) | 扩展 `docker/executor.Dockerfile` 预装后自建 |
 | 第三方依赖(题目特定) | 为该题构建专用镜像,任务经 `PATCHPILOT_DOCKER_IMAGE`(全局)指定 |
 
-## 服务化部署(docker-compose)的隔离闭环(M11.1)
+## 服务化部署(docker-compose)的隔离闭环(M11.1/M11.3)
 
 - `docker/api.Dockerfile` 已装 docker-ce-cli,API 容器可经挂载的宿主
   `/var/run/docker.sock` 派发临时容器(见 `docker/docker-compose.yml`);
-- 部署侧切换:`PATCHPILOT_EXECUTION_BACKEND=docker
-  PATCHPILOT_DOCKER_IMAGE=patchpilot-executor:latest docker compose up -d --build`
-  (执行器镜像对宿主守护进程可见即可,容器间无需传递);
+- **路径命名空间约束(真机踩出来的坑)**:API 容器把工作区路径字符串原样传给
+  `docker run -v`,宿主守护进程按**宿主同名路径**解析——API 容器里的命名卷路径
+  (如 /data/runs)在守护进程侧并不存在,执行容器会拿到空目录。因此 compose 的
+  runs 目录必须 bind 挂载且**容器内 target 与宿主守护进程视角路径一致**
+  (`PATCHPILOT_RUNS_ROOT` == bind target):Linux 宿主天然同路径;
+  Docker Desktop 上守护进程视角是 `/run/desktop/mnt/host/<盘符小写>/...`,
+  `scripts/compose_smoke.sh` 有现成换算;
+- 冒烟验收:`bash scripts/compose_smoke.sh` —— 构建执行器镜像 → 起 compose
+  (backend=docker,端口可经 PATCHPILOT_API_HOST_PORT 避让)→ API 建 BUG-001 →
+  轮询终态 → 断言 report verdict=resolved 且 provenance.execution_backend=docker;
 - 注意:挂载 sock 等于把宿主守护进程的等价权限交给 API 容器——这是把隔离边界
-  从"进程"升级为"容器"的代价,compose 默认仍绑回环地址;
-- Windows/Docker Desktop 的 `/var/run/docker.sock` 挂载路径可用(桌面版已内置转发),
-  冒烟脚本 `scripts/compose_smoke.sh` 端到端验证本闭环。
+  从"进程"升级为"容器"的代价,compose 默认仍绑回环地址,redis 无宿主暴露面;
+- Windows/Docker Desktop 的 `/var/run/docker.sock` 挂载路径可用(桌面版已内置转发)。
 
 ## 测试怎么保持离线
 

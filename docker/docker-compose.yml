@@ -4,22 +4,33 @@ services:
       context: ..
       dockerfile: docker/api.Dockerfile
     ports:
-      # 仅绑定回环地址:API 无鉴权,不应暴露到局域网
-      - "127.0.0.1:8001:8000"
+      # 仅绑定回环地址:API 无鉴权,不应暴露到局域网;
+      # 宿主端口可用 PATCHPILOT_API_HOST_PORT 覆盖(避免与本机其他服务冲突)
+      - "${PATCHPILOT_API_HOST_IP:-127.0.0.1}:${PATCHPILOT_API_HOST_PORT:-8001}:8000"
     environment:
       PATCHPILOT_REDIS_URL: redis://redis:6379/0
       PATCHPILOT_DB_PATH: /data/patchpilot.sqlite3
-      PATCHPILOT_RUNS_ROOT: /data/runs
+      # docker 后端的关键约束:PATCHPILOT_RUNS_ROOT 必须 = 下方 bind 挂载的 target。
+      # API 容器把 runs 下的工作区路径字符串原样传给 docker run -v,
+      # 宿主守护进程按"宿主同名路径"解析——两侧路径一致,执行容器才能看到工作区。
+      # Windows/Docker Desktop 上 PATCHPILOT_RUNS_ROOT 用守护进程视角路径
+      # (/run/desktop/mnt/host/<盘符小写>/...),scripts/compose_smoke.sh 有现成换算。
+      PATCHPILOT_RUNS_ROOT: ${PATCHPILOT_RUNS_ROOT:-/data/runs}
       # 测试执行后端:local(默认)由 API 容器内子进程直跑;docker 经下方挂载的
       # 宿主 docker.sock 派发进临时容器(M11 隔离闭环)。切换方式:
       #   docker build -t patchpilot-executor:latest -f docker/executor.Dockerfile docker/
       #   PATCHPILOT_EXECUTION_BACKEND=docker PATCHPILOT_DOCKER_IMAGE=patchpilot-executor:latest \
+      #     PATCHPILOT_RUNS_HOST_DIR=<宿主runs目录> PATCHPILOT_RUNS_ROOT=<同路径> \
       #     docker compose up -d --build
       PATCHPILOT_EXECUTION_BACKEND: ${PATCHPILOT_EXECUTION_BACKEND:-local}
       PATCHPILOT_DOCKER_IMAGE: ${PATCHPILOT_DOCKER_IMAGE:-python:3.11-slim}
     volumes:
       - api-data:/data
       - ../bugs:/app/bugs:ro
+      # runs 目录 bind 挂载(docker 后端必需;local 后端它只是宿主可见的普通目录)
+      - type: bind
+        source: ${PATCHPILOT_RUNS_HOST_DIR:-./data/runs}
+        target: ${PATCHPILOT_RUNS_ROOT:-/data/runs}
       # docker 后端经此把测试派发到宿主守护进程(local 后端用不到,介意可删此行)
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
@@ -28,9 +39,8 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports:
-      # 无密码,仅限本机访问
-      - "127.0.0.1:6379:6379"
+    # 不映射宿主端口:API 走 compose 内网(redis://redis:6379/0),需要人工检查时
+    # 用 `docker compose exec redis redis-cli`;且无密码的 redis 不应有任何宿主暴露面
     restart: unless-stopped
 
 volumes:
