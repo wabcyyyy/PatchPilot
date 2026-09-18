@@ -77,7 +77,7 @@ app/
 bugs/           # 20 道自建 Bug + 4 个攻击样例(scripts/gen_bugs.py 生成)
 docker/         # 执行器镜像、API 镜像、Compose
 docs/           # 设计笔记、隔离实验、复盘(PM-001~006)、评测报告
-tests/          # 项目自身测试(115+ 用例)
+tests/          # 项目自身测试(210+ 用例,全离线,模型交互用 FakeLLM 回放)
 ```
 
 ## 文档
@@ -85,8 +85,10 @@ tests/          # 项目自身测试(115+ 用例)
 | 文档 | 内容 |
 |---|---|
 | `docs/design.md` | 设计决策与已知边界 |
-| `docs/eval-report.md` | 最新评测报告(可复现) |
+| `docs/threat-model.md` | 威胁模型:风险清单、缓解与"明确不防"清单 |
+| `docs/PatchPilot改进计划.md` | 评审驱动的改进计划(M10–M13)与完成状态 |
+| `docs/eval-report.md` | 最新评测报告(可复现,含批次溯源) |
 | `docs/postmortems/` | 失败复盘(6 篇) |
-| `docs/docker-isolation-notes.md` | 容器隔离边界实验 |
+| `docs/docker-isolation-notes.md` / `docs/docker-backend-notes.md` | 容器隔离边界实验 / 执行后端与部署闭环 |
 | 《PatchPilot项目企划书.md》 | 架构、状态机、门禁、评测方案 |
 | 《PatchPilot开发计划书.md》 / 《PatchPilot学习计划.md》 | 里程碑任务卡 / 学习路线 |
