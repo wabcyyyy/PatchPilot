@@ -1,0 +1,25 @@
+--- a/src/fees.py
++++ b/src/fees.py
+@@ -8,4 +8,7 @@
+ 
+ def shipping_for(weight_kg):
+     """运费 = 基础价 + 按公斤计费;重量超过 HEAVY_WEIGHT_KG 时封顶 HEAVY_SHIPPING_CAP。"""
+-    return round(BASE_SHIPPING + PER_KG * weight_kg, 2)
++    fee = BASE_SHIPPING + PER_KG * weight_kg
++    if weight_kg > HEAVY_WEIGHT_KG:
++        fee = min(fee, HEAVY_SHIPPING_CAP)
++    return round(fee, 2)
+--- a/src/checkout.py
++++ b/src/checkout.py
+@@ -1,7 +1,10 @@
+ """订单结算。"""
++
++from src.fees import shipping_for
+ 
+ 
+ def order_total(items):
+     """订单总额 = Σ(单价×数量) + 运费;items 为 (名称, 单价, 数量, 单件重量kg)。"""
+     subtotal = sum(price * qty for _, price, qty, _ in items)
+-    return round(subtotal, 2)
++    total_weight = sum(weight * qty for _, _, qty, weight in items)
++    return round(subtotal + shipping_for(total_weight), 2)

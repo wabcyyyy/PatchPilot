@@ -1076,17 +1076,19 @@ def unified_diff(module_path: str, buggy: str, fixed: str) -> str:
 
 def replay_script(spec: dict, diff_text: str) -> list[dict]:
     """plain 引擎回放脚本:单个循环走完全部步骤。"""
-    return [
-        {"tool": "search_code", "args": {"keyword": spec["search_hint"]}},
-        {"tool": "read_file", "args": {"path": spec["module"]}},
+    modules = [fix["module"] for fix in _fixes_of(spec)]
+    steps = [{"tool": "search_code", "args": {"keyword": spec["search_hint"]}}]
+    steps += [{"tool": "read_file", "args": {"path": module}} for module in modules]
+    steps += [
         {"tool": "apply_patch", "args": {"diff_text": diff_text}},
         {"tool": "run_tests", "args": {"test_set": "failed"}},
         {"tool": "run_tests", "args": {"test_set": "regression"}},
         {
             "tool": "finish",
-            "args": {"success": True, "summary": f"修复 {spec['module']} 并通过全部测试"},
+            "args": {"success": True, "summary": f"修复 {', '.join(modules)} 并通过全部测试"},
         },
     ]
+    return steps
 
 
 def graph_replay_script(spec: dict, diff_text: str) -> list[dict]:
@@ -1095,10 +1097,11 @@ def graph_replay_script(spec: dict, diff_text: str) -> list[dict]:
     两阶段共用一个 FakeLLM 时按顺序消费;定位段不能出现写工具,
     否则会在 LOCALIZE 阶段被阶段限制拦截、脚本错位。
     """
-    localize = [
-        {"tool": "search_code", "args": {"keyword": spec["search_hint"]}},
-        {"tool": "read_file", "args": {"path": spec["module"]}},
-        {"tool": "finish", "args": {"success": True, "summary": f"根因定位:{spec['module']}"}},
+    modules = [fix["module"] for fix in _fixes_of(spec)]
+    localize = [{"tool": "search_code", "args": {"keyword": spec["search_hint"]}}]
+    localize += [{"tool": "read_file", "args": {"path": module}} for module in modules]
+    localize += [
+        {"tool": "finish", "args": {"success": True, "summary": f"根因定位:{', '.join(modules)}"}}
     ]
     propose = [
         {"tool": "apply_patch", "args": {"diff_text": diff_text}},
@@ -1106,21 +1109,36 @@ def graph_replay_script(spec: dict, diff_text: str) -> list[dict]:
         {"tool": "run_tests", "args": {"test_set": "regression"}},
         {
             "tool": "finish",
-            "args": {"success": True, "summary": f"修复 {spec['module']} 并通过全部测试"},
+            "args": {"success": True, "summary": f"修复 {', '.join(modules)} 并通过全部测试"},
         },
     ]
     return localize + propose
 
 
-def gen_bug(spec: dict) -> Path:
-    bug_dir = BUGS / spec["id"]
+def _fixes_of(spec: dict) -> list[dict]:
+    """spec 的修复文件列表:多文件题用 fixes,单文件题回退 module/buggy_code/fixed_code。"""
+    fixes = spec.get("fixes")
+    if fixes:
+        return fixes
+    return [
+        {
+            "module": spec["module"],
+            "buggy_code": spec["buggy_code"],
+            "fixed_code": spec["fixed_code"],
+        }
+    ]
+
+
+def gen_bug(spec: dict, root: Path | None = None) -> Path:
+    bug_dir = (root or BUGS) / spec["id"]
     (bug_dir / "repo" / "src").mkdir(parents=True, exist_ok=True)
     (bug_dir / "repo" / "tests").mkdir(parents=True, exist_ok=True)
     (bug_dir / "replay").mkdir(parents=True, exist_ok=True)
 
     repo = bug_dir / "repo"
     (repo / "conftest.py").write_text(_conftest(), encoding="utf-8", newline="\n")
-    (repo / spec["module"]).write_text(spec["buggy_code"], encoding="utf-8", newline="\n")
+    for fix in _fixes_of(spec):
+        (repo / fix["module"]).write_text(fix["buggy_code"], encoding="utf-8", newline="\n")
     for rel, content in spec.get("extra_files", {}).items():
         (repo / rel).write_text(content, encoding="utf-8", newline="\n")
     (repo / spec["test_path"]).write_text(spec["test_code"], encoding="utf-8", newline="\n")
@@ -1144,7 +1162,9 @@ def gen_bug(spec: dict) -> Path:
     )
     (bug_dir / "manifest.yaml").write_text(manifest, encoding="utf-8", newline="\n")
 
-    diff_text = unified_diff(spec["module"], spec["buggy_code"], spec["fixed_code"])
+    diff_text = "".join(
+        unified_diff(fix["module"], fix["buggy_code"], fix["fixed_code"]) for fix in _fixes_of(spec)
+    )
     (bug_dir / "expected" / "reference.diff").parent.mkdir(parents=True, exist_ok=True)
     (bug_dir / "expected" / "reference.diff").write_text(diff_text, encoding="utf-8", newline="\n")
     script = replay_script(spec, diff_text)

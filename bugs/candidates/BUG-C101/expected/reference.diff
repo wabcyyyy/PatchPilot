@@ -1,0 +1,9 @@
+--- a/src/aggregator.py
++++ b/src/aggregator.py
+@@ -5,5 +5,5 @@
+     """把 (name, count) 序列按 name 聚合;同名条目计数求和。"""
+     totals = {}
+     for name, count in pairs:
+-        totals[name] = count
++        totals[name] = totals.get(name, 0) + count
+     return totals

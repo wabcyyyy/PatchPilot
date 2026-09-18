@@ -1,0 +1,15 @@
+id: BUG-C102
+category: 跨文件协同
+difficulty: hard
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_checkout.py::test_order_includes_shipping
+  - tests/test_checkout.py::test_heavy_multi_quantity_order
+  - tests/test_checkout.py::test_shipping_capped_for_heavy
+regression_tests:
+  - tests/test_checkout.py::test_light_shipping_uncapped
+  - tests/test_checkout.py::test_zero_weight_shipping
+allowed_paths:
+  - src/fees.py
+  - src/checkout.py
+max_rounds: 5

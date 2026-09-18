@@ -1,0 +1,15 @@
+id: BUG-C101
+category: 跨文件定位
+difficulty: hard
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_report_counts.py::test_duplicated_names_are_summed
+regression_tests:
+  - tests/test_report_counts.py::test_unique_names_kept
+  - tests/test_report_counts.py::test_empty_input
+  - tests/test_report_counts.py::test_zero_count_is_kept
+allowed_paths:
+  - src/aggregator.py
+  - src/summary.py
+  - src/report.py
+max_rounds: 5
