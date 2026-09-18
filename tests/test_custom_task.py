@@ -128,6 +128,58 @@ def test_valid_custom_task_created(client: TestClient, custom_repo: Path) -> Non
     assert task["status"] in {"QUEUED", "RUNNING"}
 
 
+# ---------- T12.2:repo_path 根白名单 ----------
+
+
+def _post_with_roots(
+    client: TestClient, payload: dict, value: str, monkeypatch: pytest.MonkeyPatch
+):
+    """设置 PATCHPILOT_ALLOWED_REPO_ROOTS 后发请求;finally 清 settings 缓存防泄漏。"""
+    from app.config import get_settings
+
+    monkeypatch.setenv("PATCHPILOT_ALLOWED_REPO_ROOTS", value)
+    get_settings.cache_clear()
+    try:
+        return client.post("/api/tasks", json=payload)
+    finally:
+        get_settings.cache_clear()
+
+
+def test_repo_inside_allowed_roots_created(
+    client: TestClient, custom_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    resp = _post_with_roots(
+        client, _custom_payload(custom_repo), str(custom_repo.parent), monkeypatch
+    )
+    assert resp.status_code == 201, resp.text
+
+
+def test_repo_outside_allowed_roots_rejected(
+    client: TestClient, custom_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    resp = _post_with_roots(
+        client, _custom_payload(custom_repo), str(tmp_path / "somewhere-else"), monkeypatch
+    )
+    assert resp.status_code == 422
+    body = resp.json()
+    assert body["code"] == "invalid_request" and "allowed repo roots" in body["message"]
+
+
+def test_relative_root_entry_rejected(
+    client: TestClient, custom_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    resp = _post_with_roots(client, _custom_payload(custom_repo), "relative/root", monkeypatch)
+    assert resp.status_code == 422
+    assert "absolute" in resp.json()["message"]
+
+
+def test_empty_roots_unrestricted(
+    client: TestClient, custom_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    resp = _post_with_roots(client, _custom_payload(custom_repo), "", monkeypatch)
+    assert resp.status_code == 201, resp.text
+
+
 def test_custom_tasks_never_idempotent(client: TestClient, custom_repo: Path) -> None:
     """CUSTOM id 含随机段:同一请求两次创建是两个独立任务(正式题仍幂等,见 test_api)。"""
     first = client.post("/api/tasks", json=_custom_payload(custom_repo)).json()

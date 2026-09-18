@@ -43,6 +43,26 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds")
 
 
+def ensure_repo_allowed(resolved: Path) -> None:
+    """repo_path 根白名单(T12.2):配置 PATCHPILOT_ALLOWED_REPO_ROOTS(逗号分隔绝对
+    路径)后,自定义任务只允许指向这些根之内;空配置不限制(个人本地模式,兼容现状)。"""
+    raw = get_settings().allowed_repo_roots
+    if not raw:
+        return
+    for part in raw.split(","):
+        if not part.strip():
+            continue
+        root = Path(part.strip())
+        if not root.is_absolute():
+            raise InvalidRequestError(
+                f"PATCHPILOT_ALLOWED_REPO_ROOTS entries must be absolute paths: {part!r}"
+            )
+        root = root.resolve()
+        if resolved == root or resolved.is_relative_to(root):
+            return
+    raise InvalidRequestError(f"repo_path outside allowed repo roots: {resolved}")
+
+
 class TaskService:
     def __init__(
         self,
@@ -85,6 +105,7 @@ class TaskService:
             resolved = Path(repo_path).resolve()
             if not resolved.is_dir():
                 raise TaskError(f"repo_path not found or not a directory: {repo_path}")
+            ensure_repo_allowed(resolved)
             if model == "fake" and not replay_script:
                 raise InvalidRequestError(
                     "custom repo task with model='fake' requires a replay_script;"

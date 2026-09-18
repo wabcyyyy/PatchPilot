@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     redis_url: str = ""
     docker_image: str = "python:3.11-slim"
     api_token: str = ""  # API Bearer Token;空 = 不鉴权(本地与现有测试不受影响)
+    allowed_repo_roots: str = ""  # repo_path 根白名单(逗号分隔绝对路径);空 = 不限制(个人本地模式)
     price_overrides: str = ""  # 可选 JSON 文件路径(同构 PRICES,优先级高于内置价目)
     execution_backend: str = "local"  # 测试执行后端:local | docker(容器集成留待人工验证)
 
