@@ -43,6 +43,24 @@ def repro_commands(runs_root: Path, per_bug: list[RunRow], report_out: str) -> l
     return lines
 
 
+def _provenance_note(per_bug: list[RunRow]) -> str:
+    """从批次最新一次运行的 provenance 归并出溯源说明;无 provenance 返回空串。"""
+    if not per_bug:
+        return ""
+    prov = max(per_bug, key=lambda r: r.finished_stamp).provenance
+    if not prov:
+        return ""
+    parts = []
+    if prov.get("model_name"):
+        parts.append(f"模型 {prov['model_name']}")
+    if prov.get("execution_backend"):
+        parts.append(f"执行后端 {prov['execution_backend']}")
+    commit = str(prov.get("git_commit") or "")
+    if commit:
+        parts.append(f"代码 {commit[:12]}")
+    return " · ".join(parts)
+
+
 def render(runs_root: Path, bugs_root: Path, report_out: str = "docs/eval-report.md") -> str:
     rows = [annotate(r, bugs_root) for r in collect_runs(runs_root)]
     per_bug = latest_per_bug(rows)
@@ -67,6 +85,11 @@ def render(runs_root: Path, bugs_root: Path, report_out: str = "docs/eval-report
         f"- 生成时间:{generated}",
         f"- 运行目录:`{runs_root}`(共 {len(rows)} 次运行,每题取最新 {len(per_bug)} 题)",
         f"- 模型提供方:**{providers}**",
+    ]
+    provenance_note = _provenance_note(per_bug)
+    if provenance_note:
+        lines.append(f"- 批次溯源:{provenance_note}(取自批次最新运行)")
+    lines += [
         "",
         "> **数据来源声明**:本报告由 `python -m app.evals.report` 从运行产物自动生成;",
         f"> 每个指标都有判定脚本(metrics.py),无人工标注。{batch_note}",
@@ -123,14 +146,45 @@ def render(runs_root: Path, bugs_root: Path, report_out: str = "docs/eval-report
     return "\n".join(lines)
 
 
+def render_multi(
+    runs_roots: list[Path], bugs_root: Path, report_out: str = "docs/eval-report.md"
+) -> str:
+    """多批次对比报告(T10.4):每个批次独立分节,含各自的指标/溯源/复现口径。
+
+    批次间用水平线分隔;指标口径完全一致(同一 metrics.py 判定),便于横向对比。
+    """
+    generated = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+    roots = ", ".join(f"`{root.as_posix()}`" for root in runs_roots)
+    parts = [
+        "# PatchPilot 评测报告(多批次对比)",
+        "",
+        f"- 生成时间:{generated}",
+        f"- 参与对比的批次({len(runs_roots)} 个):{roots}",
+        "- 各批次分节展示;指标判定口径一致(metrics.py),可直接横向对比。",
+    ]
+    for root in runs_roots:
+        parts += ["", "---", ""]
+        parts.append(render(root, bugs_root, report_out=report_out))
+    return "\n".join(parts)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="生成评测报告")
-    parser.add_argument("--runs", default="runs/m9")
+    parser.add_argument(
+        "--runs",
+        action="append",
+        default=None,
+        help="runs 目录;可多次传入做批次对比(默认 runs/m9)",
+    )
     parser.add_argument("--bugs", default="bugs")
     parser.add_argument("--out", default="docs/eval-report.md")
     args = parser.parse_args(argv)
 
-    report = render(Path(args.runs), Path(args.bugs), report_out=args.out)
+    runs_roots = [Path(r) for r in args.runs] if args.runs else [Path("runs/m9")]
+    if len(runs_roots) == 1:
+        report = render(runs_roots[0], Path(args.bugs), report_out=args.out)
+    else:
+        report = render_multi(runs_roots, Path(args.bugs), report_out=args.out)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(report, encoding="utf-8", newline="\n")

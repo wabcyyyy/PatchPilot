@@ -1,4 +1,4 @@
-"""T10.1 批次溯源与报告复现口径测试。"""
+"""T10.1/T10.4 批次溯源、复现口径与多批次对比测试。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 from app.evals.bugset import load_bug, load_replay_script
 from app.evals.driver import run_task
 from app.evals.metrics import annotate, collect_runs, latest_per_bug
-from app.evals.report import render
+from app.evals.report import render, render_multi
 from app.graph.runner import run_task_graph
 from app.llm.fake import FakeLLM
 
@@ -97,3 +97,56 @@ def test_graph_engine_records_provenance(tmp_path: Path) -> None:
 
     assert report["provenance"]["engine"] == "graph"
     assert report["provenance"]["model_provider"] == "fake-replay"
+
+
+def test_report_shows_provenance_note(tmp_path: Path) -> None:
+    runs = tmp_path / "runs" / "real"
+    _write_report(
+        runs / "BUG-001-x",
+        provenance={
+            "model_provider": "openai",
+            "engine": "graph",
+            "model_name": "gpt-4o-mini",
+            "execution_backend": "docker",
+            "git_commit": "abcdef1234567890",
+        },
+        model_provider="openai",
+    )
+    text = render(runs, BUG_ROOT)
+    assert "批次溯源:模型 gpt-4o-mini · 执行后端 docker · 代码 abcdef123456" in text
+
+    legacy = tmp_path / "runs" / "m9"
+    _write_report(legacy / "BUG-001-x")  # 无 provenance 的旧批次
+    assert "批次溯源" not in render(legacy, BUG_ROOT)
+
+
+def test_multi_batch_report_lists_each_batch(tmp_path: Path) -> None:
+    fake_runs = tmp_path / "runs" / "m9"
+    real_runs = tmp_path / "runs" / "real"
+    _write_report(fake_runs / "BUG-001-x")
+    _write_report(
+        real_runs / "BUG-001-y",
+        provenance={"model_provider": "openai", "engine": "graph"},
+        model_provider="openai",
+    )
+    text = render_multi([fake_runs, real_runs], BUG_ROOT, report_out="docs/cmp.md")
+
+    assert "多批次对比" in text
+    assert text.count("---") >= 2
+    assert f"`{fake_runs.as_posix()}`" in text and f"`{real_runs.as_posix()}`" in text
+    assert f"--model fake --engine graph --out {fake_runs.as_posix()}" in text
+    assert f"--model openai --engine graph --out {real_runs.as_posix()}" in text
+    assert "--out docs/cmp.md" in text
+
+
+def test_main_accepts_multiple_runs(tmp_path: Path) -> None:
+    from app.evals.report import main
+
+    a, b, out = tmp_path / "a", tmp_path / "b", tmp_path / "cmp.md"
+    _write_report(a / "BUG-001-x")
+    _write_report(b / "BUG-002-x", bug_id="BUG-002")
+    rc = main(["--runs", str(a), "--runs", str(b), "--bugs", "bugs", "--out", str(out)])
+    assert rc == 0
+    text = out.read_text(encoding="utf-8")
+    assert "多批次对比" in text
+    assert "BUG-001" in text and "BUG-002" in text
