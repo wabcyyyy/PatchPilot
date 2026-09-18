@@ -100,9 +100,21 @@ def test_custom_fake_without_script_rejected(client: TestClient, custom_repo: Pa
     assert "replay_script" in body["message"] and "openai" in body["message"]
 
 
-def test_custom_openai_disabled_rejected(client: TestClient, custom_repo: Path) -> None:
-    """自定义任务 + openai 走现有总开关前置校验(默认关闭 → 404,不建任务)。"""
-    resp = client.post("/api/tasks", json=_custom_payload(custom_repo, model="openai"))
+def test_custom_openai_disabled_rejected(
+    client: TestClient, custom_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """自定义任务 + openai 走现有总开关前置校验:开关显式关闭时 404,不建任务、不烧钱。
+
+    显式置 false(而非依赖默认):本地 .env 可能已开 ENABLED,测试绝不能真调外部模型。
+    """
+    from app.config import get_settings
+
+    monkeypatch.setenv("PATCHPILOT_LLM_ENABLED", "false")
+    get_settings.cache_clear()
+    try:
+        resp = client.post("/api/tasks", json=_custom_payload(custom_repo, model="openai"))
+    finally:
+        get_settings.cache_clear()
     assert resp.status_code == 404
     body = resp.json()
     assert body["code"] == "invalid_task" and "PATCHPILOT_LLM_ENABLED" in body["message"]

@@ -13,6 +13,18 @@ from app.llm.base import AssistantTurn, ToolCall, estimate_tokens
 log = logging.getLogger(__name__)
 
 
+def _build_extra_body(thinking: str) -> dict[str, Any] | None:
+    """DeepSeek 思考模式:disabled 关闭;low/high/max 开启并设强度;空 = 跟随服务端默认。
+
+    走 extra_body 以兼容不同 SDK 版本(参数原样并入请求体)。
+    """
+    if not thinking:
+        return None
+    if thinking == "disabled":
+        return {"thinking": {"type": "disabled"}}
+    return {"thinking": {"type": "enabled"}, "reasoning_effort": thinking}
+
+
 class OpenAICompatModel:
     """任何 OpenAI 兼容 /chat/completions 端点(base_url + api_key + model)。"""
 
@@ -35,6 +47,7 @@ class OpenAICompatModel:
         )
         self._max_tokens = settings.llm_max_tokens
         self.model_name = settings.llm_model
+        self._extra_body = _build_extra_body(settings.llm_thinking)
 
     def complete(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
@@ -44,6 +57,7 @@ class OpenAICompatModel:
             messages=messages,  # type: ignore[arg-type]
             tools=[{"type": "function", "function": tool} for tool in tools] if tools else None,  # type: ignore[arg-type]
             max_tokens=self._max_tokens or None,
+            extra_body=self._extra_body,
         )
         choice = response.choices[0]
         message = choice.message

@@ -136,3 +136,54 @@ def test_fake_llm_token_detail_is_estimate_only() -> None:
     )
     assert turn.prompt_tokens == 0
     assert turn.completion_tokens == turn.usage_tokens > 0
+
+
+def test_settings_rejects_unknown_thinking_value() -> None:
+    with pytest.raises(ValueError):
+        Settings(llm_thinking="medium")
+
+
+def test_complete_default_has_no_thinking_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """默认不传 thinking 参数:行为跟随服务端默认(DeepSeek 为 enabled/high)。"""
+    model = OpenAICompatModel(_settings(llm_enabled=True))
+    captured: dict[str, Any] = {}
+    message = SimpleNamespace(content="ok", tool_calls=None)
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=message, finish_reason="stop")],
+        usage=SimpleNamespace(total_tokens=1, prompt_tokens=0, completion_tokens=1),
+    )
+    monkeypatch.setattr(
+        model._client.chat.completions, "create", lambda **kw: captured.update(kw) or response
+    )
+    model.complete([{"role": "user", "content": "hi"}], [])
+    assert captured["extra_body"] is None  # 不设档:不覆盖服务端默认
+
+
+def test_complete_passes_thinking_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    model = OpenAICompatModel(_settings(llm_enabled=True, llm_thinking="disabled"))
+    captured: dict[str, Any] = {}
+    message = SimpleNamespace(content="ok", tool_calls=None)
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=message, finish_reason="stop")],
+        usage=SimpleNamespace(total_tokens=1, prompt_tokens=0, completion_tokens=1),
+    )
+    monkeypatch.setattr(
+        model._client.chat.completions, "create", lambda **kw: captured.update(kw) or response
+    )
+    model.complete([{"role": "user", "content": "hi"}], [])
+    assert captured["extra_body"] == {"thinking": {"type": "disabled"}}
+
+
+def test_complete_passes_thinking_effort(monkeypatch: pytest.MonkeyPatch) -> None:
+    model = OpenAICompatModel(_settings(llm_enabled=True, llm_thinking="low"))
+    captured: dict[str, Any] = {}
+    message = SimpleNamespace(content="ok", tool_calls=None)
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=message, finish_reason="stop")],
+        usage=SimpleNamespace(total_tokens=1, prompt_tokens=0, completion_tokens=1),
+    )
+    monkeypatch.setattr(
+        model._client.chat.completions, "create", lambda **kw: captured.update(kw) or response
+    )
+    model.complete([{"role": "user", "content": "hi"}], [])
+    assert captured["extra_body"] == {"thinking": {"type": "enabled"}, "reasoning_effort": "low"}

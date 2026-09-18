@@ -25,6 +25,14 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 4096  # 单次 completion 输出上限;0 = 不限制
     llm_timeout_seconds: float = 120  # 单次请求超时(SDK 默认 600s,过长会拖垮任务)
     llm_max_retries: int = 1
+    llm_thinking: str = ""  # 思考模式:空 = 服务端默认;disabled = 关闭;low/high/max = 强度
+
+    @field_validator("llm_thinking")
+    @classmethod
+    def _check_llm_thinking(cls, value: str) -> str:
+        if value not in {"", "disabled", "low", "high", "max"}:
+            raise ValueError("llm_thinking must be '', 'disabled', 'low', 'high' or 'max'")
+        return value
 
     # 基础设施(可选)
     redis_url: str = ""
