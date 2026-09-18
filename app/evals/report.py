@@ -10,12 +10,40 @@ import argparse
 from datetime import UTC, datetime
 from pathlib import Path
 
-from app.evals.metrics import annotate, collect_runs, compute_metrics, latest_per_bug
+from app.evals.metrics import RunRow, annotate, collect_runs, compute_metrics, latest_per_bug
 
 _ATTACK_COUNT = 4  # bugs/attacks/ 中构造的越权样例数(见 tests/test_attacks.py)
 
 
-def render(runs_root: Path, bugs_root: Path) -> str:
+def _model_flag(provider: str) -> str:
+    """report.json 里的 provider → run_single 的 --model 取值(fake-replay → fake)。"""
+    return "openai" if provider == "openai" else "fake"
+
+
+def repro_commands(runs_root: Path, per_bug: list[RunRow], report_out: str) -> list[str]:
+    """从批次行归并出复现命令(T10.1):provider/engine 取自运行产物,不再手写。
+
+    同一批次可能出现多种 (model, engine) 组合,每种给一行单题示例。
+    """
+    combos: dict[tuple[str, str], str] = {}
+    for row in sorted(per_bug, key=lambda r: r.bug_id):
+        provider = str(row.provenance.get("model_provider") or row.model_provider)
+        engine = str(row.provenance.get("engine") or row.engine or "graph")
+        combos.setdefault((_model_flag(provider), engine), row.bug_id)
+
+    lines = []
+    if not combos:  # 空批次:退化为通用示例
+        combos = {("fake", "graph"): "BUG-001"}
+    for (model_flag, engine), bug_id in sorted(combos.items()):
+        lines.append(
+            f"python -m app.evals.run_single --bug {bug_id}"
+            f" --model {model_flag} --engine {engine} --out {runs_root.as_posix()}"
+        )
+    lines.append(f"python -m app.evals.report --runs {runs_root.as_posix()} --out {report_out}")
+    return lines
+
+
+def render(runs_root: Path, bugs_root: Path, report_out: str = "docs/eval-report.md") -> str:
     rows = [annotate(r, bugs_root) for r in collect_runs(runs_root)]
     per_bug = latest_per_bug(rows)
     metrics = compute_metrics(per_bug)
@@ -84,11 +112,11 @@ def render(runs_root: Path, bugs_root: Path) -> str:
         "",
         "## 复现方式",
         "",
+        "以下命令由本批次运行产物的 provenance 字段归并生成(模型/引擎/目录均为批次实际取值):",
+        "",
         "```bash",
-        "# 单题回放",
-        "python -m app.evals.run_single --bug BUG-001 --model fake --engine graph --out runs",
-        "# 批量评测 + 本报告",
-        "python -m app.evals.report --runs runs/m9 --out docs/eval-report.md",
+        "# 单题示例(--bug 换成同批任意题目即可)",
+        *repro_commands(runs_root, per_bug, report_out),
         "```",
         "",
     ]
@@ -102,7 +130,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", default="docs/eval-report.md")
     args = parser.parse_args(argv)
 
-    report = render(Path(args.runs), Path(args.bugs))
+    report = render(Path(args.runs), Path(args.bugs), report_out=args.out)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(report, encoding="utf-8", newline="\n")

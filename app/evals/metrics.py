@@ -34,6 +34,7 @@ class RunRow:
     verify_regression_ok: bool
     error: str | None = None
     finished_stamp: float = 0.0  # report.json 修改时间:目录名格式各异,以文件时间为准
+    provenance: dict[str, Any] = field(default_factory=dict)  # T10.1 批次溯源(透传)
     localized: bool = False
     patch_applied: bool = False
     regression_introduced: bool = False
@@ -69,6 +70,7 @@ def load_run(run_dir: Path) -> RunRow | None:
         verify_regression_ok=data.get("verify_regression_ok", False),
         error=data.get("error"),
         finished_stamp=report_path.stat().st_mtime,
+        provenance=data.get("provenance") if isinstance(data.get("provenance"), dict) else {},
     )
 
 

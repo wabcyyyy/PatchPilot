@@ -20,6 +20,7 @@ from app.adapters.pytest_adapter import run_pytest
 from app.config import get_settings
 from app.errors import BudgetError, TaskCancelled, TaskError
 from app.evals.pricing import estimate_cost
+from app.evals.provenance import build_provenance
 from app.gitops.differ import working_tree_diff
 from app.gitops.testing import materialize_repo
 from app.graph.gates import run_gates
@@ -57,6 +58,7 @@ class TaskResult:
     verify_failed_ok: bool = False
     verify_regression_ok: bool = False
     run_dir: str = ""
+    provenance: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -101,6 +103,8 @@ def run_task(
         engine=engine,
         run_dir=str(run_dir),
     )
+    # 批次溯源:任务开始即取证,后续任何崩溃路径的 report.json 都带复现口径
+    result.provenance = build_provenance(result.model_provider, model_name, engine)
     tracker = Tracker(run_dir / "trajectory.jsonl", task_id=task_id)
     started = time.monotonic()
 

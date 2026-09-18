@@ -42,6 +42,7 @@ def run_task_graph(
     """
     from app.evals.driver import TaskResult  # 延迟导入,避免循环依赖
     from app.evals.pricing import estimate_cost
+    from app.evals.provenance import build_provenance
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     task_id = task_id or f"{bug.id}-{stamp}-{uuid.uuid4().hex[:6]}"
@@ -57,6 +58,8 @@ def run_task_graph(
         engine="graph",
         run_dir=str(run_dir),
     )
+    # 批次溯源:与 plain 引擎同口径,任务开始即取证
+    result.provenance = build_provenance(result.model_provider, model_name, "graph")
     tracker = Tracker(run_dir / "trajectory.jsonl", task_id=task_id)
     started = time.monotonic()
 
