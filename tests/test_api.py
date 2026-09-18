@@ -73,9 +73,12 @@ def test_full_task_lifecycle(client: TestClient) -> None:
 
 
 def test_create_is_idempotent(client: TestClient) -> None:
-    first = client.post("/api/tasks", json={"bug_id": "BUG-004", "engine": "plain"}).json()
-    second = client.post("/api/tasks", json={"bug_id": "BUG-004", "engine": "plain"}).json()
-    assert first["task_id"] == second["task_id"]  # 在途任务幂等
+    first = client.post("/api/tasks", json={"bug_id": "BUG-004", "engine": "plain"})
+    second = client.post("/api/tasks", json={"bug_id": "BUG-004", "engine": "plain"})
+    # 幂等:同键在途任务返回同一 task_id,且命中(200)与新建(201)状态码可区分(T12.3)
+    assert first.status_code == 201
+    assert second.status_code == 200
+    assert first.json()["task_id"] == second.json()["task_id"]
 
 
 def test_error_structure(client: TestClient) -> None:

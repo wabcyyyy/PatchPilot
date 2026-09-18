@@ -90,13 +90,13 @@ def test_repo_path_not_found_returns_404(client: TestClient, tmp_path: Path) -> 
 
 
 def test_custom_fake_without_script_rejected(client: TestClient, custom_repo: Path) -> None:
-    """自定义任务 + fake + 无脚本 → 404,提示二选一(补脚本或换 openai)。"""
+    """自定义任务 + fake + 无脚本 → 422(T12.3 校验类错误),提示二选一(补脚本或换 openai)。"""
     payload = _custom_payload(custom_repo)
     payload.pop("replay_script")
     resp = client.post("/api/tasks", json=payload)
-    assert resp.status_code == 404
+    assert resp.status_code == 422
     body = resp.json()
-    assert body["code"] == "invalid_task"
+    assert body["code"] == "invalid_request"
     assert "replay_script" in body["message"] and "openai" in body["message"]
 
 

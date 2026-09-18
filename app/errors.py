@@ -19,6 +19,12 @@ class TaskError(PatchPilotError):
     code = "invalid_task"
 
 
+class InvalidRequestError(TaskError):
+    """请求参数自相矛盾(如 fake 模式未带回放脚本):API 层转 422,不建任务。"""
+
+    code = "invalid_request"
+
+
 class PatchError(PatchPilotError):
     """补丁生成/应用失败(PATCH_REJECTED 的底层原因之一)。"""
 

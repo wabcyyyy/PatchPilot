@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from app.api.auth import require_token
 from app.api.report import render_markdown
 from app.api.schemas import TaskCreateIn, TrajectoryPage
-from app.errors import PatchPilotError, TaskError
+from app.errors import InvalidRequestError, PatchPilotError, TaskError
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_token)])
 
@@ -30,7 +30,7 @@ def _error(status: int, code: str, message: str, task_id: str | None = None) -> 
 @router.post("/tasks")
 def create_task(payload: TaskCreateIn, request: Request):
     try:
-        task = _service(request).create_task(
+        task, created = _service(request).create_task(
             bug_id=payload.bug_id,
             engine=payload.engine,
             model=payload.model,
@@ -42,11 +42,15 @@ def create_task(payload: TaskCreateIn, request: Request):
             allowed_paths=payload.allowed_paths,
             replay_script=payload.replay_script,
         )
+    except InvalidRequestError as exc:
+        # 请求参数自相矛盾:422(资源不存在仍走 TaskError→404)
+        return _error(422, "invalid_request", str(exc))
     except TaskError as exc:
         return _error(404, "invalid_task", str(exc))
     except PatchPilotError as exc:
         return _error(409, "conflict", str(exc))
-    return JSONResponse(status_code=201, content=task)
+    # 幂等命中(同键任务在途)返回 200,新建返回 201
+    return JSONResponse(status_code=201 if created else 200, content=task)
 
 
 @router.get("/tasks")

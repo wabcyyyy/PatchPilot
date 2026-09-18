@@ -21,7 +21,7 @@ from typing import Any
 
 from app.api.cancellation import CancelRegistry
 from app.config import get_settings
-from app.errors import PatchPilotError, TaskError
+from app.errors import InvalidRequestError, PatchPilotError, TaskError
 from app.evals.bugset import BUGS_ROOT, build_custom_bug, load_bug, load_replay_script
 from app.storage.locks import BaseLock, build_lock
 from app.storage.repository import Repository
@@ -76,13 +76,17 @@ class TaskService:
         regression_tests: list[str] | None = None,
         allowed_paths: list[str] | None = None,
         replay_script: list[dict[str, Any]] | None = None,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], bool]:
+        """创建任务;返回 (任务, 是否本次新建)。
+
+        幂等键 = bug_id + engine + model,同键任务未到终态时返回 (原任务, False)。
+        """
         if repo_path is not None:
             resolved = Path(repo_path).resolve()
             if not resolved.is_dir():
                 raise TaskError(f"repo_path not found or not a directory: {repo_path}")
             if model == "fake" and not replay_script:
-                raise TaskError(
+                raise InvalidRequestError(
                     "custom repo task with model='fake' requires a replay_script;"
                     " provide replay_script or use model='openai'"
                 )
@@ -104,7 +108,7 @@ class TaskService:
 
         existing = self.repo.find_by_idem_key(idem_key)
         if existing and existing["status"] not in TERMINAL_STATUSES:
-            return existing  # 幂等:同键任务仍在途
+            return existing, False  # 幂等:同键任务仍在途
 
         lock_key = f"task:{idem_key}"
         if not self.lock.acquire(lock_key, ttl_seconds=get_settings().task_timeout_seconds + 60):
@@ -140,7 +144,7 @@ class TaskService:
             cancel_event,
             replay_script,
         )
-        return self.repo.get_task(task_id)  # type: ignore[return-value]
+        return self.repo.get_task(task_id), True  # type: ignore[return-value]
 
     # ---------- 执行 ----------
 
