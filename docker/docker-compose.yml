@@ -24,6 +24,11 @@ services:
       #     docker compose up -d --build
       PATCHPILOT_EXECUTION_BACKEND: ${PATCHPILOT_EXECUTION_BACKEND:-local}
       PATCHPILOT_DOCKER_IMAGE: ${PATCHPILOT_DOCKER_IMAGE:-python:3.11-slim}
+      # 可选 API 鉴权(.env 同目录生效):非回环部署必须开启
+      # 生成:python -c "import secrets; print(secrets.token_urlsafe(32))"
+      PATCHPILOT_API_TOKEN: ${PATCHPILOT_API_TOKEN:-}
+      # 可选 repo_path 根白名单(见 docs/threat-model.md R1)
+      PATCHPILOT_ALLOWED_REPO_ROOTS: ${PATCHPILOT_ALLOWED_REPO_ROOTS:-}
     volumes:
       - api-data:/data
       - ../bugs:/app/bugs:ro
