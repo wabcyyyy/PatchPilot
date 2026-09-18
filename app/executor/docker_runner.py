@@ -59,6 +59,9 @@ def run_tests_in_container(
     ws = Path(workspace).resolve()
     reports = Path(report_dir).resolve()
     reports.mkdir(parents=True, exist_ok=True)
+    # 容器以非 root(uid 1000)写 junit 回传;Linux 宿主上报告目录属主是本进程用户,
+    # 不放开权限则 uid 1000 写不进(Docker Desktop 的文件共享无此问题,chmod 是兜底)
+    reports.chmod(0o777)
     junit = reports / f"junit-{uuid.uuid4().hex}.xml"
     image = image or get_settings().docker_image
     timeout = timeout_seconds or get_settings().test_timeout_seconds

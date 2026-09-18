@@ -38,6 +38,38 @@ export PATCHPILOT_DOCKER_IMAGE=patchpilot-executor:latest   # 默认 python:3.11
 - `docker_available()` 带 lru_cache:守护进程中途启停不会刷新(进程内);
 - 镜像内只有 pytest:被测仓库若引入第三方依赖,需要扩展 `docker/executor.Dockerfile` 或换题内镜像。
 
+## 非 root 执行器(M11.2,2026-09-19)
+
+执行器镜像以非 root 用户 `pp`(uid 1000)运行被测代码:被测仓库的 pytest
+不应拥有容器内 root 权限。配套改动:
+
+- junit 回传目录由 `docker_runner` 在宿主侧 `chmod 0o777`——Linux 宿主上报告目录
+  属主是 API 进程用户,uid 1000 直接写不进;Docker Desktop 文件共享无此限制,chmod 是兜底;
+- 被测工作区(/ws 挂载)若不可写,Python 跳过 `__pycache__` 落盘(静默,无影响),
+  pytest 临时文件走容器内 /tmp。
+
+## 依赖策略(--network=none 的必然约束)
+
+容器执行测试时断网,无法 `pip install`,因此:
+
+| 被测仓库依赖 | 做法 |
+|---|---|
+| 仅标准库(现正式集 28 题与候选集均如此) | 默认执行器镜像直接跑 |
+| 第三方依赖(固定、通用) | 扩展 `docker/executor.Dockerfile` 预装后自建 |
+| 第三方依赖(题目特定) | 为该题构建专用镜像,任务经 `PATCHPILOT_DOCKER_IMAGE`(全局)指定 |
+
+## 服务化部署(docker-compose)的隔离闭环(M11.1)
+
+- `docker/api.Dockerfile` 已装 docker-ce-cli,API 容器可经挂载的宿主
+  `/var/run/docker.sock` 派发临时容器(见 `docker/docker-compose.yml`);
+- 部署侧切换:`PATCHPILOT_EXECUTION_BACKEND=docker
+  PATCHPILOT_DOCKER_IMAGE=patchpilot-executor:latest docker compose up -d --build`
+  (执行器镜像对宿主守护进程可见即可,容器间无需传递);
+- 注意:挂载 sock 等于把宿主守护进程的等价权限交给 API 容器——这是把隔离边界
+  从"进程"升级为"容器"的代价,compose 默认仍绑回环地址;
+- Windows/Docker Desktop 的 `/var/run/docker.sock` 挂载路径可用(桌面版已内置转发),
+  冒烟脚本 `scripts/compose_smoke.sh` 端到端验证本闭环。
+
 ## 测试怎么保持离线
 
 - `tests/test_backend.py`:docker 路径全部 monkeypatch(run_tests_in_container 捕获、
