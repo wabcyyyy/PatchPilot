@@ -1,0 +1,154 @@
+# PatchPilot 改进计划(M10–M13)
+
+> 2026-09-18 制定。背景:对项目做了一轮严格评审,确认四块短板——评测公信力
+> (28/28 送分题无区分度、报告复现口径断裂)、隔离部署闭环(compose 下 docker
+> 执行器不可用)、默认安全(任意 repo_path + 默认无鉴权)、文档卫生。
+> 定位:**作品集/单机强化向**,不做多租户与水平扩展改造(边界见 design.md §8)。
+>
+> 编号沿用 `T<m>.<n>` 规范;每卡至少一个 commit;提交前 `ruff check . && pytest -q` 必须全绿。
+
+## 里程碑总览
+
+| 里程碑 | 主题 | 对应短板 |
+|---|---|---|
+| M10 | 评测公信力 | 送分题、报告复现口径、无外部基准锚点 |
+| M11 | 隔离部署闭环 | 服务化部署下 docker 执行器不可用 |
+| M12 | 默认安全与威胁模型 | repo_path 任意目录、错误码粗糙 |
+| M13 | 文档卫生与边界成文 | README 漂移、已知边界缺条目 |
+
+---
+
+## M10 评测公信力
+
+### T10.1 评测批次 provenance 与复现口径
+
+- **现状**:真实模型批次报告(如 eval-report-real.md)声称在线成绩,但"复现方式"
+  小节给出的是 `--model fake` 回放命令,复现不了本批次结果。
+- **改动**:
+  - `app/evals/driver.py` 与 `app/graph/runner.py` 写 report.json 时附带
+    `provenance` 字段:git commit(`git rev-parse HEAD`)、模型 provider/model、
+    execution_backend、关键 settings 快照(token_budget/max_rounds/backend)、生成时间;
+  - `app/evals/report.py` 报告头部自动输出"本批次如何复现"命令(从批次内
+    provenance 归并生成,含 `--model`、`--engine`、批次目录),替代手写复现小节。
+- **验收**:跑一次 fake 回放后生成的报告,其中复现命令逐字可执行且指向正确批次;
+  单测覆盖 provenance 字段存在与取值。
+- **禁区**:`app/evals/metrics.py` 判定逻辑零改动。
+
+### T10.2 hard 档题目候选(8 道,走人工审题 gate)
+
+- **现状**:28 题全部单文件、真实模型 1 轮全过,基准无区分度。
+- **改动**:扩展 `scripts/gen_bugs.py` 支持多文件/跨模块模板,生成 8 道 hard 候选
+  (BUG-C101..C108:跨文件数据流、两处协同修改、需先读多文件再定位的类型),
+  复用 manifest 双测试集、`allowed_paths`、`reference.diff` 与回放脚本规范;
+  产物放 `bugs/candidates/`,**不进正式集**(`list_bug_ids` 只枚举 `bugs/BUG-*`)。
+- **验收**:每道候选经 `scripts/validate_candidate.py` 验证:baseline 双跑断言成立
+  (failed 先红、regression 先绿)、fake 回放走通、格式化对齐。
+- **流程**:沿用 ee16b69 先例——候选题人工审题通过后另行转正,本卡不转正。
+
+### T10.3 SWE-bench Lite 数据格式适配器(v1)
+
+- **现状**:无任何外部基准支持,评测公信力没有外部锚点。
+- **改动**:
+  - 新增 `app/evals/swebench.py`:从本地 jsonl(标准 SWE-bench 字段)加载实例,
+    映射为内部 `BugTask`(problem_statement→issue_text、FAIL_TO_PASS→failed_tests、
+    PASS_TO_PASS→regression_tests、本地 checkout 目录→repo_dir);
+  - v1 只做数据接入与本地执行,**不含**官方 docker 评估架构建、git 克隆、
+    test_patch 自动应用(这些属人工数据准备:本地备好 base_commit checkout);
+  - 配套 `scripts/import_swebench.py`(人工准备用,联网下载不进测试)与
+    微型 fixture(提交进 tests,全离线)。
+- **验收**:fixture 驱动的单测离线通过;README 评测一节写明 v1 边界。
+- **花费边界**:真实模型跑外部基准需人工配置 `PATCHPILOT_LLM_ENABLED=true` 并
+  自行触发,不进 CI。
+
+### T10.4 报告对比口径
+
+- **现状**:fake 批次与真实批次报告各自独立生成,无并排对比。
+- **改动**:`app/evals/report.py` 支持 `--runs` 多次传入,多批次分节并排,
+  每节头部注明该批次 provenance;汇总指标按批次独立计算。
+- **禁区**:指标计算仍在 `metrics.py` 原函数中进行,本卡只做分节与渲染。
+
+---
+
+## M11 隔离部署闭环
+
+### T11.1 compose 内可用 docker 执行后端
+
+- `docker/api.Dockerfile` 安装 docker CLI(docker-ce-cli apt 源或静态二进制);
+- `docker/docker-compose.yml` 挂载 `/var/run/docker.sock`,经 `.env` 注入
+  `PATCHPILOT_EXECUTION_BACKEND=docker`;
+- **人工验证点**:Windows/Docker Desktop 的 sock 挂载路径兼容性。
+
+### T11.2 executor 镜像加固与依赖策略文档
+
+- `docker/executor.Dockerfile`:非 root 用户运行 pytest;
+- 文档写清 `--network=none` 下无法 pip install:标准库题目直接跑,第三方依赖
+  走自定义 `PATCHPILOT_DOCKER_IMAGE`(预装依赖的镜像)。
+
+### T11.3 compose 冒烟脚本
+
+- `scripts/compose_smoke.sh`:起 compose → API 建 BUG-001 任务 → 轮询终态 →
+  断言报告 backend=docker(依赖 T10.1 的 provenance 记录实际 backend)。
+
+---
+
+## M12 默认安全与威胁模型
+
+### T12.1 威胁模型文档
+
+- `docs/threat-model.md`:资产/信任边界/风险清单——repo_path 任意目录读 +
+  任意 pytest 执行、默认无鉴权、issue_text 与仓库内容构成提示注入面、
+  `bugs/attacks/` 攻击样例与六项门禁的对应关系;明确"个人本地工具"边界,
+  非回环部署的前置条件。
+
+### T12.2 repo_path 根白名单
+
+- 新增 `PATCHPILOT_ALLOWED_REPO_ROOTS`(逗号分隔,空 = 不限制,保持现状兼容):
+  `service.create_task` 校验 resolved repo_path 必须落在任一根内,否则 TaskError;
+- 带测试(根内放行/根外拒绝/空配置放行)。
+
+### T12.3 错误码规范化
+
+- 校验类错误(如 fake 自定义任务缺 replay_script)改抛 `InvalidRequestError` → 422;
+  bug_id 不存在保持 404;幂等命中(同键在途)改返 200(service 返回 created 标志);
+- 补 e2e 测试;现有测试期望同步更新(属接口语义修正,非放行性改动)。
+
+### T12.4 鉴权默认建议
+
+- `.env.example` 与 compose 示例加入 `PATCHPILOT_API_TOKEN` 生成命令建议
+  (`python -c "import secrets; print(secrets.token_urlsafe(32))"`);
+  文档明确:非回环部署必须开启 token。
+
+---
+
+## M13 文档卫生与边界成文
+
+### T13.1 README 校准
+
+- 测试数改"195+"、链接 threat-model 与本计划、评测一节增加区分度说明
+  (simple/medium 已满分,hard 候选与外部基准为 M10 交付)。
+
+### T13.2 已知边界成文
+
+- `docs/design.md` §8 追加:单进程架构(多 worker 破坏幂等/跨进程取消)、
+  协作式取消粒度(单个 pytest/LLM 调用不可中断)、recursion_limit 与
+  max_rounds 上限的组合约束。
+
+### T13.3 镜像与计划书卫生
+
+- `docker/api.Dockerfile` 移除未安装的 `requirements-dev.txt` COPY;
+- 《开发计划书》复选框状态统一同步(文首声明完成状态以 git/夜报为准)。
+
+---
+
+## 明确不做(边界声明)
+
+- 多 worker/跨进程取消/任务队列:记入已知边界,不实施(单机定位);
+- `app/evals/metrics.py` 判定逻辑、graph 状态机语义、门禁规则:零语义变更(AGENTS 禁区);
+- 联网下载/真实模型调用:一律人工触发,测试保持全离线;
+- hard 候选题转正:必须人工审题,流程同正式集先例。
+
+## 风险与依赖
+
+- T11 Windows 下 docker.sock 挂载兼容性需真机验证;
+- T10.2 候选题质量依赖审题 gate(`validate_candidate.py` + 人工复核);
+- T10.3 跑真基准需人工准备 SWE-bench Lite jsonl 与对应仓库本地 checkout。
