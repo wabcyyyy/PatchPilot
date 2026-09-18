@@ -143,3 +143,51 @@ def test_loop_accumulates_prompt_completion_tokens(ctx: ToolContext) -> None:
     assert outcome.tokens_prompt == 0
     assert outcome.tokens_completion > 0
     assert outcome.tokens_used == outcome.tokens_completion
+
+
+def test_assistant_tool_calls_use_openai_wire_format(ctx: ToolContext) -> None:
+    """回传给模型的 assistant 消息必须是 OpenAI 标准格式(type/function/arguments 为 JSON 字符串),
+    否则严格的服务端(如 DeepSeek)会 400。"""
+    captured: list = []
+
+    class RecordingModel:
+        def __init__(self):
+            self.script = iter(
+                [
+                    {"tool": "list_files", "args": {}},
+                    {"tool": "finish", "args": {"success": True, "summary": "s"}},
+                ]
+            )
+
+        def complete(self, messages, tools):
+            captured.append([dict(m) for m in messages])
+            step = next(self.script)
+            from app.llm.base import AssistantTurn, ToolCall
+
+            if "tool" in step:
+                return AssistantTurn(
+                    tool_calls=[ToolCall(id="call_1", name=step["tool"], arguments=step["args"])],
+                    finish_reason="tool_calls",
+                    usage_tokens=1,
+                )
+            return AssistantTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="call_2",
+                        name="finish",
+                        arguments={"success": True, "summary": "s"},
+                    )
+                ],
+                finish_reason="tool_calls",
+                usage_tokens=1,
+            )
+
+    outcome = run_plain_loop(ctx, RecordingModel(), "issue")
+    assert outcome.success
+    assistant_with_tools = captured[1][2]  # req2 的 messages[2]:turn1 的 assistant 回合
+    assert assistant_with_tools["role"] == "assistant"
+    call = assistant_with_tools["tool_calls"][0]
+    assert call["type"] == "function"
+    assert call["id"] == "call_1"
+    assert call["function"]["name"] == "list_files"
+    assert json.loads(call["function"]["arguments"]) == {}

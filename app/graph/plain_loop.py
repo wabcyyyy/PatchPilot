@@ -96,7 +96,14 @@ def run_plain_loop(
                 "role": "assistant",
                 "content": response.content or "",
                 "tool_calls": [
-                    {"id": c.id, "name": c.name, "arguments": c.arguments}
+                    {
+                        "type": "function",
+                        "id": c.id,
+                        "function": {
+                            "name": c.name,
+                            "arguments": json.dumps(c.arguments, ensure_ascii=False),
+                        },
+                    }
                     for c in response.tool_calls
                 ],
             }
