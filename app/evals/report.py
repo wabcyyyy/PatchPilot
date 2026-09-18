@@ -21,6 +21,17 @@ def render(runs_root: Path, bugs_root: Path) -> str:
     metrics = compute_metrics(per_bug)
     generated = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     providers = ", ".join(metrics["by_category_providers"]) or "n/a"
+    if providers == "n/a" or "fake" in providers:
+        batch_note = (
+            "当前批次为 fake-replay 回放模型,用于验证平台闭环的确定性,"
+            "**不代表真实模型成绩**;接入真实模型后同命令重跑即可替换。"
+        )
+    else:
+        batch_note = (
+            f"本批次为**真实模型在线调用成绩**({providers}),"
+            "结论由平台测试执行与门禁脚本自动判定;"
+            "各任务 report.json 内含 token 明细与成本(约值,价目表未收录的模型显示 n/a)。"
+        )
 
     lines = [
         "# PatchPilot 评测报告",
@@ -30,8 +41,7 @@ def render(runs_root: Path, bugs_root: Path) -> str:
         f"- 模型提供方:**{providers}**",
         "",
         "> **数据来源声明**:本报告由 `python -m app.evals.report` 从运行产物自动生成;",
-        "> 每个指标都有判定脚本(metrics.py),无人工标注。当前批次为 fake-replay 回放模型,",
-        "> 用于验证平台闭环的确定性,**不代表真实模型成绩**;接入真实模型后同命令重跑即可替换。",
+        f"> 每个指标都有判定脚本(metrics.py),无人工标注。{batch_note}",
         "",
         "## 汇总指标",
         "",
