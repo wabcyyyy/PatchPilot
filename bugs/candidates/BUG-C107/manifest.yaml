@@ -1,0 +1,15 @@
+id: BUG-C107
+category: 跨文件协同
+difficulty: hard
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_template.py::test_none_renders_empty
+  - tests/test_template.py::test_ampersand_escaped
+  - tests/test_template.py::test_escape_html_basics
+regression_tests:
+  - tests/test_template.py::test_plain_replacement
+  - tests/test_template.py::test_autoescape_off_keeps_raw
+allowed_paths:
+  - src/escapes.py
+  - src/template.py
+max_rounds: 5

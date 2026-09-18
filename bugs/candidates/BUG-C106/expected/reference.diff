@@ -1,0 +1,22 @@
+--- a/src/escaping.py
++++ b/src/escaping.py
+@@ -1,6 +1,6 @@
+ """CSV 单元格转义。"""
+ 
+-SPECIAL_CHARS = (",", '"')
++SPECIAL_CHARS = (",", '"', "\n")
+ 
+ 
+ def escape_cell(value):
+--- a/src/exporter.py
++++ b/src/exporter.py
+@@ -1,6 +1,8 @@
+ """CSV 导出。"""
++
++from src.escaping import escape_cell
+ 
+ 
+ def to_csv(rows):
+     """把二维行集导出为 CSV 文本;需要转义的单元格必须先过 escaping.escape_cell。"""
+-    return "\n".join(",".join(str(cell) for cell in row) for row in rows)
++    return "\n".join(",".join(escape_cell(cell) for cell in row) for row in rows)

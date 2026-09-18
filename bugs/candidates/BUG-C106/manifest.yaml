@@ -1,0 +1,17 @@
+id: BUG-C106
+category: 跨文件协同
+difficulty: hard
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_csv_export.py::test_comma_cell_is_quoted
+  - tests/test_csv_export.py::test_newline_cell_is_quoted
+  - tests/test_csv_export.py::test_quote_cell_is_doubled
+regression_tests:
+  - tests/test_csv_export.py::test_plain_cells_unchanged
+  - tests/test_csv_export.py::test_empty_rows
+  - tests/test_csv_export.py::test_escape_cell_plain
+  - tests/test_csv_export.py::test_escape_cell_quote
+allowed_paths:
+  - src/escaping.py
+  - src/exporter.py
+max_rounds: 5

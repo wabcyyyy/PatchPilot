@@ -1,0 +1,52 @@
+[
+  {
+    "tool": "search_code",
+    "args": {
+      "keyword": "escape_html"
+    }
+  },
+  {
+    "tool": "read_file",
+    "args": {
+      "path": "src/escapes.py"
+    }
+  },
+  {
+    "tool": "read_file",
+    "args": {
+      "path": "src/template.py"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "根因定位:src/escapes.py, src/template.py"
+    }
+  },
+  {
+    "tool": "apply_patch",
+    "args": {
+      "diff_text": "--- a/src/escapes.py\n+++ b/src/escapes.py\n@@ -1,6 +1,6 @@\n \"\"\"HTML 转义。\"\"\"\n \n-ESCAPE_MAP = {\"<\": \"&lt;\", \">\": \"&gt;\"}\n+ESCAPE_MAP = {\"<\": \"&lt;\", \">\": \"&gt;\", \"&\": \"&amp;\"}\n \n \n def escape_html(text):\n--- a/src/template.py\n+++ b/src/template.py\n@@ -10,6 +10,7 @@\n     out = template\n     for key, value in ctx.items():\n         token = \"{{\" + key + \"}}\"\n-        replacement = escape_html(str(value)) if autoescape else str(value)\n+        text = \"\" if value is None else str(value)\n+        replacement = escape_html(text) if autoescape else text\n         out = out.replace(token, replacement)\n     return out\n"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "failed"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "regression"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "修复 src/escapes.py, src/template.py 并通过全部测试"
+    }
+  }
+]

@@ -1,0 +1,39 @@
+[
+  {
+    "tool": "search_code",
+    "args": {
+      "keyword": "fast_checksum"
+    }
+  },
+  {
+    "tool": "read_file",
+    "args": {
+      "path": "src/checksum.py"
+    }
+  },
+  {
+    "tool": "apply_patch",
+    "args": {
+      "diff_text": "--- a/src/checksum.py\n+++ b/src/checksum.py\n@@ -3,4 +3,4 @@\n \n def fast_checksum(data):\n     \"\"\"Σ(UTF-8 字节) mod 65536 的快速实现。\"\"\"\n-    return sum(data.encode(\"ascii\", errors=\"ignore\")) % 65536\n+    return sum(data.encode(\"utf-8\")) % 65536\n"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "failed"
+    }
+  },
+  {
+    "tool": "run_tests",
+    "args": {
+      "test_set": "regression"
+    }
+  },
+  {
+    "tool": "finish",
+    "args": {
+      "success": true,
+      "summary": "修复 src/checksum.py 并通过全部测试"
+    }
+  }
+]

@@ -1,0 +1,15 @@
+id: BUG-C108
+category: 对照定位
+difficulty: hard
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_checksum.py::test_matches_reference_on_multibyte
+  - tests/test_checksum.py::test_multibyte_changes_result
+regression_tests:
+  - tests/test_checksum.py::test_matches_reference_on_ascii
+  - tests/test_checksum.py::test_reference_known_value
+  - tests/test_checksum.py::test_fast_known_value
+allowed_paths:
+  - src/checksum.py
+  - src/checksum_ref.py
+max_rounds: 5

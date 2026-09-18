@@ -1,0 +1,8 @@
+--- a/src/checksum.py
++++ b/src/checksum.py
+@@ -3,4 +3,4 @@
+ 
+ def fast_checksum(data):
+     """Σ(UTF-8 字节) mod 65536 的快速实现。"""
+-    return sum(data.encode("ascii", errors="ignore")) % 65536
++    return sum(data.encode("utf-8")) % 65536

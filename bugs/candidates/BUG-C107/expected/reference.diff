@@ -1,0 +1,21 @@
+--- a/src/escapes.py
++++ b/src/escapes.py
+@@ -1,6 +1,6 @@
+ """HTML 转义。"""
+ 
+-ESCAPE_MAP = {"<": "&lt;", ">": "&gt;"}
++ESCAPE_MAP = {"<": "&lt;", ">": "&gt;", "&": "&amp;"}
+ 
+ 
+ def escape_html(text):
+--- a/src/template.py
++++ b/src/template.py
+@@ -10,6 +10,7 @@
+     out = template
+     for key, value in ctx.items():
+         token = "{{" + key + "}}"
+-        replacement = escape_html(str(value)) if autoescape else str(value)
++        text = "" if value is None else str(value)
++        replacement = escape_html(text) if autoescape else text
+         out = out.replace(token, replacement)
+     return out

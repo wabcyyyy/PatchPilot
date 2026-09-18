@@ -546,7 +546,288 @@ def test_empty_catalog():
     "search_hint": "is_low",
 }
 
-SPECS = [C101, C102, C103, C104, C105]
+C106 = {
+    "id": "BUG-C106",
+    "category": "跨文件协同",
+    "difficulty": "hard",
+    "issue": (
+        "CSV 导出 to_csv(src/exporter.py)产出的文件在表格软件里串列:"
+        "含逗号/引号/换行的单元格没有被正确转义。转义规则在 escaping 模块,"
+        "但导出侧可能也没有按契约调用它。请把两处都对齐契约后修复,保证原有测试通过。"
+    ),
+    "fixes": [
+        {
+            "module": "src/escaping.py",
+            "buggy_code": '''"""CSV 单元格转义。"""
+
+SPECIAL_CHARS = (",", '"')
+
+
+def escape_cell(value):
+    """含 逗号/引号/换行 的值加引号并把内部引号翻倍;其余原样返回。"""
+    text = str(value)
+    if any(ch in text for ch in SPECIAL_CHARS):
+        return '"' + text.replace('"', '""') + '"'
+    return text
+''',
+            "fixed_code": '''"""CSV 单元格转义。"""
+
+SPECIAL_CHARS = (",", '"', "\\n")
+
+
+def escape_cell(value):
+    """含 逗号/引号/换行 的值加引号并把内部引号翻倍;其余原样返回。"""
+    text = str(value)
+    if any(ch in text for ch in SPECIAL_CHARS):
+        return '"' + text.replace('"', '""') + '"'
+    return text
+''',
+        },
+        {
+            "module": "src/exporter.py",
+            "buggy_code": '''"""CSV 导出。"""
+
+
+def to_csv(rows):
+    """把二维行集导出为 CSV 文本;需要转义的单元格必须先过 escaping.escape_cell。"""
+    return "\\n".join(",".join(str(cell) for cell in row) for row in rows)
+''',
+            "fixed_code": '''"""CSV 导出。"""
+
+from src.escaping import escape_cell
+
+
+def to_csv(rows):
+    """把二维行集导出为 CSV 文本;需要转义的单元格必须先过 escaping.escape_cell。"""
+    return "\\n".join(",".join(escape_cell(cell) for cell in row) for row in rows)
+''',
+        },
+    ],
+    "test_path": "tests/test_csv_export.py",
+    "test_code": '''from src.escaping import escape_cell
+from src.exporter import to_csv
+
+
+def test_comma_cell_is_quoted():
+    assert to_csv([["a,b", "c"]]) == '"a,b",c'
+
+
+def test_newline_cell_is_quoted():
+    assert to_csv([["line1\\nline2", "x"]]) == \'"line1\\nline2",x\'
+
+
+def test_quote_cell_is_doubled():
+    assert to_csv([['say "hi"']]) == \'"say ""hi"""\'
+
+
+def test_plain_cells_unchanged():
+    assert to_csv([["a", "b"], [1, 2]]) == "a,b\\n1,2"
+
+
+def test_empty_rows():
+    assert to_csv([]) == ""
+
+
+def test_escape_cell_plain():
+    assert escape_cell("plain") == "plain"
+
+
+def test_escape_cell_quote():
+    assert escape_cell('a"b') == '"a""b"'
+''',
+    "failed": [
+        "test_comma_cell_is_quoted",
+        "test_newline_cell_is_quoted",
+        "test_quote_cell_is_doubled",
+    ],
+    "regression": [
+        "test_plain_cells_unchanged",
+        "test_empty_rows",
+        "test_escape_cell_plain",
+        "test_escape_cell_quote",
+    ],
+    "allowed_paths": ["src/escaping.py", "src/exporter.py"],
+    "search_hint": "escape_cell",
+}
+
+C107 = {
+    "id": "BUG-C107",
+    "category": "跨文件协同",
+    "difficulty": "hard",
+    "issue": (
+        "模板渲染 render(src/template.py)有两个问题:替换值为 None 时输出了字面量 None"
+        "(契约应渲染为空串),且替换值里的 & 字符没有被转义。两处分别位于 template 与"
+        " escapes 模块,请对齐契约修复,保证原有测试通过。"
+    ),
+    "fixes": [
+        {
+            "module": "src/escapes.py",
+            "buggy_code": '''"""HTML 转义。"""
+
+ESCAPE_MAP = {"<": "&lt;", ">": "&gt;"}
+
+
+def escape_html(text):
+    """按 ESCAPE_MAP 转义 <、>、&;其余字符原样。"""
+    return "".join(ESCAPE_MAP.get(ch, ch) for ch in text)
+''',
+            "fixed_code": '''"""HTML 转义。"""
+
+ESCAPE_MAP = {"<": "&lt;", ">": "&gt;", "&": "&amp;"}
+
+
+def escape_html(text):
+    """按 ESCAPE_MAP 转义 <、>、&;其余字符原样。"""
+    return "".join(ESCAPE_MAP.get(ch, ch) for ch in text)
+''',
+        },
+        {
+            "module": "src/template.py",
+            "buggy_code": '''"""极简模板:{{key}} 占位符替换。"""
+
+from src.escapes import escape_html
+
+AUTOESCAPE = True
+
+
+def render(template, ctx, autoescape=AUTOESCAPE):
+    """替换 {{key}};autoescape 开启时替换值做 HTML 转义;None 渲染为空串。"""
+    out = template
+    for key, value in ctx.items():
+        token = "{{" + key + "}}"
+        replacement = escape_html(str(value)) if autoescape else str(value)
+        out = out.replace(token, replacement)
+    return out
+''',
+            "fixed_code": '''"""极简模板:{{key}} 占位符替换。"""
+
+from src.escapes import escape_html
+
+AUTOESCAPE = True
+
+
+def render(template, ctx, autoescape=AUTOESCAPE):
+    """替换 {{key}};autoescape 开启时替换值做 HTML 转义;None 渲染为空串。"""
+    out = template
+    for key, value in ctx.items():
+        token = "{{" + key + "}}"
+        text = "" if value is None else str(value)
+        replacement = escape_html(text) if autoescape else text
+        out = out.replace(token, replacement)
+    return out
+''',
+        },
+    ],
+    "test_path": "tests/test_template.py",
+    "test_code": """from src.escapes import escape_html
+from src.template import render
+
+
+def test_none_renders_empty():
+    assert render("Hi {{name}}!", {"name": None}) == "Hi !"
+
+
+def test_ampersand_escaped():
+    assert render("{{x}}", {"x": "<b>&"}) == "&lt;b&gt;&amp;"
+
+
+def test_plain_replacement():
+    assert render("Hi {{name}}", {"name": "Ann"}) == "Hi Ann"
+
+
+def test_autoescape_off_keeps_raw():
+    assert render("{{x}}", {"x": "<b>"}, autoescape=False) == "<b>"
+
+
+def test_escape_html_basics():
+    assert escape_html("a<b") == "a&lt;b"
+    assert escape_html("a&b") == "a&amp;b"
+""",
+    "failed": ["test_none_renders_empty", "test_ampersand_escaped", "test_escape_html_basics"],
+    "regression": ["test_plain_replacement", "test_autoescape_off_keeps_raw"],
+    "allowed_paths": ["src/escapes.py", "src/template.py"],
+    "search_hint": "escape_html",
+}
+
+C108 = {
+    "id": "BUG-C108",
+    "category": "对照定位",
+    "difficulty": "hard",
+    "issue": (
+        "fast_checksum(src/checksum.py)是参考实现 checksum_ref(src/checksum_ref.py,"
+        "语义权威)的快速版,但对某些输入两者结果不一致。请对照参考实现找出分歧并修复,"
+        "保证原有测试通过。"
+    ),
+    "fixes": [
+        {
+            "module": "src/checksum.py",
+            "buggy_code": '''"""快速校验和:语义必须与 checksum_ref.checksum 一致。"""
+
+
+def fast_checksum(data):
+    """Σ(UTF-8 字节) mod 65536 的快速实现。"""
+    return sum(data.encode("ascii", errors="ignore")) % 65536
+''',
+            "fixed_code": '''"""快速校验和:语义必须与 checksum_ref.checksum 一致。"""
+
+
+def fast_checksum(data):
+    """Σ(UTF-8 字节) mod 65536 的快速实现。"""
+    return sum(data.encode("utf-8")) % 65536
+''',
+        }
+    ],
+    "extra_files": {
+        "src/checksum_ref.py": '''"""参考实现:大输入较慢,但语义权威。"""
+
+
+def checksum(data):
+    """Σ(UTF-8 字节) mod 65536,逐字节取模的朴素实现。"""
+    total = 0
+    for byte in data.encode("utf-8"):
+        total = (total + byte) % 65536
+    return total
+''',
+    },
+    "test_path": "tests/test_checksum.py",
+    "test_code": """from src.checksum import fast_checksum
+from src.checksum_ref import checksum
+
+
+def test_matches_reference_on_multibyte():
+    for text in ("héllo", "你好", "naïve café"):
+        assert fast_checksum(text) == checksum(text)
+
+
+def test_matches_reference_on_ascii():
+    for text in ("", "hello", "PatchPilot-2026"):
+        assert fast_checksum(text) == checksum(text)
+
+
+def test_reference_known_value():
+    # A=65, B=66
+    assert checksum("AB") == 131
+
+
+def test_fast_known_value():
+    assert fast_checksum("AB") == 131
+
+
+def test_multibyte_changes_result():
+    # é 是两个 UTF-8 字节,校验和必须受它影响
+    assert fast_checksum("héllo") != fast_checksum("hllo")
+""",
+    "failed": ["test_matches_reference_on_multibyte", "test_multibyte_changes_result"],
+    "regression": [
+        "test_matches_reference_on_ascii",
+        "test_reference_known_value",
+        "test_fast_known_value",
+    ],
+    "allowed_paths": ["src/checksum.py", "src/checksum_ref.py"],
+    "search_hint": "fast_checksum",
+}
+
+SPECS = [C101, C102, C103, C104, C105, C106, C107, C108]
 
 
 def main(argv: list[str]) -> int:
