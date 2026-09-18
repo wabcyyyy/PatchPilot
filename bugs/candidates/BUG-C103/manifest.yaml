@@ -1,0 +1,16 @@
+id: BUG-C103
+category: 对照定位
+difficulty: hard
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_codec.py::test_roundtrip_multibyte
+  - tests/test_codec.py::test_plus_is_literal
+  - tests/test_codec.py::test_multibyte_escape_decoded
+regression_tests:
+  - tests/test_codec.py::test_plain_passthrough
+  - tests/test_codec.py::test_single_byte_escape
+  - tests/test_codec.py::test_encode_is_stable
+allowed_paths:
+  - src/dec.py
+  - src/enc.py
+max_rounds: 5

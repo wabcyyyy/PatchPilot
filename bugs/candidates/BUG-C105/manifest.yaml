@@ -1,0 +1,18 @@
+id: BUG-C105
+category: 跨文件协同
+difficulty: hard
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_low_stock.py::test_out_of_stock_is_reported
+  - tests/test_low_stock.py::test_threshold_boundary_is_low
+  - tests/test_low_stock.py::test_is_low_at_threshold
+regression_tests:
+  - tests/test_low_stock.py::test_is_low_below_threshold
+  - tests/test_low_stock.py::test_overstock_not_reported
+  - tests/test_low_stock.py::test_unknown_sku_skipped
+  - tests/test_low_stock.py::test_empty_catalog
+allowed_paths:
+  - src/rules.py
+  - src/notify.py
+  - src/inventory.py
+max_rounds: 5

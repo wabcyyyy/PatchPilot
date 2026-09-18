@@ -1,0 +1,18 @@
+--- a/src/rules.py
++++ b/src/rules.py
+@@ -5,4 +5,4 @@
+ 
+ def is_low(qty):
+     """库存量是否达到低库存预警线(qty <= LOW_STOCK_THRESHOLD,含恰好等于)。"""
+-    return qty < LOW_STOCK_THRESHOLD
++    return qty <= LOW_STOCK_THRESHOLD
+--- a/src/notify.py
++++ b/src/notify.py
+@@ -9,6 +9,6 @@
+     result = []
+     for sku in catalog:
+         qty = quantity(sku)
+-        if qty and is_low(qty):
++        if qty is not None and is_low(qty):
+             result.append(sku)
+     return result

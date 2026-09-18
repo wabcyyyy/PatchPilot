@@ -204,7 +204,349 @@ def test_zero_weight_shipping():
     "search_hint": "shipping_for",
 }
 
-SPECS = [C101, C102]
+C103 = {
+    "id": "BUG-C103",
+    "category": "对照定位",
+    "difficulty": "hard",
+    "issue": (
+        "路径段解码函数 decode_segment(src/dec.py)与编码函数 encode_segment(src/enc.py)"
+        "应严格互逆,但包含加号或多字节字符的路径段解码结果不对。"
+        "请以 enc 的编码规则为准修复 dec,保证原有测试通过。"
+    ),
+    "fixes": [
+        {
+            "module": "src/dec.py",
+            "buggy_code": '''"""路径段解码,与 enc.encode_segment 互逆。"""
+
+
+def decode_segment(text):
+    """解码 %XX 序列;'+' 按字面处理,多字节 UTF-8 序列合并为单字符。"""
+    out = []
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch == "+":
+            out.append(" ")
+            i += 1
+        elif ch == "%" and i + 3 <= len(text):
+            out.append(chr(int(text[i + 1 : i + 3], 16)))
+            i += 3
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+''',
+            "fixed_code": '''"""路径段解码,与 enc.encode_segment 互逆。"""
+
+
+def decode_segment(text):
+    """解码 %XX 序列;'+' 按字面处理,多字节 UTF-8 序列合并为单字符。"""
+    out = []
+    pending = bytearray()
+    i = 0
+
+    def flush():
+        if pending:
+            out.append(pending.decode("utf-8"))
+            pending.clear()
+
+    while i < len(text):
+        ch = text[i]
+        if ch == "%" and i + 3 <= len(text):
+            pending.append(int(text[i + 1 : i + 3], 16))
+            i += 3
+        else:
+            flush()
+            out.append(ch)
+            i += 1
+    flush()
+    return "".join(out)
+''',
+        }
+    ],
+    "extra_files": {
+        "src/enc.py": '''"""路径段编码。"""
+
+SAFE_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-~")
+
+
+def encode_segment(text):
+    """路径段编码:SAFE_CHARS 之外的字符逐字节转 %XX(大写十六进制)。"""
+    out = []
+    for ch in text:
+        if ch in SAFE_CHARS:
+            out.append(ch)
+        else:
+            out.append("".join(f"%{byte:02X}" for byte in ch.encode("utf-8")))
+    return "".join(out)
+''',
+    },
+    "test_path": "tests/test_codec.py",
+    "test_code": """from src.dec import decode_segment
+from src.enc import encode_segment
+
+
+def test_roundtrip_multibyte():
+    for text in ("你好", "café", "a/b c"):
+        assert decode_segment(encode_segment(text)) == text
+
+
+def test_plus_is_literal():
+    assert decode_segment("a+b") == "a+b"
+
+
+def test_multibyte_escape_decoded():
+    assert decode_segment("%E4%BD%A0%E5%A5%BD") == "你好"
+
+
+def test_plain_passthrough():
+    assert decode_segment("plain-path.txt") == "plain-path.txt"
+
+
+def test_single_byte_escape():
+    assert decode_segment("%2F") == "/"
+
+
+def test_encode_is_stable():
+    assert encode_segment("a b") == "a%20b"
+""",
+    "failed": [
+        "test_roundtrip_multibyte",
+        "test_plus_is_literal",
+        "test_multibyte_escape_decoded",
+    ],
+    "regression": ["test_plain_passthrough", "test_single_byte_escape", "test_encode_is_stable"],
+    "allowed_paths": ["src/dec.py", "src/enc.py"],
+    "search_hint": "decode_segment",
+}
+
+C104 = {
+    "id": "BUG-C104",
+    "category": "跨文件定位",
+    "difficulty": "hard",
+    "issue": (
+        "接口限流器 RateLimiter(src/ratelimit.py)行为异常:60 秒窗口内远没到限额就拒绝请求,"
+        "窗口边界判定也和契约不符。时间在系统内以节拍表示(1 节拍 = 10 毫秒),"
+        "请沿调用链定位根因并修复,保证原有测试通过。"
+    ),
+    "fixes": [
+        {
+            "module": "src/units.py",
+            "buggy_code": '''"""时间单位换算。"""
+
+TICK_MS = 10  # 1 节拍 = 10 毫秒
+
+
+def seconds_to_ticks(seconds):
+    """秒 → 节拍数。"""
+    return int(seconds)
+''',
+            "fixed_code": '''"""时间单位换算。"""
+
+TICK_MS = 10  # 1 节拍 = 10 毫秒
+
+
+def seconds_to_ticks(seconds):
+    """秒 → 节拍数。"""
+    return int(seconds * 1000 / TICK_MS)
+''',
+        }
+    ],
+    "extra_files": {
+        "src/window.py": '''"""滑动窗口计数(时间一律用节拍表示)。"""
+
+from src.units import seconds_to_ticks
+
+
+def count_within(stamps, window_seconds, now_tick):
+    """统计 stamps 中距今不超过 window_seconds 的数量(含恰好边界)。"""
+    window = seconds_to_ticks(window_seconds)
+    return sum(1 for ts in stamps if now_tick - ts <= window)
+''',
+        "src/ratelimit.py": '''"""接口限流:滑动窗口计数。"""
+
+from src.window import count_within
+
+
+class RateLimiter:
+    """window_seconds 内最多放行 limit 次。"""
+
+    def __init__(self, limit, window_seconds):
+        self.limit = limit
+        self.window_seconds = window_seconds
+        self.stamps = []
+
+    def allow(self, now_tick):
+        """now_tick 时刻是否放行;放行则记录本次。"""
+        if count_within(self.stamps, self.window_seconds, now_tick) >= self.limit:
+            return False
+        self.stamps.append(now_tick)
+        return True
+''',
+    },
+    "test_path": "tests/test_ratelimit.py",
+    "test_code": """from src.ratelimit import RateLimiter
+from src.units import seconds_to_ticks
+
+
+def test_seconds_to_ticks():
+    assert seconds_to_ticks(60) == 6000
+
+
+def test_allows_up_to_limit_then_blocks():
+    limiter = RateLimiter(limit=3, window_seconds=60)
+    assert limiter.allow(0)
+    assert limiter.allow(1000)
+    assert limiter.allow(2000)
+    assert not limiter.allow(5900)
+
+
+def test_exact_boundary_is_inside_window():
+    limiter = RateLimiter(limit=1, window_seconds=60)
+    assert limiter.allow(0)
+    assert not limiter.allow(6000)
+
+
+def test_window_expiry_allows_again():
+    limiter = RateLimiter(limit=1, window_seconds=60)
+    assert limiter.allow(0)
+    assert limiter.allow(6001)
+""",
+    "failed": [
+        "test_seconds_to_ticks",
+        "test_allows_up_to_limit_then_blocks",
+        "test_exact_boundary_is_inside_window",
+    ],
+    "regression": ["test_window_expiry_allows_again"],
+    "allowed_paths": ["src/units.py", "src/window.py", "src/ratelimit.py"],
+    "search_hint": "seconds_to_ticks",
+}
+
+C105 = {
+    "id": "BUG-C105",
+    "category": "跨文件协同",
+    "difficulty": "hard",
+    "issue": (
+        "低库存预警漏报:恰好达到预警线的商品没有被预警,零库存(缺货)的商品也漏报了。"
+        "预警判定分散在 rules 与 notify 两个模块,请把两处语义都对齐契约后修复,"
+        "保证原有测试通过。"
+    ),
+    "fixes": [
+        {
+            "module": "src/rules.py",
+            "buggy_code": '''"""库存预警规则。"""
+
+LOW_STOCK_THRESHOLD = 5
+
+
+def is_low(qty):
+    """库存量是否达到低库存预警线(qty <= LOW_STOCK_THRESHOLD,含恰好等于)。"""
+    return qty < LOW_STOCK_THRESHOLD
+''',
+            "fixed_code": '''"""库存预警规则。"""
+
+LOW_STOCK_THRESHOLD = 5
+
+
+def is_low(qty):
+    """库存量是否达到低库存预警线(qty <= LOW_STOCK_THRESHOLD,含恰好等于)。"""
+    return qty <= LOW_STOCK_THRESHOLD
+''',
+        },
+        {
+            "module": "src/notify.py",
+            "buggy_code": '''"""低库存通知汇总。"""
+
+from src.inventory import quantity
+from src.rules import is_low
+
+
+def low_stock_skus(catalog):
+    """按目录顺序返回需要预警的商品;缺货(0)与达到预警线的都要包含,未知商品跳过。"""
+    result = []
+    for sku in catalog:
+        qty = quantity(sku)
+        if qty and is_low(qty):
+            result.append(sku)
+    return result
+''',
+            "fixed_code": '''"""低库存通知汇总。"""
+
+from src.inventory import quantity
+from src.rules import is_low
+
+
+def low_stock_skus(catalog):
+    """按目录顺序返回需要预警的商品;缺货(0)与达到预警线的都要包含,未知商品跳过。"""
+    result = []
+    for sku in catalog:
+        qty = quantity(sku)
+        if qty is not None and is_low(qty):
+            result.append(sku)
+    return result
+''',
+        },
+    ],
+    "extra_files": {
+        "src/inventory.py": '''"""库存查询。"""
+
+STOCK = {"pen": 3, "book": 0, "lamp": 10, "desk": 5}
+
+
+def quantity(sku):
+    """当前库存量;未知商品返回 None。"""
+    return STOCK.get(sku)
+''',
+    },
+    "test_path": "tests/test_low_stock.py",
+    "test_code": """from src.notify import low_stock_skus
+from src.rules import is_low
+
+
+def test_out_of_stock_is_reported():
+    assert low_stock_skus(["pen", "book"]) == ["pen", "book"]
+
+
+def test_threshold_boundary_is_low():
+    # desk 恰好 5 件,达到预警线
+    assert low_stock_skus(["desk"]) == ["desk"]
+
+
+def test_is_low_at_threshold():
+    assert is_low(5) is True
+
+
+def test_is_low_below_threshold():
+    assert is_low(4) is True
+
+
+def test_overstock_not_reported():
+    assert low_stock_skus(["lamp"]) == []
+
+
+def test_unknown_sku_skipped():
+    assert low_stock_skus(["ghost"]) == []
+
+
+def test_empty_catalog():
+    assert low_stock_skus([]) == []
+""",
+    "failed": [
+        "test_out_of_stock_is_reported",
+        "test_threshold_boundary_is_low",
+        "test_is_low_at_threshold",
+    ],
+    "regression": [
+        "test_is_low_below_threshold",
+        "test_overstock_not_reported",
+        "test_unknown_sku_skipped",
+        "test_empty_catalog",
+    ],
+    "allowed_paths": ["src/rules.py", "src/notify.py", "src/inventory.py"],
+    "search_hint": "is_low",
+}
+
+SPECS = [C101, C102, C103, C104, C105]
 
 
 def main(argv: list[str]) -> int:

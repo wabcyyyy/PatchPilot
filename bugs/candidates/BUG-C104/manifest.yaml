@@ -1,0 +1,15 @@
+id: BUG-C104
+category: 跨文件定位
+difficulty: hard
+test_cmd: "{python} -m pytest"
+failed_tests:
+  - tests/test_ratelimit.py::test_seconds_to_ticks
+  - tests/test_ratelimit.py::test_allows_up_to_limit_then_blocks
+  - tests/test_ratelimit.py::test_exact_boundary_is_inside_window
+regression_tests:
+  - tests/test_ratelimit.py::test_window_expiry_allows_again
+allowed_paths:
+  - src/units.py
+  - src/window.py
+  - src/ratelimit.py
+max_rounds: 5

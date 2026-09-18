@@ -1,0 +1,8 @@
+--- a/src/units.py
++++ b/src/units.py
+@@ -5,4 +5,4 @@
+ 
+ def seconds_to_ticks(seconds):
+     """秒 → 节拍数。"""
+-    return int(seconds)
++    return int(seconds * 1000 / TICK_MS)
