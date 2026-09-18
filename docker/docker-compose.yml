@@ -10,9 +10,18 @@ services:
       PATCHPILOT_REDIS_URL: redis://redis:6379/0
       PATCHPILOT_DB_PATH: /data/patchpilot.sqlite3
       PATCHPILOT_RUNS_ROOT: /data/runs
+      # 测试执行后端:local(默认)由 API 容器内子进程直跑;docker 经下方挂载的
+      # 宿主 docker.sock 派发进临时容器(M11 隔离闭环)。切换方式:
+      #   docker build -t patchpilot-executor:latest -f docker/executor.Dockerfile docker/
+      #   PATCHPILOT_EXECUTION_BACKEND=docker PATCHPILOT_DOCKER_IMAGE=patchpilot-executor:latest \
+      #     docker compose up -d --build
+      PATCHPILOT_EXECUTION_BACKEND: ${PATCHPILOT_EXECUTION_BACKEND:-local}
+      PATCHPILOT_DOCKER_IMAGE: ${PATCHPILOT_DOCKER_IMAGE:-python:3.11-slim}
     volumes:
       - api-data:/data
       - ../bugs:/app/bugs:ro
+      # docker 后端经此把测试派发到宿主守护进程(local 后端用不到,介意可删此行)
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - redis
     restart: unless-stopped
