@@ -10,7 +10,11 @@ from pydantic import BaseModel, Field, model_validator
 class TaskCreateIn(BaseModel):
     """创建任务:bug_id 指定题目,或 repo_path+issue 接入任意仓库(恰好一个)。"""
 
-    bug_id: str | None = Field(None, description="bugs/ 下的题目编号,如 BUG-001")
+    bug_id: str | None = Field(
+        None,
+        description="bugs/ 下的题目编号,如 BUG-001",
+        pattern=r"^BUG-[A-Za-z0-9_-]+$",
+    )
     repo_path: str | None = Field(None, description="自定义 Git 仓库路径;与 bug_id 恰好一个")
     issue_text: str | None = Field(None, description="缺陷描述(repo_path 时必填)")
     failed_tests: list[str] | None = Field(None, description="基线应失败的测试(repo_path 时必填)")

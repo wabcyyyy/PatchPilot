@@ -10,20 +10,27 @@ TEST_DIR_SEGMENTS = {"tests", "test"}
 TEST_FILE_PREFIXES = ("test_",)
 TEST_FILE_SUFFIXES = ("_test.py",)
 # pytest 控制面文件:改它们即可改变测试的收集/跳过行为,与改测试同罪(P0-1②)
-PYTEST_CONTROL_FILES = frozenset({"conftest.py", "pytest.ini", "setup.cfg", "tox.ini", "pyproject.toml"})
+PYTEST_CONTROL_FILES = frozenset(
+    {"conftest.py", "pytest.ini", "setup.cfg", "tox.ini", "pyproject.toml"}
+)
+# 证据链控制面文件(N-6):`git add -A -N` 会跳过 ignored 路径,改 .gitignore 即可
+# 把任意新增文件藏出 diff/changed_files/diff.patch——判定与取证以 git diff 视角为准,
+# 故与 pytest 控制面同罪禁改。
+EVIDENCE_CONTROL_FILES = frozenset({".gitignore", ".gitattributes"})
 
 
 def is_test_file(rel_path: str) -> bool:
     """判断仓库内相对路径是否属于测试文件(禁止 Agent 修改)。
 
     测试目录/test_ 命名之外,pytest 的控制面文件(conftest/ini/cfg/tox/pyproject)
-    同样能决定"哪些测试被收集、是否被跳过"——门禁一并禁改。
+    能决定"哪些测试被收集、是否被跳过";.gitignore/.gitattributes 能把文件藏出
+    diff 视角——三者都是"改一个文件、改写整个判定",门禁一并禁改。
     """
     p = PurePosixPath(rel_path.replace("\\", "/"))
     if any(seg.lower() in TEST_DIR_SEGMENTS for seg in p.parts[:-1]):
         return True
     name = p.name.lower()
-    if name in PYTEST_CONTROL_FILES:
+    if name in PYTEST_CONTROL_FILES or name in EVIDENCE_CONTROL_FILES:
         return True
     return name.startswith(TEST_FILE_PREFIXES) or name.endswith(TEST_FILE_SUFFIXES)
 

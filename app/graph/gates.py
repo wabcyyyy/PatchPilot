@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+import sys
 import time
 from dataclasses import dataclass, field
 
@@ -15,6 +16,23 @@ from app.tools.paths import is_test_file, normalize_rel, path_allowed
 
 _DIFF_GIT_RE = re.compile(r"^diff --git a/(.+) b/(.+)$", re.MULTILINE)
 _PLUSPLUS_RE = re.compile(r"^\+\+\+ (.+)$", re.MULTILINE)
+_NEW_FILE_RE = re.compile(r"^new file mode ", re.MULTILINE)
+
+# N-1 整改:`python -m pytest` 把 cwd(=工作区)置于 sys.path[0],工作区根下与
+# 解释器/工具链同名的顶层模块会遮蔽真身——影子 pytest 能读 argv 里的 --junitxml,
+# 伪造"期望 id 全部通过"的报告并 exit 0,判定层整体失守。故禁止新增此类顶层模块
+# (修改既有文件不在此列;基线仓库本身可信由部署方保证)。
+_RESERVED_TOP_LEVEL = frozenset(sys.stdlib_module_names) | {
+    "pytest",
+    "_pytest",
+    "py",
+    "pluggy",
+    "iniconfig",
+    "execnet",
+    # site 初始化阶段即被解释器导入的钩子名(不在 stdlib_module_names)
+    "sitecustomize",
+    "usercustomize",
+}
 
 
 @dataclass
@@ -54,6 +72,21 @@ def parse_diff_files(diff_text: str) -> list[str]:
     return files
 
 
+def parse_new_files(diff_text: str) -> list[str]:
+    """从 unified diff 提取"新增文件"(含 new file mode 段)的相对路径,保序去重。"""
+    new_files: list[str] = []
+    matches = list(_DIFF_GIT_RE.finditer(diff_text))
+    for i, match in enumerate(matches):
+        section_start = match.end()
+        section_end = matches[i + 1].start() if i + 1 < len(matches) else len(diff_text)
+        if not _NEW_FILE_RE.search(diff_text[section_start:section_end]):
+            continue
+        rel = normalize_rel(match.group(2))
+        if rel and rel not in new_files:
+            new_files.append(rel)
+    return new_files
+
+
 def run_gates(
     diff_text: str,
     *,
@@ -90,6 +123,17 @@ def run_gates(
             continue
         if not path_allowed(rel, allowed_paths):
             violations.append(GateViolation("paths", f"path outside allowed scope: {rel}"))
+
+    # 2.5 影子门禁(N-1):新增文件不得与解释器/工具链顶层模块同名,
+    # 否则 python -m pytest 的 sys.path[0]=cwd 会让影子包劫持整个判定层。
+    # 顶层段可能是包目录(pytest/)或模块文件(os.py),两种写法都要比对。
+    for rel in parse_new_files(diff_text):
+        top = normalize_rel(rel).split("/")[0]
+        candidates = {top, top[:-3] if top.endswith(".py") else ""}
+        if any(name and name in _RESERVED_TOP_LEVEL for name in candidates):
+            violations.append(
+                GateViolation("shadow", f"new top-level module shadows toolchain: {rel}")
+            )
 
     # 4. 范围门禁:修改文件数上限
     if len(files) > max_files:

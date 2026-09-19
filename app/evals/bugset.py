@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-from app.errors import TaskError
+from app.errors import InvalidRequestError, TaskError
 
 log = logging.getLogger(__name__)
 
@@ -21,13 +21,30 @@ BUGS_ROOT = Path("bugs")
 # P2-5 整改:测试 id 是要拼进 pytest argv 的外部输入(manifest 或 API 请求),
 # 必须先过格式白名单——否则 "-p evil" 这类 pytest 选项会构成注入。
 _TEST_ID_RE = re.compile(r"^[A-Za-z0-9_./\-\[\]:]+$")
+# N-3 整改:id 里的路径部分还可能把 pytest 的收集范围指到工作区之外
+# (cwd=物化工作区下,`../x`、盘符、UNC 都是合法 argv 操作数),一并拒绝。
+_DRIVE_RE = re.compile(r"^[A-Za-z]:")
 
 
 def validate_test_ids(ids: list[str], ctx: str) -> None:
-    """逐条校验测试 id 格式:非空、不以 - 开头、仅含路径/节点 id 合法字符。"""
+    """逐条校验测试 id 格式:非空、不以 - 开头、仅含路径/节点 id 合法字符。
+
+    另拒绝 `..` 段与绝对路径(盘符/UNC/`/` 开头):id 会原样进入 pytest argv,
+    收集范围逃逸工作区等于把判定权交给工作区外的任意文件。
+    """
     for tid in ids:
         if not tid or tid.startswith("-") or not _TEST_ID_RE.fullmatch(tid):
-            raise TaskError(f"{ctx}: invalid test id {tid!r} (pytest option injection guard)")
+            raise InvalidRequestError(
+                f"{ctx}: invalid test id {tid!r} (pytest option injection guard)"
+            )
+        file_part = tid.split("::")[0]
+        parts = file_part.split("/")
+        if ".." in parts or file_part.startswith(("/", "\\")) or "//" in file_part:
+            raise InvalidRequestError(
+                f"{ctx}: test id {tid!r} escapes the workspace (path traversal guard)"
+            )
+        if _DRIVE_RE.match(file_part):
+            raise InvalidRequestError(f"{ctx}: test id {tid!r} must be workspace-relative")
 
 
 @dataclass

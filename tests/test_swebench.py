@@ -139,3 +139,19 @@ def test_import_script_reports_missing_checkout(
     rc = import_main(["--jsonl", str(FIXTURE), "--checkouts-root", str(tmp_path)])
     assert rc == 1
     assert "[missing]" in capsys.readouterr().out
+
+
+def test_to_bug_task_rejects_injection_test_ids(tmp_path: Path) -> None:
+    """N-4 整改:jsonl 是外部数据,FAIL_TO_PASS/PASS_TO_PASS 必须过与 manifest 相同的校验。"""
+    checkout = tmp_path / "evil-001"
+    checkout.mkdir()
+    instance = parse_instance(
+        {
+            "instance_id": "evil-001",
+            "FAIL_TO_PASS": ["-p", "evil_plugin"],
+            "PASS_TO_PASS": ["//host/share/test_x.py::t"],
+            "problem_statement": "p",
+        }
+    )
+    with pytest.raises(TaskError, match="evil-001"):
+        to_bug_task(instance, checkout)

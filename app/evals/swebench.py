@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.errors import TaskError
-from app.evals.bugset import BugTask
+from app.evals.bugset import BugTask, validate_test_ids
 
 
 @dataclass
@@ -96,6 +96,10 @@ def to_bug_task(instance: SweInstance, checkout_dir: Path | str) -> BugTask:
             f"{instance.instance_id}: local checkout not found: {repo_dir}"
             " (prepare it at the instance's base_commit first)"
         )
+    # N-4 整改:jsonl 是外部数据文件,测试 id 与 manifest/API 同罪同防,
+    # 否则 FAIL_TO_PASS 里的 argv 片段直达 pytest 命令行
+    validate_test_ids(instance.fail_to_pass, instance.instance_id)
+    validate_test_ids(instance.pass_to_pass, instance.instance_id)
     return BugTask(
         id=instance.instance_id,
         root=repo_dir,

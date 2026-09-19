@@ -246,3 +246,47 @@ def test_path_allowed_is_case_sensitive_cross_platform() -> None:
 
     assert path_allowed("src/x.py", ["src/**"])
     assert not path_allowed("SRC/x.py", ["src/**"])
+
+
+# ---------- 第 1 轮 LOOP 整改(N-1/N-6):影子门禁与证据链控制面 ----------
+
+
+def test_is_test_file_covers_evidence_control_files() -> None:
+    """.gitignore/.gitattributes 能把文件藏出 diff 视角,与测试控制面同罪禁改。"""
+    from app.tools.paths import is_test_file
+
+    assert is_test_file(".gitignore")
+    assert is_test_file(".gitattributes")
+    assert not is_test_file(".editorconfig")
+
+
+def test_run_gates_block_shadow_top_level_module() -> None:
+    """新增与解释器/工具链同名的顶层模块会遮蔽真身伪造判定,shadow 门禁必须拦。"""
+    from app.graph.gates import run_gates
+
+    for target in ("pytest/__init__.py", "xml/etree.py", "os.py", "json/__init__.py"):
+        diff = (
+            f"diff --git a/{target} b/{target}\n"
+            f"new file mode 100644\n"
+            f"--- /dev/null\n+++ b/{target}\n@@ -0,0 +1 @@\n+evil\n"
+        )
+        gate = run_gates(diff)
+        assert not gate.ok, target
+        assert any(v.gate == "shadow" for v in gate.violations), (target, gate.violations)
+
+
+def test_run_gates_allow_normal_new_files_and_modifications() -> None:
+    """正常新增(含与保留名同名的深层文件)与既有文件修改不受影子门禁影响。"""
+    from app.graph.gates import run_gates
+
+    new_normal = (
+        "diff --git a/src/patcher.py b/src/patcher.py\n"
+        "new file mode 100644\n--- /dev/null\n+++ b/src/patcher.py\n@@ -0,0 +1 @@\n+ok\n"
+    )
+    modify_shallow = (
+        "diff --git a/patcher.py b/patcher.py\n"
+        "--- a/patcher.py\n+++ b/patcher.py\n@@ -1 +1 @@\n-old\n+new\n"
+    )
+    for diff in (new_normal, modify_shallow):
+        gate = run_gates(diff)
+        assert not any(v.gate == "shadow" for v in gate.violations), diff

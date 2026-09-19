@@ -96,3 +96,22 @@ def test_build_custom_bug_validates_test_ids() -> None:
             failed_tests=["tests/test_a.py::test_x", "--collect-only"],
             regression_tests=[],
         )
+
+
+def test_validate_test_ids_rejects_workspace_escape() -> None:
+    """`..` 段/盘符/UNC/绝对路径会把 pytest 收集范围指到工作区外,一律拒绝。"""
+    from app.errors import InvalidRequestError
+    from app.evals.bugset import validate_test_ids
+
+    for tid in (
+        "../other/tests/test_x.py::t",
+        "tests/../../evil.py::t",
+        "C:/evil/test_x.py::t",
+        "//host/share/test_x.py::t",
+        "/abs/test_x.py::t",
+    ):
+        with pytest.raises(InvalidRequestError, match="escapes the workspace|workspace-relative"):
+            validate_test_ids([tid], "escape guard")
+
+    # 合法形态(含参数化)不受影响
+    validate_test_ids(["tests/test_x.py::test_a", "src/pkg/test_y.py::TestC::test_d[1-2]"], "ok")
