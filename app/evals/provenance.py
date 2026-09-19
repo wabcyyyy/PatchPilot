@@ -8,16 +8,20 @@ from __future__ import annotations
 
 import subprocess
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from app.config import get_settings
+
+# git 取证锚定在本仓库根:与进程 CWD 无关(API 可能从任意目录被拉起)
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def git_commit() -> str:
     """当前代码 commit;非 git 环境(如裁剪过的容器)返回空串,不阻塞任务。"""
     try:
         proc = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=10
+            ["git", "rev-parse", "HEAD"], cwd=_REPO_ROOT, capture_output=True, text=True, timeout=10
         )
     except (OSError, subprocess.TimeoutExpired):
         return ""

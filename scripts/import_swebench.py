@@ -18,7 +18,31 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from app.errors import TaskError  # noqa: E402
-from app.evals.swebench import load_instances, to_bug_task  # noqa: E402
+from app.evals.swebench import SweInstance, load_instances, to_bug_task  # noqa: E402
+
+
+def _git_head(repo_dir) -> str | None:
+    """checkout 的 HEAD;非 git 仓库返回 None(调用方据此提醒人工核对)。"""
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo_dir, capture_output=True, text=True, timeout=10
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def _warn_commit_drift(task, instance: SweInstance) -> None:
+    head = _git_head(task.repo_dir)
+    if head is None:
+        print(f"[warn] {task.id}: checkout 不是 git 仓库,无法核对 base_commit")
+    elif instance.base_commit and head[:12] != instance.base_commit[:12]:
+        print(
+            f"[warn] {task.id}: checkout HEAD {head[:8]} != 数据集 base_commit"
+            f" {instance.base_commit[:8]}(FAIL_TO_PASS 预期可能不成立)"
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -41,6 +65,7 @@ def main(argv: list[str] | None = None) -> int:
             missing.append(str(exc))
             continue
         ready.append(task)
+        _warn_commit_drift(task, instance)
         print(
             f"[ready] {task.id}: failed={len(task.failed_tests)}"
             f" pass_to_pass={len(task.regression_tests)} repo={instance.repo}@{instance.base_commit[:8]}"

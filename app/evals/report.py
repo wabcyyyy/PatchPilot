@@ -67,7 +67,9 @@ def render(runs_root: Path, bugs_root: Path, report_out: str = "docs/eval-report
     metrics = compute_metrics(per_bug)
     generated = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     providers = ", ".join(metrics["by_category_providers"]) or "n/a"
-    if providers == "n/a" or "fake" in providers:
+    # 只有明确是真实提供方的批次才允许宣称"真实模型成绩";
+    # fake/unknown(模型对象缺 provider 属性)一律按回放口径声明,不产出漂亮假数字
+    if providers == "n/a" or "fake" in providers or "unknown" in providers:
         batch_note = (
             "当前批次为 fake-replay 回放模型,用于验证平台闭环的确定性,"
             "**不代表真实模型成绩**;接入真实模型后同命令重跑即可替换。"

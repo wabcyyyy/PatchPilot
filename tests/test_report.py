@@ -120,6 +120,14 @@ def test_report_shows_provenance_note(tmp_path: Path) -> None:
     assert "批次溯源" not in render(legacy, BUG_ROOT)
 
 
+def test_unknown_provider_not_claimed_as_real(tmp_path: Path) -> None:
+    """provider 缺失(unknown)的批次不得被宣称为'真实模型成绩'。"""
+    runs = tmp_path / "runs" / "odd"
+    _write_report(runs / "BUG-001-x", model_provider="unknown")
+    text = render(runs, BUG_ROOT)
+    assert "真实模型在线调用成绩" not in text
+
+
 def test_multi_batch_report_lists_each_batch(tmp_path: Path) -> None:
     fake_runs = tmp_path / "runs" / "m9"
     real_runs = tmp_path / "runs" / "real"
@@ -132,7 +140,8 @@ def test_multi_batch_report_lists_each_batch(tmp_path: Path) -> None:
     text = render_multi([fake_runs, real_runs], BUG_ROOT, report_out="docs/cmp.md")
 
     assert "多批次对比" in text
-    assert text.count("---") >= 2
+    # 每个批次前各一条分隔线(区分于表格里的 |---| 分隔)
+    assert text.count("\n---\n") == 2
     assert f"`{fake_runs.as_posix()}`" in text and f"`{real_runs.as_posix()}`" in text
     assert f"--model fake --engine graph --out {fake_runs.as_posix()}" in text
     assert f"--model openai --engine graph --out {real_runs.as_posix()}" in text
