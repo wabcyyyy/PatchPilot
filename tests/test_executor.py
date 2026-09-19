@@ -171,3 +171,64 @@ def _pid_alive(pid: int) -> bool:  # pragma: no cover - 平台相关,测试内�
         return True
     except OSError:
         return False
+
+
+# ---------- 审计整改(P0-1①):all_passed 按期望 id 集合判定 ----------
+
+
+def _write_junit(tmp_path: Path, cases: list[tuple[str, str, str]]) -> Path:
+    """cases: (file, name, status),status ∈ passed | failure | skipped。"""
+    body = []
+    for file, name, status in cases:
+        if status == "passed":
+            body.append(f'<testcase classname="t" name="{name}" file="{file}"/>')
+        elif status == "skipped":
+            body.append(f'<testcase classname="t" name="{name}" file="{file}"><skipped/></testcase>')
+        else:
+            body.append(
+                f'<testcase classname="t" name="{name}" file="{file}">'
+                '<failure message="boom">x</failure></testcase>'
+            )
+    xml = (
+        '<testsuite tests="{}" failures="{}" errors="0" skipped="{}">{}</testsuite>'.format(
+            len(cases),
+            sum(1 for c in cases if c[2] == "failure"),
+            sum(1 for c in cases if c[2] == "skipped"),
+            "".join(body),
+        )
+    )
+    path = tmp_path / "junit.xml"
+    path.write_text(xml, encoding="utf-8")
+    return path
+
+
+def test_all_passed_rejects_skip_injection(tmp_path: Path) -> None:
+    """conftest 把用例 skip 后 rc 仍为 0——判定必须看"真实跑过并通过"。"""
+    from app.adapters.pytest_adapter import parse_junit_xml
+
+    report = parse_junit_xml(_write_junit(tmp_path, [("tests/test_a.py", "test_x", "skipped")]))
+    report.requested_ids = ["tests/test_a.py::test_x"]
+    assert not report.all_passed
+
+
+def test_all_passed_rejects_deselected_id(tmp_path: Path) -> None:
+    """conftest deselect 用例后 junit 里没有该 id——缺失即不通过。"""
+    from app.adapters.pytest_adapter import parse_junit_xml
+
+    report = parse_junit_xml(_write_junit(tmp_path, [("tests/test_a.py", "test_other", "passed")]))
+    report.requested_ids = ["tests/test_a.py::test_x"]
+    assert not report.all_passed
+
+
+def test_all_passed_accepts_real_pass(tmp_path: Path) -> None:
+    from app.adapters.pytest_adapter import parse_junit_xml
+
+    report = parse_junit_xml(_write_junit(tmp_path, [("tests/test_a.py", "test_x", "passed")]))
+    report.requested_ids = ["tests/test_a.py::test_x"]
+    assert report.all_passed
+
+
+def test_build_pytest_cmd_forces_xunit1() -> None:
+    """file 属性是期望 id 匹配的主判据,junit_family 必须钉在 xunit1。"""
+    cmd = build_pytest_cmd("python", ["tests/test_a.py::test_x"], Path("j.xml"))
+    assert "junit_family=xunit1" in cmd

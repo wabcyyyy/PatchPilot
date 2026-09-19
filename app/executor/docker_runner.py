@@ -88,12 +88,15 @@ def run_tests_in_container(
         "pytest",
         "-q",
         "--color=no",
+        "-o",
+        "junit_family=xunit1",
         f"--junitxml=/reports/{junit.name}",
         *test_ids,
     ]
     log.info("docker run_tests: %s test(s) in image=%s", len(test_ids), image)
     run = run_tests(cmd, cwd=ws, timeout_seconds=timeout)
     report = parse_junit_xml(junit)
+    report.requested_ids = list(test_ids)
     report.exit_code = run.exit_code
     report.duration_ms = run.duration_ms
     report.timed_out = run.timed_out

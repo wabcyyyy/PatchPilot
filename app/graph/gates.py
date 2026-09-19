@@ -78,9 +78,14 @@ def run_gates(
         # 2. 文件门禁:禁止修改测试文件(防止 Agent 改测试伪造通过)
         if forbid_test_files and is_test_file(rel):
             violations.append(GateViolation("files", f"modifying test file is forbidden: {rel}"))
-        # 3. 路径门禁:穿越与绝对路径;以及 allowed_paths 白名单
+        # 3. 路径门禁:穿越/绝对路径/.git 内部文件;以及 allowed_paths 白名单
         parts = normalize_rel(rel).split("/")
-        if ".." in parts or rel.startswith(("/", "\\")) or ":" in rel.split("/")[0]:
+        if (
+            ".." in parts
+            or ".git" in parts
+            or rel.startswith(("/", "\\"))
+            or ":" in rel.split("/")[0]
+        ):
             violations.append(GateViolation("paths", f"path escapes workspace: {rel}"))
             continue
         if not path_allowed(rel, allowed_paths):

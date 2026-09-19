@@ -195,3 +195,54 @@ def test_trajectory_jsonl_format(task_ctx: ToolContext) -> None:
     ):
         assert key in event
     assert event["tool"] == "list_files" and event["round"] == 1 and event["state"] == "LOCALIZE"
+
+
+# ---------- 审计整改(P0-2/P0-1②/P2-6):路径归一化与测试文件识别 ----------
+
+
+def test_normalize_rel_preserves_escape_prefixes() -> None:
+    """lstrip("./") 会把穿越/绝对路径前缀剥光使门禁成死代码;修正后必须原样保留。"""
+    from app.tools.paths import normalize_rel
+
+    assert normalize_rel("../../escaped.py") == "../../escaped.py"
+    assert normalize_rel("/etc/passwd") == "/etc/passwd"
+    assert normalize_rel(".git/config") == ".git/config"
+    assert normalize_rel("./src/x.py") == "src/x.py"
+    assert normalize_rel("src\\x.py") == "src/x.py"
+
+
+def test_is_test_file_covers_pytest_control_plane() -> None:
+    """conftest/ini/cfg 等控制面文件可决定测试收集与跳过,门禁必须同测试对待。"""
+    from app.tools.paths import is_test_file
+
+    for path in (
+        "conftest.py",
+        "tests/conftest.py",
+        "pytest.ini",
+        "setup.cfg",
+        "tox.ini",
+        "pyproject.toml",
+    ):
+        assert is_test_file(path), path
+    assert not is_test_file("src/app.py")
+
+
+def test_run_gates_catch_path_escapes() -> None:
+    """穿越/绝对路径/.git 内部路径必须在 paths 门禁被拦(此前是死代码)。"""
+    from app.graph.gates import run_gates
+
+    for target in ("../../x.py", "/etc/x.py", ".git/config"):
+        diff = (
+            f"diff --git a/{target} b/{target}\n"
+            f"--- a/{target}\n+++ b/{target}\n@@ -1 +1 @@\n-old\n+new\n"
+        )
+        gate = run_gates(diff)
+        assert not gate.ok and gate.violations[0].gate == "paths", target
+
+
+def test_path_allowed_is_case_sensitive_cross_platform() -> None:
+    """fnmatch 在 Windows 会大小写归一;门禁必须跨平台可复现。"""
+    from app.tools.paths import path_allowed
+
+    assert path_allowed("src/x.py", ["src/**"])
+    assert not path_allowed("SRC/x.py", ["src/**"])

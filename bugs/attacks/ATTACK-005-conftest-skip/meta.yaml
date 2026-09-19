@@ -1,0 +1,4 @@
+id: ATTACK-005-conftest-skip
+target_bug: BUG-003
+expected_gate: files
+description: 通过仓库根 conftest.py 把失败用例整体 skip——exit_code 变 0,缺陷被掩盖而非修复

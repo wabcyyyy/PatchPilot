@@ -3,24 +3,44 @@
 from __future__ import annotations
 
 import fnmatch
+import re
 from pathlib import Path, PurePosixPath
 
 TEST_DIR_SEGMENTS = {"tests", "test"}
 TEST_FILE_PREFIXES = ("test_",)
 TEST_FILE_SUFFIXES = ("_test.py",)
+# pytest 控制面文件:改它们即可改变测试的收集/跳过行为,与改测试同罪(P0-1②)
+PYTEST_CONTROL_FILES = frozenset({"conftest.py", "pytest.ini", "setup.cfg", "tox.ini", "pyproject.toml"})
 
 
 def is_test_file(rel_path: str) -> bool:
-    """判断仓库内相对路径是否属于测试文件(禁止 Agent 修改)。"""
+    """判断仓库内相对路径是否属于测试文件(禁止 Agent 修改)。
+
+    测试目录/test_ 命名之外,pytest 的控制面文件(conftest/ini/cfg/tox/pyproject)
+    同样能决定"哪些测试被收集、是否被跳过"——门禁一并禁改。
+    """
     p = PurePosixPath(rel_path.replace("\\", "/"))
     if any(seg.lower() in TEST_DIR_SEGMENTS for seg in p.parts[:-1]):
         return True
     name = p.name.lower()
+    if name in PYTEST_CONTROL_FILES:
+        return True
     return name.startswith(TEST_FILE_PREFIXES) or name.endswith(TEST_FILE_SUFFIXES)
 
 
+_DOT_SLASH_PREFIX = re.compile(r"^(?:\./)+")
+
+
 def normalize_rel(rel_path: str) -> str:
-    return rel_path.replace("\\", "/").lstrip("./").rstrip("/")
+    """归一化为仓库内相对路径:反斜杠转正斜杠,只剥掉真实存在的 "./" 前缀。
+
+    禁止用 lstrip("./"):它按字符集合剥光开头所有 "." 与 "/",会把
+    "../../x" 归一成 "x"、"/etc/x" 归一成 "etc/x"、".git/config" 归一成
+    "git/config"——gates 的 ".." 与绝对路径分支将永不命中(P0-2)。
+    """
+    posix = rel_path.replace("\\", "/")
+    posix = _DOT_SLASH_PREFIX.sub("", posix)
+    return posix.rstrip("/")
 
 
 def relpath_within(workspace: Path, rel_path: str) -> Path | None:
@@ -46,11 +66,15 @@ def relpath_within(workspace: Path, rel_path: str) -> Path | None:
 
 
 def path_allowed(rel_path: str, allowed_patterns: list[str] | None) -> bool:
-    """变更路径是否落在允许范围内;allowed_patterns 为空/None 表示不限制。"""
+    """变更路径是否落在允许范围内;allowed_patterns 为空/None 表示不限制。
+
+    用 fnmatchcase:fnmatch 在 Windows 上会做大小写归一,同一 manifest 在
+    Linux 与 Windows 下会得出不同判定;门禁必须跨平台可复现(P2-6)。
+    """
     if not allowed_patterns:
         return True
     norm = normalize_rel(rel_path)
-    return any(fnmatch.fnmatch(norm, normalize_rel(pat)) for pat in allowed_patterns)
+    return any(fnmatch.fnmatchcase(norm, normalize_rel(pat)) for pat in allowed_patterns)
 
 
 def looks_like_text(path: Path) -> bool:

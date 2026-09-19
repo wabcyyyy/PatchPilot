@@ -51,10 +51,32 @@ class PytestReport:
     timed_out: bool = False
     no_tests_collected: bool = False
     failed_cases: list[FailedCase] = field(default_factory=list)
+    requested_ids: list[str] = field(default_factory=list)
+    case_results: list[tuple[str, str, str, str]] = field(default_factory=list)
 
     @property
     def all_passed(self) -> bool:
-        return self.exit_code == RC_OK and not self.timed_out
+        """判定口径(P0-1 整改):请求的每条测试 id 都**真实跑过并通过**。
+
+        仅凭 exit_code==0 防不了伪:仓库内 conftest 可以把用例 skip 或
+        deselect,junit 的 rc 依然是 0。因此:rc==0 且零失败/错误/跳过之外,
+        还要求每条 requested_id 都能在 junit 的 testcase 中匹配到一条
+        status=passed 的记录。无期望 id 的调用方退化为"零失败零跳过"。
+        """
+        if self.exit_code != RC_OK or self.timed_out:
+            return False
+        if self.failed or self.errors or self.skipped:
+            return False
+        if not self.requested_ids:
+            return True
+        remaining = set(self.requested_ids)
+        for file_attr, classname, case_name, status in self.case_results:
+            if status != "passed":
+                continue
+            for rid in list(remaining):
+                if _matches_requested(file_attr, classname, case_name, rid):
+                    remaining.discard(rid)
+        return not remaining
 
 
 def build_pytest_cmd(
@@ -63,8 +85,12 @@ def build_pytest_cmd(
     junit_xml: Path | None = None,
     extra_args: list[str] | None = None,
 ) -> list[str]:
-    """组装 pytest 命令(参数列表,供白名单与 runner 使用)。"""
-    cmd = [python_exe, "-m", "pytest", "-q", "--color=no"]
+    """组装 pytest 命令(参数列表,供白名单与 runner 使用)。
+
+    junit_family 强制 xunit1:testcase 必须携带 file 属性——all_passed 的
+    期望 id 匹配以 file 为主判据(xunit2 不写 file,classname 随 rootdir 漂移)。
+    """
+    cmd = [python_exe, "-m", "pytest", "-q", "--color=no", "-o", "junit_family=xunit1"]
     if junit_xml is not None:
         cmd.append(f"--junitxml={junit_xml.as_posix()}")
     if extra_args:
@@ -107,7 +133,18 @@ def parse_junit_xml(path: Path) -> PytestReport:
         for case in suite.iter("testcase"):
             failure = case.find("failure")
             error = case.find("error")
-            node = failure if failure is not None else error
+            skipped = case.find("skipped")
+            status = "passed"
+            node = None
+            if failure is not None:
+                status, node = "failure", failure
+            elif error is not None:
+                status, node = "error", error
+            elif skipped is not None:
+                status = "skipped"
+            report.case_results.append(
+                (case.get("file", ""), case.get("classname", ""), case.get("name", "?"), status)
+            )
             if node is None:
                 continue
             kind = "failure" if failure is not None else "error"
@@ -123,6 +160,27 @@ def parse_junit_xml(path: Path) -> PytestReport:
                 )
             )
     return report
+
+
+def _matches_requested(file_attr: str, classname: str, case_name: str, requested: str) -> bool:
+    """junit 的 testcase 是否对应请求的 node id。
+
+    主判据是 junit 自带的 file 属性(命令已强制 junit_family=xunit1 保证其存在):
+    请求 id 的文件路径段与 file 做后缀匹配——classname 相对内层 rootdir,同一仓库
+    在不同 rootdir 下会得出不同 classname,不可靠。file 缺失时退化为 classname 尾部
+    与"模块点分路径(+类链)"的后缀匹配。
+    """
+    parts = requested.replace("\\", "/").split("::")
+    if case_name != parts[-1]:
+        return False
+    req_path = parts[0]
+    file_n = file_attr.replace("\\", "/")
+    if file_n:
+        return file_n == req_path or file_n.endswith("/" + req_path)
+    full = req_path.removesuffix(".py").replace("/", ".")
+    class_chain = ".".join(parts[1:-1])
+    expected_tail = f"{full}.{class_chain}" if class_chain else full
+    return classname == expected_tail or classname.endswith("." + expected_tail)
 
 
 def _case_id(case: ET.Element) -> str:
@@ -155,6 +213,7 @@ def run_pytest(
     cmd.append(f"--basetemp={(junit.parent / 'basetemp').as_posix()}")
     run = run_tests(cmd, cwd, timeout)
     report = parse_junit_xml(junit)
+    report.requested_ids = list(test_ids or [])
     report.exit_code = run.exit_code
     report.duration_ms = run.duration_ms
     report.timed_out = run.timed_out

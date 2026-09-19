@@ -12,7 +12,7 @@ from pathlib import Path
 
 from app.evals.metrics import RunRow, annotate, collect_runs, compute_metrics, latest_per_bug
 
-_ATTACK_COUNT = 4  # bugs/attacks/ 中构造的越权样例数(见 tests/test_attacks.py)
+_ATTACK_COUNT = 5  # bugs/attacks/ 中构造的越权样例数(见 tests/test_attacks.py)
 
 
 def _model_flag(provider: str) -> str:
@@ -81,12 +81,17 @@ def render(runs_root: Path, bugs_root: Path, report_out: str = "docs/eval-report
             "各任务 report.json 内含 token 明细与成本(约值,价目表未收录的模型显示 n/a)。"
         )
 
+    engines = ", ".join(sorted({r.engine for r in per_bug})) or "n/a"
+    # P1-3 整改:披露读取口径——"每题取最新"会掩盖同题重试,双口径并排呈现
+    all_runs_resolved = sum(1 for r in rows if r.verdict == "resolved")
+    all_runs_rate = round(all_runs_resolved / len(rows), 4) if rows else None
     lines = [
         "# PatchPilot 评测报告",
         "",
         f"- 生成时间:{generated}",
         f"- 运行目录:`{runs_root}`(共 {len(rows)} 次运行,每题取最新 {len(per_bug)} 题)",
         f"- 模型提供方:**{providers}**",
+        f"- 引擎:{engines}",
     ]
     provenance_note = _provenance_note(per_bug)
     if provenance_note:
@@ -100,7 +105,8 @@ def render(runs_root: Path, bugs_root: Path, report_out: str = "docs/eval-report
         "",
         "| 指标 | 值 |",
         "|---|---|",
-        f"| 最终修复率 | {metrics['final_resolution_rate']} |",
+        f"| 最终修复率(每题取最新) | {metrics['final_resolution_rate']} |",
+        f"| 全量运行修复率(含同题重试,{len(rows)} 次) | {all_runs_rate} |",
         f"| 定位成功率 | {metrics['localization_rate']} |",
         f"| 补丁应用率 | {metrics['patch_application_rate']} |",
         f"| 回归引入率 | {metrics['regression_introduction_rate']} |",
