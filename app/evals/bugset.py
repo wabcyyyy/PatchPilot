@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,6 +17,17 @@ from app.errors import TaskError
 log = logging.getLogger(__name__)
 
 BUGS_ROOT = Path("bugs")
+
+# P2-5 整改:测试 id 是要拼进 pytest argv 的外部输入(manifest 或 API 请求),
+# 必须先过格式白名单——否则 "-p evil" 这类 pytest 选项会构成注入。
+_TEST_ID_RE = re.compile(r"^[A-Za-z0-9_./\-\[\]:]+$")
+
+
+def validate_test_ids(ids: list[str], ctx: str) -> None:
+    """逐条校验测试 id 格式:非空、不以 - 开头、仅含路径/节点 id 合法字符。"""
+    for tid in ids:
+        if not tid or tid.startswith("-") or not _TEST_ID_RE.fullmatch(tid):
+            raise TaskError(f"{ctx}: invalid test id {tid!r} (pytest option injection guard)")
 
 
 @dataclass
@@ -76,13 +88,18 @@ def load_bug(path_or_id: str | Path, root: Path | str = BUGS_ROOT) -> BugTask:
     allowed = data.get("allowed_paths") or None
     replay = path / "replay" / "script.json"
 
+    failed = list(_require(data, "failed_tests", bug_id))
+    regression = list(_require(data, "regression_tests", bug_id))
+    validate_test_ids(failed, bug_id)
+    validate_test_ids(regression, bug_id)
+
     return BugTask(
         id=bug_id,
         root=path,
         repo_dir=repo_dir,
         issue_text=issue_path.read_text(encoding="utf-8").strip(),
-        failed_tests=list(_require(data, "failed_tests", bug_id)),
-        regression_tests=list(_require(data, "regression_tests", bug_id)),
+        failed_tests=failed,
+        regression_tests=regression,
         allowed_paths=[str(p) for p in allowed] if allowed else None,
         max_rounds=int(data.get("max_rounds", 5)),
         category=str(data.get("category", "")),
@@ -106,13 +123,18 @@ def build_custom_bug(
     (禁改测试文件由门禁 forbid_test_files=True 无条件兜底,与本辅助无关)。
     """
     root = Path(repo_path).resolve()
+    failed = list(failed_tests)
+    regression = list(regression_tests)
+    # 自定义任务直接来自 API 请求体,是注入面最大的入口,同样强制校验
+    validate_test_ids(failed, "custom task")
+    validate_test_ids(regression, "custom task")
     return BugTask(
         id=f"CUSTOM-{uuid.uuid4().hex[:8]}",
         root=root,
         repo_dir=root,
         issue_text=issue_text,
-        failed_tests=list(failed_tests),
-        regression_tests=list(regression_tests),
+        failed_tests=failed,
+        regression_tests=regression,
         allowed_paths=[str(p) for p in allowed_paths] if allowed_paths else None,
         max_rounds=max_rounds,
         category="custom",

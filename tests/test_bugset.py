@@ -65,3 +65,34 @@ def test_replay_script_json_shape() -> None:
     script = json.loads(bug.replay_script_path.read_text(encoding="utf-8"))
     tools = [s["tool"] for s in script]
     assert "apply_patch" in tools and tools[-1] == "finish"
+
+
+# ---------- 审计整改(P2-5):测试 id 格式白名单 ----------
+
+
+def test_manifest_with_option_injection_rejected(tmp_path: Path) -> None:
+    """failed_tests 里夹带 pytest 选项是注入,装载即拒(不进 argv)。"""
+    import shutil
+
+    shutil.copytree(Path("bugs/BUG-001"), tmp_path / "BUG-EVIL")
+    manifest = tmp_path / "BUG-EVIL" / "manifest.yaml"
+    text = manifest.read_text(encoding="utf-8").replace(
+        "tests/test_dateparse.py::test_iso_format", "-p evil_plugin"
+    )
+    manifest.write_text(text, encoding="utf-8")
+    with pytest.raises(Exception, match="invalid test id"):
+        load_bug(tmp_path / "BUG-EVIL")
+
+
+def test_build_custom_bug_validates_test_ids() -> None:
+    """API 自定义任务是注入面最大的入口,同样强制校验。"""
+    from app.errors import TaskError
+    from app.evals.bugset import build_custom_bug
+
+    with pytest.raises(TaskError, match="invalid test id"):
+        build_custom_bug(
+            repo_path=".",
+            issue_text="x",
+            failed_tests=["tests/test_a.py::test_x", "--collect-only"],
+            regression_tests=[],
+        )

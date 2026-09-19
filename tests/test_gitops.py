@@ -124,3 +124,23 @@ def test_rollback_restores_baseline(demo_repo: Path, tmp_path: Path) -> None:
     assert _read(ws / "src" / "dateparse.py") == original
     assert (ws / "tests" / "test_dateparse.py").exists()
     assert not (ws / "untracked.txt").exists()
+
+
+# ---------- 审计整改(P0-3):生产入口的包含检查 ----------
+
+
+def test_materialize_repo_refuses_nesting(tmp_path: Path) -> None:
+    """模板与目标互为祖先时必须结构化报错,而非 copytree 递归展开。"""
+    from app.errors import TaskError
+    from app.gitops.testing import materialize_repo
+
+    template = tmp_path / "tpl"
+    template.mkdir()
+    (template / "a.txt").write_text("x", encoding="utf-8")
+    with pytest.raises(TaskError, match="contain each other"):
+        materialize_repo(template, template / "nested" / "ws")
+    outer = tmp_path / "outer-ws"
+    outer.mkdir()
+    (outer / "tpl").mkdir()
+    with pytest.raises(TaskError, match="contain each other"):
+        materialize_repo(outer, tmp_path / "outer-ws")

@@ -32,13 +32,24 @@ def main(argv: list[str] | None = None) -> int:
     bug = load_bug(args.bug)
     script = load_replay_script(bug, kind=args.engine) if args.model == "fake" else None
     model = build_model(args.model, settings, script=script)
+    # P1-2 整改:CLI 批次必须携带真实模型名,否则 report.json 无成本与模型身份,
+    # "真实模型成绩"的证据链断裂(API 侧 service.py 一直传了)
+    real_model_name = settings.llm_model if args.model == "openai" else ""
 
     if args.engine == "graph":
         from app.graph.runner import run_task_graph
 
-        result = run_task_graph(bug, model, runs_root=Path(args.out))
+        result = run_task_graph(
+            bug, model, runs_root=Path(args.out), model_name=real_model_name
+        )
     else:
-        result = run_task(bug, model, runs_root=Path(args.out), max_turns=args.max_turns)
+        result = run_task(
+            bug,
+            model,
+            runs_root=Path(args.out),
+            max_turns=args.max_turns,
+            model_name=real_model_name,
+        )
     print(json.dumps(result.as_dict(), ensure_ascii=False, indent=2))
     print(f"\n[{bug.id}] status={result.status} verdict={result.verdict} -> {result.run_dir}")
     return 0 if result.verdict == "resolved" else 1

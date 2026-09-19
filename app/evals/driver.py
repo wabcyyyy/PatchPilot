@@ -146,6 +146,19 @@ def run_task(
         if not regression_report.all_passed:
             raise TaskError("baseline: regression_tests not green; invalid bug")
 
+        # P2-3 整改:plain 引擎此前完全没有时间预算检查(graph 在 propose 前查),
+        # 任务耗时不受 task_timeout 约束;进入工具循环前补一次门禁检查
+        from app.graph.gates import ensure_budget
+
+        ensure_budget(
+            round_no=1,
+            max_rounds=bug.max_rounds,
+            tokens_used=0,
+            token_budget=0,
+            started_monotonic=started,
+            time_budget_seconds=settings.task_timeout_seconds,
+        )
+
         # LOCALIZE + PROPOSE_PATCH:工具循环(plain 引擎单轮多步)
         tracker.record(tool="start_loop", state="LOCALIZE", input_payload={"max_turns": max_turns})
         outcome = run_plain_loop(

@@ -287,3 +287,29 @@ def test_graph_cancelled_when_event_preset(tmp_path: Path) -> None:
     report = json.loads((Path(result.run_dir) / "report.json").read_text(encoding="utf-8"))
     assert report["status"] == "CANCELLED"
     assert (Path(result.run_dir) / "trajectory.jsonl").exists()  # 现场保留
+
+
+# ---------- 审计整改(P1-1):PROPOSE 阶段必须携带 bug 描述与定位结论 ----------
+
+
+def test_propose_prompt_carries_issue_and_findings(tmp_path: Path) -> None:
+    """PROPOSE 是全新会话:若提示词缺 issue/findings,真实模型在盲改。"""
+    from app.llm.fake import FakeLLM
+
+    bug = load_bug("BUG-001", BUG_ROOT)
+    captured: dict = {}
+
+    class ProbeModel(FakeLLM):
+        def complete(self, messages, tools):
+            captured["messages"] = messages
+            return super().complete(messages, tools)
+
+    model = ProbeModel(_localize_script() + _propose_script(_fix_diff()))
+    result = run_task_graph(bug, model, runs_root=tmp_path / "runs")
+    assert result.verdict == "resolved"
+
+    user_texts = " ".join(
+        str(m.get("content", "")) for m in captured["messages"] if m.get("role") == "user"
+    )
+    assert "日期解析" in user_texts  # issue_text 已带入 PROPOSE
+    assert "根因" in user_texts  # 定位结论已带入 PROPOSE

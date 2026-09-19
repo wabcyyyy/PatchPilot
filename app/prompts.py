@@ -33,7 +33,13 @@ LOCALIZE_PROMPT = """## 阶段:定位
 """
 
 PROPOSE_PROMPT = """## 阶段:生成补丁(第 {round_no} 轮)
-针对已确认的根因生成修复,并提交为 unified diff。
+针对以下 Bug 的已确认根因生成修复,并提交为 unified diff。
+
+### Bug 描述
+{issue_text}
+
+### 定位阶段结论
+{findings}
 
 {feedback}
 

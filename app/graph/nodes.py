@@ -202,7 +202,12 @@ class TaskNodes:
             return {"status": "BUDGET_EXCEEDED", "outcome": "failed", "error": str(exc)}
 
         prompt = PROPOSE_PROMPT.format(
-            round_no=state["round_no"], feedback=state.get("feedback", "")
+            round_no=state["round_no"],
+            issue_text=state["issue_text"],
+            # P1-1 整改:PROPOSE 是全新会话,必须带全 Bug 描述与定位结论,
+            # 否则真实模型在 PROPOSE 阶段"盲改"(FakeLLM 回放照不出)
+            findings=state.get("findings") or "(定位阶段未给出结论;请先用只读工具确认根因)",
+            feedback=state.get("feedback", ""),
         )
         try:
             outcome = run_plain_loop(

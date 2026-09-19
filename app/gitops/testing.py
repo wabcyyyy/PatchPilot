@@ -10,6 +10,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from app.errors import TaskError
 from app.gitops.cmd import run_git
 
 _TEMPLATE_IGNORE = shutil.ignore_patterns("__pycache__", ".pytest_cache", "*.pyc", ".git")
@@ -47,11 +48,19 @@ def init_repo(dest: Path | str, message: str = "init: baseline") -> str:
 def materialize_repo(template_dir: Path | str, dest: Path | str, extra_commit: bool = True) -> str:
     """把模板目录变成 git 仓库(1—2 个 commit),返回 HEAD sha。
 
-    - 模板只保存工作树文件,git 历史现场构建,避免主仓库嵌套 .git;
-    - 第二个 commit 只改 README,保持被测源码行号稳定。
+    - 模板只保存工作树文件,git 历史现场构建,避免主仓库嵌套 .git
+      (模板自带 .git 时被 ignore 剥离,不拒绝——自定义仓库任务就是真实 checkout);
+    - 第二个 commit 只改 README,保持被测源码行号稳定;
+    - 模板与目标不得互为祖先(P0-3 整改:此校验原本只在无人调用的
+      snapshot.create_workspace 里,生产入口 materialize_repo 反而裸奔,
+      嵌套时 copytree 递归展开报 shutil.Error 而非结构化 TaskError)。
     """
-    template = Path(template_dir)
-    dest = Path(dest)
+    template = Path(template_dir).resolve()
+    dest = Path(dest).resolve()
+    if template == dest or template in dest.parents or dest in template.parents:
+        raise TaskError(
+            f"template and destination must not contain each other: {template} vs {dest}"
+        )
     if dest.exists():
         shutil.rmtree(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
