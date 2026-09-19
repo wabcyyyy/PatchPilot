@@ -18,6 +18,8 @@ PatchPilot 是**单机个人工具**:给定本地 Git 仓库与 Bug 描述,Agent
 
 信任边界:`API 客户端 → API 服务 → Agent(LLM 输出不可信)→ 七个受控工具 + 六项门禁
 → 执行器(local=进程级 / docker=容器级)`。LLM 生成的补丁与工具参数**一律视为不可信输入**。
+API 响应(TaskOut)刻意收敛:不含 idem_key/repo_path/内部主键,但**保留 run_dir
+服务端路径**(单机定位产物需要)——多租户部署前必须去掉(R2 整改注记)。
 
 ## 3. 风险清单与缓解
 
