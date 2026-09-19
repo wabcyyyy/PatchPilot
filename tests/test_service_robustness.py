@@ -52,3 +52,17 @@ def test_submit_after_shutdown_converges(tmp_path: Path, monkeypatch: pytest.Mon
     assert any(t["status"] == "NEEDS_REVIEW" for t in tasks)
     assert service.lock.acquire(f"task:{_idem('BUG-001', 'graph', 'fake')}", ttl_seconds=5)
     service.shutdown()
+
+
+def test_create_task_wires_max_rounds_into_engine(tmp_path: Path) -> None:
+    """N-9 整改:max_rounds 此前只落库不生效;引擎读 bug.max_rounds,必须在提交前覆写。"""
+    service = _service(tmp_path)
+    captured: dict[str, object] = {}
+
+    def _capture(task_id, bug, *args, **kwargs):
+        captured["max_rounds"] = bug.max_rounds
+
+    service._execute = _capture  # type: ignore[method-assign]
+    service.create_task(bug_id="BUG-001", engine="graph", model="fake", max_rounds=1)
+    assert captured["max_rounds"] == 1
+    service.shutdown()

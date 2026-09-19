@@ -24,17 +24,29 @@ PRICES: dict[str, tuple[float, float]] = {
 
 
 def _load_prices() -> dict[str, tuple[float, float]]:
-    """内置价目 + 可选覆盖文件(Settings.price_overrides,优先级更高)。"""
+    """内置价目 + 可选覆盖文件(Settings.price_overrides,优先级更高)。
+
+    N-14 整改:坏条目逐条跳过并告警,不再让畸形覆盖文件炸掉 estimate_cost——
+    该函数在任务收尾的 finally 里调用,一旦抛出,report.json 不落盘,
+    已完成的任务会被静默吞成 NEEDS_REVIEW。
+    """
     prices = dict(PRICES)
     path = get_settings().price_overrides
     if not path:
         return prices
     try:
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
-        for model, pair in raw.items():
-            prices[str(model)] = (float(pair[0]), float(pair[1]))
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         log.warning("price_overrides %s ignored: %s", path, exc)
+        return prices
+    if not isinstance(raw, dict):
+        log.warning("price_overrides %s ignored: top-level value is not an object", path)
+        return prices
+    for model, pair in raw.items():
+        try:
+            prices[str(model)] = (float(pair[0]), float(pair[1]))
+        except (IndexError, KeyError, TypeError, ValueError):
+            log.warning("price_overrides %s: bad entry for %r ignored", path, model)
     return prices
 
 

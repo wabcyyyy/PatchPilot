@@ -313,3 +313,32 @@ def test_propose_prompt_carries_issue_and_findings(tmp_path: Path) -> None:
     )
     assert "日期解析" in user_texts  # issue_text 已带入 PROPOSE
     assert "根因" in user_texts  # 定位结论已带入 PROPOSE
+
+
+def test_graph_budget_exceeded_in_propose_does_not_reach_verify(tmp_path: Path) -> None:
+    """N-5 整改:propose 超预算必须终止——即使补丁已在工作区且真实有效,
+    也不得继续 apply/verify 把资源门禁"顺路"绕过去、最终误判 FINISHED。"""
+    bug = load_bug("BUG-001", BUG_ROOT)
+    inner = FakeLLM(
+        _localize_script()
+        + [
+            {"tool": "apply_patch", "args": {"diff_text": _fix_diff()}},
+            {"tool": "finish", "args": {"success": True, "summary": "补丁已应用"}},
+        ]
+    )
+    calls = {"n": 0}
+
+    class BlowBudgetInPropose:
+        provider = "fake-replay"
+
+        def complete(self, messages, tools):
+            calls["n"] += 1
+            if calls["n"] >= 5:  # 1-3 轮 LOCALIZE,4 是 apply_patch 所在 turn
+                raise BudgetError("agent loop tokens 999999 exceed budget 1")
+            return inner.complete(messages, tools)
+
+    result = run_task_graph(bug, BlowBudgetInPropose(), runs_root=tmp_path / "runs")
+    assert result.status == "BUDGET_EXCEEDED", (result.status, result.error)
+    assert result.verdict == "failed"
+    # verify 从未执行:判定字段保持默认 False,而不是被"顺路"的 verify 刷成 True
+    assert result.verify_failed_ok is False and result.verify_regression_ok is False

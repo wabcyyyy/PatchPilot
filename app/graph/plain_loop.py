@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from dataclasses import dataclass
 
 from app.config import get_settings
@@ -52,6 +53,8 @@ def run_plain_loop(
     extra_system: str = "",
     allowed_tools: list[str] | None = None,
     token_budget: int | None = None,
+    started_monotonic: float | None = None,
+    time_budget_seconds: int = 0,
     cancel_event: threading.Event | None = None,
 ) -> LoopOutcome:
     """工具循环:模型输出 → 解析工具调用 → 执行 → 结果回填 → 直到 finish。
@@ -59,6 +62,9 @@ def run_plain_loop(
     allowed_tools 限定本阶段可用的工具(如定位阶段禁用 apply_patch);None 不限制。
     token_budget 是本循环的 token 上限(None → 取 Settings.token_budget;0 不限制),
     按累计响应 token + 当前上下文 token 检查,超限抛 BudgetError。
+    started_monotonic/time_budget_seconds 是任务级时间预算(N-10 整改):此前只有
+    "进入循环前查一次",循环内一次 LLM 调用 + 一次 pytest 可远超剩余额度,
+    锁 TTL 会早于任务结束——现在每个 turn 边界都复查。
     cancel_event 在每个 turn 开头(model.complete 之前)检查:已 set → 抛 TaskCancelled,
     即中断在下个 turn 边界生效,正在跑的一次 pytest/LLM 调用会先完成。
     """
@@ -76,6 +82,14 @@ def run_plain_loop(
     for turn_no in range(1, max_turns + 1):
         if cancel_event is not None and cancel_event.is_set():
             raise TaskCancelled(f"cancelled at turn {turn_no} boundary")
+        if (
+            started_monotonic is not None
+            and time_budget_seconds > 0
+            and time.monotonic() - started_monotonic > time_budget_seconds
+        ):
+            raise BudgetError(
+                f"agent loop exceeded time budget {time_budget_seconds}s at turn {turn_no}"
+            )
         context_tokens = messages_tokens(messages)
         if budget > 0 and tokens_spent + context_tokens > budget:
             raise BudgetError(

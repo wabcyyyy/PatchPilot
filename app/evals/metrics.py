@@ -128,7 +128,10 @@ def compute_metrics(rows: list[RunRow]) -> dict[str, Any]:
     def rate(numerator: int) -> float | None:
         return round(numerator / total, 4) if total else None
 
-    applied_rows = [r for r in rows if r.patch_applied or r.security_blocked]
+    # N-13 整改:patch_application_rate 的分子只算真正产出并应用了补丁的运行;
+    # 此前把 security_blocked(含"空 diff 被 format 门禁拦下"的运行)也算进分子,
+    # 与 regression_denominator 的口径互相矛盾,有拦截样本时指标被系统性抬高
+    applied_rows = [r for r in rows if r.patch_applied]
     regression_denominator = [r for r in rows if r.patch_applied]
     applied_count = len(applied_rows)
 

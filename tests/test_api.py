@@ -96,19 +96,25 @@ def test_error_structure(client: TestClient) -> None:
 def test_unhandled_exception_returns_unified_500(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """兜底:未预期异常也必须输出统一错误结构(AGENTS 要求,整改自评审)。"""
+    """兜底:未预期异常也必须输出统一错误结构(AGENTS 要求,整改自评审)。
+
+    N-18 整改同步修订期望:异常原文可能含内部路径/SQL,不得回显给客户端——
+    对外只给固定文案 + error id,原文进服务端日志。
+    """
     app = create_app(db_path=tmp_path / "api.sqlite3", runs_root=tmp_path / "runs")
     with TestClient(app, raise_server_exceptions=False) as c:
 
         def boom(**kwargs):
-            raise RuntimeError("boom")
+            raise RuntimeError("boom secret detail")
 
         monkeypatch.setattr(c.app.state.service, "create_task", boom)
         resp = c.post("/api/tasks", json={"bug_id": "BUG-001", "engine": "plain"})
     assert resp.status_code == 500
     body = resp.json()
     assert set(body) == {"code", "message", "task_id"}
-    assert body["code"] == "internal" and "boom" in body["message"]
+    assert body["code"] == "internal"
+    assert "internal server error (ref: " in body["message"]
+    assert "boom" not in body["message"]  # 异常原文不得外泄
 
 
 def test_report_not_ready_returns_409(client: TestClient) -> None:
@@ -170,3 +176,10 @@ def test_boot_recovery_marks_stale_running(tmp_path: Path) -> None:
     app = create_app(db_path=db, runs_root=tmp_path / "runs")
     with TestClient(app):
         assert repo.get_task("T-STALE")["status"] == "NEEDS_REVIEW"
+
+
+def test_create_task_rejects_bug_id_path_traversal(client: TestClient) -> None:
+    """N-2 整改:bug_id 只能是 BUG-xxx 编号;路径/穿越形态在 schema 层 422,不触达磁盘。"""
+    for bad in ("../../etc", "D:/evil/task", "BUG-001/repo", "bugs/BUG-001"):
+        resp = client.post("/api/tasks", json={"bug_id": bad, "engine": "plain"})
+        assert resp.status_code == 422, (bad, resp.status_code)

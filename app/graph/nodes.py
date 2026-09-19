@@ -149,9 +149,13 @@ class TaskNodes:
                 round_no=state["round_no"],
                 state_label="LOCALIZE",
                 allowed_tools=READ_TOOLS,
+                started_monotonic=self.started_monotonic,
+                time_budget_seconds=get_settings().task_timeout_seconds,
                 cancel_event=self.cancel_event,
             )
         except BudgetError as exc:
+            # N-5 整改:BUDGET_EXCEEDED 必须是转移终点(route_localize 会 end),
+            # 否则超预算后 propose 照跑、资源门禁被"顺路"绕过
             return {
                 "status": "BUDGET_EXCEEDED",
                 "outcome": "failed",
@@ -183,7 +187,8 @@ class TaskNodes:
         }
 
     def route_localize(self, state: TaskState) -> str:
-        return "end" if state["status"] == "NEEDS_REVIEW" else "continue"
+        """定位失败/超预算都是终点(N-5):超预算后不得继续 propose。"""
+        return "end" if state["status"] in ("NEEDS_REVIEW", "BUDGET_EXCEEDED") else "continue"
 
     # ---------- PROPOSE_PATCH ----------
 
@@ -198,7 +203,9 @@ class TaskNodes:
                 started_monotonic=self.started_monotonic,
                 time_budget_seconds=get_settings().task_timeout_seconds,
             )
-        except Exception as exc:  # noqa: BLE001 - 预算超限是正常业务分支
+        except BudgetError as exc:
+            # 只捕 BudgetError:其余异常是实现缺陷,交给 runner 收敛为 NEEDS_REVIEW,
+            # 不得伪装成"预算超限"污染终态语义(N-5 同源)
             return {"status": "BUDGET_EXCEEDED", "outcome": "failed", "error": str(exc)}
 
         prompt = PROPOSE_PROMPT.format(
@@ -218,9 +225,13 @@ class TaskNodes:
                 round_no=state["round_no"],
                 state_label="PROPOSE_PATCH",
                 allowed_tools=WRITE_TOOLS,
+                started_monotonic=self.started_monotonic,
+                time_budget_seconds=get_settings().task_timeout_seconds,
                 cancel_event=self.cancel_event,
             )
         except BudgetError as exc:
+            # N-5 整改:超预算必须终止(route_propose 会 end),不得带着已应用
+            # 的补丁继续 apply/verify 把资源门禁绕过去
             return {
                 "status": "BUDGET_EXCEEDED",
                 "outcome": "failed",
@@ -247,8 +258,8 @@ class TaskNodes:
         return update
 
     def route_propose(self, state: TaskState) -> str:
-        """模型放弃且无补丁 → VERIFY_FAILED 终态;否则进入门禁。"""
-        return "end" if state["status"] == "VERIFY_FAILED" else "apply"
+        """模型放弃且无补丁 → VERIFY_FAILED 终态;超预算 → 终点(N-5);否则进入门禁。"""
+        return "end" if state["status"] in ("VERIFY_FAILED", "BUDGET_EXCEEDED") else "apply"
 
     # ---------- APPLY_PATCH ----------
 

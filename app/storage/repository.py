@@ -19,6 +19,22 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds")
 
 
+# 终态集合的唯一权威定义(P2-2/N-7 整改):此前 service/state/repository 各持一份、
+# 内容不一(state 版不含 CANCELLED),任何一份漂移都会让取消或终态判定失真。
+# 引擎层不产出 CANCELLED(由 service 收敛),DB 层必须含它。
+TERMINAL_STATUSES = frozenset(
+    {
+        "FINISHED",
+        "INVALID_TASK",
+        "BUDGET_EXCEEDED",
+        "VERIFY_FAILED",
+        "PATCH_REJECTED",
+        "NEEDS_REVIEW",
+        "CANCELLED",
+    }
+)
+
+
 def _dump(value: Any) -> str | None:
     if value is None:
         return None
@@ -86,18 +102,8 @@ class Repository:
         return _task_out(row)
 
     def update_task_status(self, task_id: str, status: str, verdict: str | None = None) -> None:
-        finished = (
-            _now()
-            if status in {"FINISHED", "NEEDS_REVIEW", "CANCELLED"}
-            or status
-            in {
-                "INVALID_TASK",
-                "BUDGET_EXCEEDED",
-                "VERIFY_FAILED",
-                "PATCH_REJECTED",
-            }
-            else None
-        )
+        """无条件状态写入:仅限非终态流转(RUNNING 等);终态回写请用 finalize_task。"""
+        finished = _now() if status in TERMINAL_STATUSES else None
         with self._lock, self._conn:
             if finished:
                 self._conn.execute(
@@ -106,6 +112,31 @@ class Repository:
                 )
             else:
                 self._conn.execute("UPDATE tasks SET status=? WHERE id=?", (status, task_id))
+
+    def finalize_task(self, task_id: str, status: str, verdict: str | None = None) -> bool:
+        """终态回写(N-7 整改):任务已被取消时不覆盖,返回 False 表示输掉竞争。
+
+        此前"先 get_task 再判断再 UPDATE"是 check-then-act,取消与自然完成
+        可以互相覆盖;现在把守卫下沉为单条原子语句,以 rowcount 判定。
+        """
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "UPDATE tasks SET status=?, verdict=?, finished_at=?"
+                " WHERE id=? AND status != 'CANCELLED'",
+                (status, verdict, _now(), task_id),
+            )
+        return cur.rowcount > 0
+
+    def cancel_task_row(self, task_id: str) -> bool:
+        """取消(N-7 整改):仅当任务未到终态才生效;返回 False 表示已是终态。"""
+        placeholders = ",".join("?" * len(TERMINAL_STATUSES))
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                f"UPDATE tasks SET status='CANCELLED', verdict='cancelled', finished_at=?"
+                f" WHERE id=? AND status NOT IN ({placeholders})",
+                (_now(), task_id, *TERMINAL_STATUSES),
+            )
+        return cur.rowcount > 0
 
     def get_task(self, task_id: str) -> dict[str, Any] | None:
         with self._lock:

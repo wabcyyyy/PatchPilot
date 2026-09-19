@@ -23,8 +23,12 @@ class PatchApplyResult:
 
 
 def check_patch(workspace: Path | str, diff_text: str) -> tuple[bool, str]:
-    """干跑校验 diff 是否可以干净应用。"""
-    _, _, err = run_git(
+    """干跑校验 diff 是否可以干净应用。
+
+    P2-8 整改:以返回码为准——此前以"stderr 为空"判成败,会忽略 rc,
+    而 git 的警告性输出(如行尾归一提示)伴随 rc=0 出现时会被误判为失败。
+    """
+    rc, _, err = run_git(
         Path(workspace),
         "apply",
         "--check",
@@ -32,8 +36,7 @@ def check_patch(workspace: Path | str, diff_text: str) -> tuple[bool, str]:
         check=False,
         input_bytes=diff_text.encode("utf-8"),
     )
-    ok = not err.strip()
-    return ok, err.strip()
+    return rc == 0, err.strip()
 
 
 def apply_patch(workspace: Path | str, diff_text: str) -> PatchApplyResult:
@@ -50,6 +53,13 @@ def apply_patch(workspace: Path | str, diff_text: str) -> PatchApplyResult:
         log.info("patch rejected by --check: %s", detail.splitlines()[0] if detail else "unknown")
         return PatchApplyResult(False, "git apply --check failed", detail)
 
-    run_git(ws, "apply", "--whitespace=nowarn", input_bytes=diff_text.encode("utf-8"))
+    rc, _, err = run_git(
+        ws, "apply", "--whitespace=nowarn", check=False, input_bytes=diff_text.encode("utf-8")
+    )
+    if rc != 0:
+        # P2-8 整改:--check 与真 apply 之间工作区不会变,但防御性收敛为
+        # 结构化结果,与 docstring 一致,不再抛异常层的 GitCmdError(RuntimeError)
+        log.warning("patch apply failed rc=%s: %s", rc, err.splitlines()[0] if err else "unknown")
+        return PatchApplyResult(False, "git apply failed", err)
     log.info("patch applied to %s", ws)
     return PatchApplyResult(True, None, "applied cleanly")

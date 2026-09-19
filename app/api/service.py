@@ -16,32 +16,18 @@ import logging
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from app.api.cancellation import CancelRegistry
 from app.config import get_settings
-from app.errors import InvalidRequestError, PatchPilotError, TaskError
+from app.errors import InvalidRequestError, PatchPilotError, TaskCancelled, TaskError
 from app.evals.bugset import BUGS_ROOT, build_custom_bug, load_bug, load_replay_script
 from app.storage.locks import BaseLock, build_lock
-from app.storage.repository import Repository
+from app.storage.repository import TERMINAL_STATUSES, Repository
 
 log = logging.getLogger(__name__)
-
-TERMINAL_STATUSES = {
-    "FINISHED",
-    "INVALID_TASK",
-    "BUDGET_EXCEEDED",
-    "VERIFY_FAILED",
-    "PATCH_REJECTED",
-    "NEEDS_REVIEW",
-    "CANCELLED",
-}
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat(timespec="milliseconds")
 
 
 def ensure_repo_allowed(resolved: Path) -> None:
@@ -126,6 +112,16 @@ class TaskService:
             )
         else:
             bug = load_bug(bug_id, self.bugs_root)  # TaskError → 404/422 由路由层转
+            # N-2 整改:bug_id 语义上只能是 bugs_root 内的题目目录;
+            # schema 层已限 ^BUG-xxx$,此处兜底防绕过(与 repo_path 的根白名单同罪同防)
+            bugs_root_resolved = Path(self.bugs_root).resolve()
+            if not bug.root.resolve().is_relative_to(bugs_root_resolved):
+                raise TaskError(f"bug directory outside bugs root: {bug_id}")
+        if max_rounds is not None:
+            # N-9 整改:max_rounds 此前只落库不生效(假活键);
+            # 引擎两路(graph 的 ensure_budget/plain 的驱动器)都读 bug.max_rounds,
+            # 在构建后覆写即可对执行行为生效
+            bug.max_rounds = max_rounds
         if model == "openai":
             # 前置校验:总开关未开/凭据缺失时同步失败,不建任务、不拿锁、不烧钱
             from app.llm.openai_client import build_model
@@ -246,19 +242,22 @@ class TaskService:
                     cancel_event=cancel_event,
                 )
 
-            # 先落产物,再翻终态:轮询方见到终态时轨迹/报告必然已可查;
-            # CANCELLED 保护放在终态写入前的最后一刻,不让自然完成覆盖取消
+            # 先落产物,再翻终态:轮询方见到终态时轨迹/报告必然已可查。
+            # N-7 整改:终态回写用原子守卫——任务已被取消时 finalize 返回 False,
+            # 自然完成不得覆盖 CANCELLED(此前先读后写是 check-then-act,双向可打穿)
             self._persist_artifacts(task_id, result, run_dir)
-            current = self.repo.get_task(task_id) or {}
-            if current.get("status") != "CANCELLED":
-                self.repo.update_task_status(task_id, result.status, result.verdict)
+            self.repo.finalize_task(task_id, result.status, result.verdict)
         except TaskError as exc:
-            self.repo.update_task_status(task_id, "INVALID_TASK", "failed")
+            self.repo.finalize_task(task_id, "INVALID_TASK", "failed")
             log.error("task %s invalid: %s", task_id, exc)
+        except TaskCancelled as exc:
+            # 协作式取消是正常业务结局:info 级,不得记成 "task crashed" 告警噪声(N-18)
+            self.repo.finalize_task(task_id, "CANCELLED", "cancelled")
+            log.info("task %s cancelled at turn boundary", task_id)
+            _ = exc
         except Exception as exc:  # noqa: BLE001
-            current = self.repo.get_task(task_id) or {}
-            if current.get("status") != "CANCELLED":
-                self.repo.update_task_status(task_id, "NEEDS_REVIEW", "needs_review")
+            # N-7:同上,崩溃收敛也走原子守卫,不得覆盖 CANCELLED
+            self.repo.finalize_task(task_id, "NEEDS_REVIEW", "needs_review")
             log.exception("task %s crashed", task_id)
             _ = exc
         finally:
@@ -322,9 +321,10 @@ class TaskService:
         task = self.repo.get_task(task_id)
         if task is None:
             raise TaskError(f"task not found: {task_id}")
-        if task["status"] in TERMINAL_STATUSES:
+        # N-7 整改:取消用原子守卫——任务已到终态时写入不生效并返回冲突;
+        # 此前"先读后写"窗口内,执行线程写入的 FINISHED 会被无条件改写成 CANCELLED
+        if task["status"] in TERMINAL_STATUSES or not self.repo.cancel_task_row(task_id):
             raise PatchPilotError(f"task {task_id} already finished ({task['status']})")
-        self.repo.update_task_status(task_id, "CANCELLED")
         # 状态落库后通知执行线程;中断在下个 turn 边界生效
         self._cancels.request_cancel(task_id)
         return self.repo.get_task(task_id)  # type: ignore[return-value]

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 import uuid
@@ -65,10 +66,17 @@ class TaskResult:
 
 
 def _write_report(result: TaskResult, run_dir: Path) -> None:
-    (run_dir / "report.json").write_text(
+    """落盘 report.json(N-17 整改):tmp + os.replace 原子写。
+
+    /report 端点按"文件存在"判定就绪并被轮询;原地覆写时轮询方可能读到半截
+    JSON 撞出 500。原子替换保证"存在即可完整读"。
+    """
+    tmp = run_dir / "report.json.tmp"
+    tmp.write_text(
         json.dumps(result.as_dict(), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    os.replace(tmp, run_dir / "report.json")
 
 
 def run_task(
@@ -162,7 +170,13 @@ def run_task(
         # LOCALIZE + PROPOSE_PATCH:工具循环(plain 引擎单轮多步)
         tracker.record(tool="start_loop", state="LOCALIZE", input_payload={"max_turns": max_turns})
         outcome = run_plain_loop(
-            ctx, model, bug.issue_text, max_turns=max_turns, cancel_event=cancel_event
+            ctx,
+            model,
+            bug.issue_text,
+            max_turns=max_turns,
+            started_monotonic=started,
+            time_budget_seconds=settings.task_timeout_seconds,
+            cancel_event=cancel_event,
         )
         result.turns = outcome.turns
         result.tokens_used = outcome.tokens_used

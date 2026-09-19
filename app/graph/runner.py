@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import threading
 import time
@@ -141,9 +140,10 @@ def run_task_graph(
         result.cost_usd = estimate_cost(
             result.model_name, result.tokens_prompt, result.tokens_completion
         )
-        (run_dir / "report.json").write_text(
-            json.dumps(result.as_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        # N-17 整改:与 plain 引擎同口径,tmp + os.replace 原子写,轮询方不会读到半截文件
+        from app.evals.driver import _write_report
+
+        _write_report(result, run_dir)
         log.info(
             "graph task %s -> %s/%s (%sms)",
             task_id,

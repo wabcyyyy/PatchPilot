@@ -94,3 +94,19 @@ def test_empty_runs_give_none_rates(tmp_path: Path) -> None:
     metrics = compute_metrics([])
     assert metrics["total_runs"] == 0
     assert metrics["final_resolution_rate"] is None  # 不产出漂亮假数字
+
+
+def test_gate_blocked_runs_do_not_inflate_patch_application_rate(tmp_path: Path) -> None:
+    """N-13 整改:被门禁拦截(含空 diff)的运行不算进 patch_application_rate 分子,
+    与 regression_denominator 口径一致;拦截数只体现在 security_blocked_count。"""
+    _write_report(
+        tmp_path / "BUG-001-20260916-000003-aaaa",
+        changed_files=[],
+        gate_violations=["[format] diff is empty"],
+        status="PATCH_REJECTED",
+    )
+    rows = [annotate(r, Path("bugs")) for r in collect_runs(tmp_path)]
+    metrics = compute_metrics(rows)
+    assert rows[0].security_blocked and not rows[0].patch_applied
+    assert metrics["patch_application_rate"] == 0.0
+    assert metrics["security_blocked_count"] == 1

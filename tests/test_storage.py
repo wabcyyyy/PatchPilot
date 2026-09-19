@@ -130,3 +130,33 @@ def test_patch_and_test_run_insert(tmp_path: Path) -> None:
         duration_ms=900,
     )
     assert True  # 写入不抛异常即通过;读取由 API e2e 覆盖
+
+
+def test_finalize_and_cancel_are_atomically_guarded(tmp_path: Path) -> None:
+    """N-7 整改:终态回写与取消互相竞争时,单向让位、不可互相覆盖。
+
+    此前两侧都是"先读后写 + 无条件 UPDATE",已 resolved 任务的终态可被并发
+    cancel 改写;现在守卫下沉为单条语句并以 rowcount 判定输赢。
+    """
+    repo = Repository(tmp_path / "t.sqlite3")
+    _make_task(repo, "T1", "idem-1")
+    _make_task(repo, "T2", "idem-2")
+    repo.update_task_status("T1", "RUNNING")
+    repo.update_task_status("T2", "RUNNING")
+
+    # 方向 a:取消后自然完成不得覆盖 CANCELLED
+    assert repo.cancel_task_row("T1") is True
+    assert repo.finalize_task("T1", "FINISHED", "resolved") is False
+    after = repo.get_task("T1")
+    assert after["status"] == "CANCELLED" and after["verdict"] == "cancelled"
+
+    # 方向 b:终态后取消不得生效
+    assert repo.finalize_task("T2", "FINISHED", "resolved") is True
+    assert repo.cancel_task_row("T2") is False
+    finished = repo.get_task("T2")
+    assert finished["status"] == "FINISHED" and finished["verdict"] == "resolved"
+
+    # 非终态流转(RUNNING)仍走无条件写入
+    _make_task(repo, "T3", "idem-3")
+    repo.update_task_status("T3", "RUNNING")
+    assert repo.get_task("T3")["status"] == "RUNNING"

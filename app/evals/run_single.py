@@ -40,7 +40,11 @@ def main(argv: list[str] | None = None) -> int:
         from app.graph.runner import run_task_graph
 
         result = run_task_graph(
-            bug, model, runs_root=Path(args.out), model_name=real_model_name
+            bug,
+            model,
+            runs_root=Path(args.out),
+            max_turns=args.max_turns,
+            model_name=real_model_name,
         )
     else:
         result = run_task(

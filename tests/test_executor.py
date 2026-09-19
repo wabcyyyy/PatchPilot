@@ -183,19 +183,19 @@ def _write_junit(tmp_path: Path, cases: list[tuple[str, str, str]]) -> Path:
         if status == "passed":
             body.append(f'<testcase classname="t" name="{name}" file="{file}"/>')
         elif status == "skipped":
-            body.append(f'<testcase classname="t" name="{name}" file="{file}"><skipped/></testcase>')
+            body.append(
+                f'<testcase classname="t" name="{name}" file="{file}"><skipped/></testcase>'
+            )
         else:
             body.append(
                 f'<testcase classname="t" name="{name}" file="{file}">'
                 '<failure message="boom">x</failure></testcase>'
             )
-    xml = (
-        '<testsuite tests="{}" failures="{}" errors="0" skipped="{}">{}</testsuite>'.format(
-            len(cases),
-            sum(1 for c in cases if c[2] == "failure"),
-            sum(1 for c in cases if c[2] == "skipped"),
-            "".join(body),
-        )
+    xml = '<testsuite tests="{}" failures="{}" errors="0" skipped="{}">{}</testsuite>'.format(
+        len(cases),
+        sum(1 for c in cases if c[2] == "failure"),
+        sum(1 for c in cases if c[2] == "skipped"),
+        "".join(body),
     )
     path = tmp_path / "junit.xml"
     path.write_text(xml, encoding="utf-8")
@@ -232,3 +232,21 @@ def test_build_pytest_cmd_forces_xunit1() -> None:
     """file 属性是期望 id 匹配的主判据,junit_family 必须钉在 xunit1。"""
     cmd = build_pytest_cmd("python", ["tests/test_a.py::test_x"], Path("j.xml"))
     assert "junit_family=xunit1" in cmd
+
+
+def test_run_tests_strips_inherited_secrets_from_env(tmp_path: Path) -> None:
+    """N-8 整改:测试子进程不得继承平台密钥环境变量;系统级白名单保留。"""
+    code = (
+        "import os; print('LEAKED' if os.environ.get('PATCHPILOT_LLM_API_KEY') else 'CLEAN');"
+        "print('HASPATH' if os.environ.get('PATH') else 'NOPATH')"
+    )
+    monkey_env = {**os.environ, "PATCHPILOT_LLM_API_KEY": "sk-secret"}
+    original = os.environ.copy()
+    os.environ.update(monkey_env)
+    try:
+        result = run_tests([PYTHON, "-c", code], tmp_path, 30)
+    finally:
+        os.environ.clear()
+        os.environ.update(original)
+    assert "CLEAN" in result.stdout_tail and "LEAKED" not in result.stdout_tail
+    assert "HASPATH" in result.stdout_tail

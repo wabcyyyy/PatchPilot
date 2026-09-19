@@ -55,7 +55,8 @@ def create_task(payload: TaskCreateIn, request: Request):
 
 @router.get("/tasks")
 def list_tasks(request: Request, limit: int = 50):
-    return {"tasks": _service(request).list_tasks(limit=min(limit, 200))}
+    # N-19 整改:SQLite 对 LIMIT -1 语义为"不限",负数 limit 必须夹到 0
+    return {"tasks": _service(request).list_tasks(limit=max(0, min(limit, 200)))}
 
 
 @router.get("/tasks/{task_id}")
@@ -71,7 +72,7 @@ def get_trajectory(task_id: str, request: Request, limit: int = 200, offset: int
     service = _service(request)
     if service.get_task(task_id) is None:
         return _error(404, "invalid_task", f"task not found: {task_id}")
-    events = service.trajectory(task_id, limit=min(limit, 1000), offset=max(0, offset))
+    events = service.trajectory(task_id, limit=max(0, min(limit, 1000)), offset=max(0, offset))
     return TrajectoryPage(task_id=task_id, total_returned=len(events), offset=offset, events=events)
 
 
@@ -85,7 +86,12 @@ def get_report(task_id: str, request: Request, format: str = "json"):
     report_path = run_dir / "report.json" if run_dir else None
     if report_path is None or not report_path.exists():
         return _error(409, "not_ready", "report not generated yet", task_id=task_id)
-    result = json.loads(report_path.read_text(encoding="utf-8"))
+    try:
+        result = json.loads(report_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        # N-17 整改:文件存在与写完之间历史上有半截窗口;写侧已改原子替换,
+        # 这里兜底把残余竞态收敛为"未就绪"而不是 500
+        return _error(409, "not_ready", "report is being written", task_id=task_id)
     if format == "markdown":
         return PlainTextResponse(render_markdown(result), media_type="text/markdown; charset=utf-8")
     return JSONResponse(content=result)

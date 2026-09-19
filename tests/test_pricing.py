@@ -109,3 +109,28 @@ def test_markdown_renders_cost_line() -> None:
 
     md_none = render_markdown({"task_id": "T-2", "bug_id": "B", "cost_usd": None})
     assert "成本(约值):n/a" in md_none
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        '{"m-short": [1.0]}',  # 缺输出价:此前 IndexError 炸穿 estimate_cost(N-14)
+        '{"m-dict": {"in": 1.0}}',  # 条目不是数组:此前 KeyError
+        '{"m-null": null}',  # 条目为 null:TypeError
+        "[1.0, 2.0]",  # 顶层不是对象
+    ],
+)
+def test_price_overrides_bad_entry_shapes_do_not_raise(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, payload: str
+) -> None:
+    """N-14 整改:estimate_cost 在任务收尾 finally 里被调用,坏条目只许告警跳过,
+    不许把已完成的任务吞成无 report.json 的 NEEDS_REVIEW。"""
+    overrides = tmp_path / "bad-shape.json"
+    overrides.write_text(payload, encoding="utf-8")
+    monkeypatch.setenv("PATCHPILOT_PRICE_OVERRIDES", str(overrides))
+    get_settings.cache_clear()
+    try:
+        assert estimate_cost("gpt-4o", 1_000_000, 0) == pytest.approx(2.5)  # 内置价兜底
+        assert estimate_cost("m-short", 1000, 1000) is None  # 坏条目不入表
+    finally:
+        get_settings.cache_clear()

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import sys
 import time
@@ -18,6 +19,27 @@ from app.config import get_settings
 from app.errors import ExecError
 
 log = logging.getLogger(__name__)
+
+# N-8 整改:被诊断仓库的内容是不可信输入,子进程默认继承 API 进程全量环境——
+# PATCHPILOT_API_TOKEN / PATCHPILOT_LLM_API_KEY 会被 conftest/测试代码
+# `os.environ` 读走并写进工作区文件外带。改为最小白名单:只保留运行
+# pytest/工具链所需的系统级变量(不含任何平台密钥)。
+_ENV_ALLOWLIST = (
+    "PATH",
+    "PATHEXT",
+    "SYSTEMROOT",
+    "WINDIR",
+    "COMSPEC",
+    "SYSTEMDRIVE",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "PYTHONIOENCODING",
+    "NUMBER_OF_PROCESSORS",
+)
 
 
 @dataclass
@@ -78,6 +100,7 @@ def run_tests(
     # 面向 Agent 的命令边界由 whitelist.check_cmd_allowed 在工具层强制。
 
     timeout = timeout_seconds or get_settings().test_timeout_seconds
+    env = {name: os.environ[name] for name in _ENV_ALLOWLIST if name in os.environ}
     kwargs: dict[str, object] = {}
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
@@ -90,6 +113,7 @@ def run_tests(
         proc = subprocess.Popen(
             command,
             cwd=str(cwd),
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             **kwargs,  # type: ignore[arg-type]
@@ -102,7 +126,14 @@ def run_tests(
         timed_out = False
     except subprocess.TimeoutExpired:
         _kill_tree(proc)
-        stdout_b, stderr_b = proc.communicate()
+        try:
+            stdout_b, stderr_b = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            # N-15 整改:逃逸出进程组的分离孙子进程持有管道写端,kill 树杀不到
+            # 它们;二次 communicate 必须带超时兜底,否则任务线程在此永久挂死,
+            # 锁 TTL 到期后同键任务还会并发进入同一工作区
+            proc.kill()
+            stdout_b, stderr_b = proc.communicate()
         timed_out = True
         log.warning("run_tests timed out after %ss: %s", timeout, command)
 
