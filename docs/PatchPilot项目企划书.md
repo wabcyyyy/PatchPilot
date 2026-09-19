@@ -1,7 +1,9 @@
 # PatchPilot 项目企划书
 
-> 本文由《PatchPilot项目初步企划书与学习建议》拆分细化而来,覆盖项目定位、架构设计、状态机、工具协议、数据模型、阶段规划与评测方案。
-> 学习路线、动手练习与自查标准见《PatchPilot学习计划》;项目各阶段标注了所需的学习模块前置。
+> 本文是 PatchPilot 的**规范定义唯一事实源**(状态机、门禁规则、数据模型、评测口径),覆盖项目定位、
+> 架构设计、状态机、工具协议、数据模型、阶段规划与评测方案。
+> 学习路线、动手练习与自查标准见《PatchPilot学习计划》;两者按周交替推进。
+> 早期初稿《项目初步企划书与学习建议》已拆分为上述两份并退役(历史见 git)。
 
 ## 1. 项目定位
 
@@ -182,7 +184,7 @@ PatchPilot:面向研发流程的开发者 Agent,重点是仓库理解、命令�
 
 | 表 | 关键字段 | 说明 |
 |---|---|---|
-| tasks | id, repo_path, commit, issue_text, test_cmd, max_rounds, budget, status, created_at, finished_at | 任务主表 |
+| tasks | id, repo_path, commit, issue_text, max_rounds, budget, status, created_at, finished_at | 任务主表 |
 | trajectory_events | id, task_id, round, state, tool, request_id, input, output_summary, duration_ms, error, timestamp | 按第 5 节格式追加 |
 | patches | id, task_id, round, diff_text, changed_files, gate_result, applied | 每轮补丁与门禁结论 |
 | test_runs | id, task_id, round, kind(baseline/regression/verify), passed, failed, report_path, exit_code, duration_ms | 每次测试执行 |
@@ -232,7 +234,10 @@ patchpilot/
 3. **路径门禁**:所有修改路径在仓库根内,无 `..` 穿越,无绝对路径;
 4. **范围门禁**:修改文件数不超过上限(建议 5),新增文件需显式声明;
 5. **命令门禁**:测试命令在白名单内,禁止 shell 字符串拼接;
-6. **资源门禁**:轮数、单轮时间、总 token 均在预算内。
+6. **资源门禁**:轮数、单轮时间、总 token 均在预算内;
+7. **影子门禁**(2026-09-20 审计新增):新增文件不得与解释器/工具链顶层模块
+   同名(pytest/stdlib 等)——否则 `python -m pytest` 的 sys.path[0]=工作区
+   会让影子包伪造测试报告,架空判定层。
 
 执行隔离:每次 VERIFY 在复制出的临时工作区 + 临时容器中执行,容器加 `--network=none`、内存/CPU 限额、`--rm` 用后即删;主工作区在验证过程中保持只读。
 

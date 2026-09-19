@@ -16,7 +16,7 @@ PatchPilot 是**单机个人工具**:给定本地 Git 仓库与 Bug 描述,Agent
 | 宿主计算资源 | 测试执行的 CPU/内存/磁盘(预算门禁只管 token/轮数/时长,不限带宽) |
 | 钱包 | LLM API 调用费用 |
 
-信任边界:`API 客户端 → API 服务 → Agent(LLM 输出不可信)→ 七个受控工具 + 六项门禁
+信任边界:`API 客户端 → API 服务 → Agent(LLM 输出不可信)→ 七个受控工具 + 七项门禁
 → 执行器(local=进程级 / docker=容器级)`。LLM 生成的补丁与工具参数**一律视为不可信输入**。
 API 响应(TaskOut)刻意收敛:不含 idem_key/repo_path/内部主键,但**保留 run_dir
 服务端路径**(单机定位产物需要)——多租户部署前必须去掉(R2 整改注记)。
@@ -41,8 +41,8 @@ API 响应(TaskOut)刻意收敛:不含 idem_key/repo_path/内部主键,但**保�
 
 平台的本质就是"跑模型产的补丁 + 跑目标仓库的测试"。防线依次是:
 
-1. 静态门禁:禁改测试文件 / 路径越界 / allowed_paths 范围 / 文件数上限 / diff 格式
-   / `git apply --check`,攻击样例 4/4 拦截(`bugs/attacks/`,回归于 `tests/test_attacks.py`);
+1. 静态门禁:禁改测试文件 / 路径越界 / allowed_paths 范围 / 文件数上限 / 影子模块
+   / diff 格式 / `git apply --check`,攻击样例 8 个拦截(`bugs/attacks/`,回归于 `tests/test_attacks.py`);
 2. 命令边界:Agent 只能跑 manifest 预定义测试集,无 shell,参数列表 + 白名单;
 3. 执行隔离:`local` 后端=宿主子进程(信任级别≈开发者自己跑测试),`docker` 后端=
    容器级(`--network=none`、内存/CPU 限额、非 root uid 1000、`--rm` 用后即焚);

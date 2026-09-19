@@ -16,15 +16,16 @@
   外加 INVALID_TASK / PATCH_REJECTED / VERIFY_FAILED / BUDGET_EXCEEDED / NEEDS_REVIEW 异常分支;
 - **7 个受控 Agent 工具**:list_files / search_code / read_file / apply_patch / run_tests / git_diff / reset_workspace,
   每次调用记录完整轨迹(JSONL + SQLite);
-- **六项质量门禁**:格式 / 禁改测试文件 / 路径越界 / 修改范围 / 命令白名单 / 资源预算,
-  附 4 个攻击样例(`bugs/attacks/`)验证拦截;
+- **七项质量门禁**:格式 / 禁改测试文件 / 路径越界 / 修改范围 / 影子模块 / 命令白名单 / 资源预算,
+  附 8 个攻击样例(`bugs/attacks/`)验证拦截;
 - **双执行引擎**:plain(教学用单循环)与 graph(状态机),共享工具与提示;
-- **服务化**:FastAPI 六端点 + SQLite 持久化 + Redis 任务锁(可退化内存锁)+ 幂等 + 崩溃恢复;
+- **服务化**:FastAPI 七个端点 + SQLite 持久化 + Redis 任务锁(可退化内存锁)+ 幂等 + 崩溃恢复;
 - **容器隔离**:临时容器执行测试(`--network=none`、内存/CPU 限额、`--rm`),
   5 项隔离实验见 `docs/docker-isolation-notes.md`;
 - **自建评测集**:28 道 Python Bug(异常处理/边界条件/类型错误/数据访问/跨文件定位 × 简单/中等),
   另有 8 道 hard 候选题(`bugs/candidates/`,待人工审题),
-  七项指标自动判定,报告自带批次 provenance 与复现命令;
+  七项指标自动判定;T10.1 起报告自带批次 provenance 与自动归并的复现命令
+  (已入库的两份报告快照早于该特性,读数前先看 `docs/README.md` 的口径补注);
 - **外部基准接入(v1)**:SWE-bench jsonl 数据格式适配(`app/evals/swebench.py`),
   映射为内部任务后复用同一套基线/验证/门禁判定。v1 只做数据接入与本地执行
   (checkout 需人工准备),不含官方 docker 评估架构建;联网下载与真实模型运行均人工触发。
@@ -74,21 +75,26 @@ app/
 ├── llm/        # 模型封装(OpenAI 兼容 + FakeLLM 回放)
 ├── storage/    # SQLite 仓储 + Redis/内存任务锁
 └── evals/      # 题目加载、单任务驱动、指标计算、报告生成
-bugs/           # 20 道自建 Bug + 4 个攻击样例(scripts/gen_bugs.py 生成)
+bugs/           # 28 道自建 Bug + 8 个攻击样例 + 8 道 hard 候选(scripts/gen_bugs.py 生成)
 docker/         # 执行器镜像、API 镜像、Compose
-docs/           # 设计笔记、隔离实验、复盘(PM-001~006)、评测报告
+docs/           # 索引(docs/README.md)、设计笔记、威胁模型、隔离实验、复盘、审计、archive/
 tests/          # 项目自身测试(210+ 用例,全离线,模型交互用 FakeLLM 回放)
 ```
 
 ## 文档
 
+**从 [`docs/README.md`](docs/README.md) 进**——那份索引规定了每类问题由哪个文件唯一回答。
+
 | 文档 | 内容 |
 |---|---|
+| `docs/README.md` | **docs 索引**:唯一事实源、文件状态、维护约定 |
+| `docs/PatchPilot项目企划书.md` | 规范源:架构、状态机、门禁、判定规则、评测方案 |
 | `docs/design.md` | 设计决策与已知边界 |
 | `docs/threat-model.md` | 威胁模型:风险清单、缓解与"明确不防"清单 |
-| `docs/PatchPilot改进计划.md` | 评审驱动的改进计划(M10–M13)与完成状态 |
-| `docs/eval-report.md` | 最新评测报告(可复现,含批次溯源) |
+| `docs/audit-2026-09-19.md` | 全量自检:死代码/冗余架构、安全与逻辑漏洞、承诺落地核查,按 P0–P3 分级 |
+| `docs/eval-report.md` | fake 回放批次快照(混合引擎;读数前先读文首口径补注) |
+| `docs/eval-report-real.md` | 真实模型批次快照(缺模型名/成本;读数前先读文首口径补注) |
 | `docs/postmortems/` | 失败复盘(6 篇) |
 | `docs/docker-isolation-notes.md` / `docs/docker-backend-notes.md` | 容器隔离边界实验 / 执行后端与部署闭环 |
-| 《PatchPilot项目企划书.md》 | 架构、状态机、门禁、评测方案 |
 | 《PatchPilot开发计划书.md》 / 《PatchPilot学习计划.md》 | 里程碑任务卡 / 学习路线 |
+| `docs/archive/` | 一次性历史:夜跑任务单与晨会报告、M10–M13 改进计划(均已完成) |

@@ -3,6 +3,15 @@
 - 生成时间:2026-09-18 01:15 UTC
 - 运行目录:`runs\real`(共 28 次运行,每题取最新 28 题)
 - 模型提供方:**openai**
+- 引擎:**plain ×28**(实测,非 README 主打的 graph 状态机)
+
+> **读数口径(2026-09-19 补注,实测 `runs/real/*/report.json` 全部 28 份)**:本文件是**生成产物快照**。
+> 这批确实是真实模型在线调用,provider=openai、28/28 resolved,但产物侧缺了三项最关键信息:
+> `engine` 全为 **plain**、`model_name` 全为**空串**、`cost_usd` 全为 **None**、`provenance` 字段**全部缺失**。
+> 因此下方原文"report.json 内含 token 明细与成本"一句**不成立**(成本一项都没有),
+> 且**无法回答"哪个模型、哪个引擎、花了多少钱"**。根因是 `app/evals/run_single.py` 从 CLI 调用时
+> 不传 `model_name`;provenance 缺失说明本批次早于 T10.1 落地后未重生成。
+> 缺陷与整改见 `docs/audit-2026-09-19.md` P1-2。
 
 > **数据来源声明**:本报告由 `python -m app.evals.report` 从运行产物自动生成;
 > 每个指标都有判定脚本(metrics.py),无人工标注。本批次为**真实模型在线调用成绩**(openai),结论由平台测试执行与门禁脚本自动判定;各任务 report.json 内含 token 明细与成本(约值,价目表未收录的模型显示 n/a)。
@@ -59,9 +68,15 @@
 
 ## 复现方式
 
+**本批次当前无法逐字复现**——产物未记录模型名与 provenance(见文首读数口径),
+且原始批次是 CLI 驱动的 plain 引擎。补齐 `run_single` 的 `model_name` 后,本批次等价命令为:
+
 ```bash
-# 单题回放
-python -m app.evals.run_single --bug BUG-001 --model fake --engine graph --out runs
+# 单题:真实模型 + plain 引擎(本批次实际形态)
+PATCHPILOT_LLM_ENABLED=true python -m app.evals.run_single \
+    --bug BUG-001 --model openai --engine plain --out runs/real-rerun
 # 批量评测 + 本报告
-python -m app.evals.report --runs runs/m9 --out docs/eval-report.md
+python -m app.evals.report --runs runs/real-rerun --out docs/eval-report-real.md
 ```
+
+重跑会产生真实 API 花费,须人工显式触发;`runs/real` 原产物保留不动作为历史证据。

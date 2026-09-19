@@ -55,16 +55,16 @@ regression 必须绿)由生成器与测试双重把关——回归集在基线�
 - 多语言适配只有 pytest 一个实现,接口预留;
 - token 统计在回放模式下是字符估算;
 - 越权拦截率在评测批次里体现为 PATCH_REJECTED 计数,
-  攻击样例(4/4 拦截)是独立构造集,不混入 bug 集指标;
+  攻击样例(8 个,全部拦截)是独立构造集,不混入 bug 集指标;
 - **单进程架构**:SQLite 单连接 + 进程内任务锁 + 进程内 CancelRegistry——
   多 uvicorn worker 会破坏幂等/取消语义(取消事件跨进程不可达);
   横向扩展需任务队列与跨进程取消通道,属"平台化"范畴,暂不做;
 - **协作式取消粒度**:取消只在工具循环的 turn 边界生效,正在执行的一次
   pytest/LLM 调用(各至多 test_timeout/llm_timeout 秒)会先完成再退出;
   `task_timeout` 是预算检查点而非强杀;
-- **recursion_limit 与 max_rounds 的组合**:graph 引擎 recursion_limit=80,
-  一轮重试消耗约 5-7 个节点执行,`max_rounds` 取上限 20 时深重试可能触限,
-  收敛为 NEEDS_REVIEW(可复盘,不悬死);
+- **recursion_limit 与 max_rounds 的组合**:graph 引擎的 recursion_limit
+  随 max_rounds 推导(4N+8,固定前缀 3 步 + 每轮 4 步 + 收尾 1 步),
+  正常轮数内不会触限;此前硬编码 80 在 max_rounds=20 时会提前误抛;
 - **停机窗口的受理语义**:服务关停瞬间已受理(create 返回 201)但未起跑的任务,
   可能在线程池关闭后收敛为 NEEDS_REVIEW——冒烟验证(compose_smoke)中实测到该
   竞态,语义为"需要人看",不谎报失败;
