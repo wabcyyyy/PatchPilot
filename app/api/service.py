@@ -72,6 +72,8 @@ class TaskService:
         self.lock = lock or build_lock(redis_url or get_settings().redis_url)
         self._cancels = CancelRegistry()
         self._pool = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="patchpilot")
+        # N-21 整改:task_id → (Future, lock_key),供停机时收敛未开始的任务
+        self._futures: dict[str, tuple[Any, str]] = {}
 
     # ---------- 创建 ----------
 
@@ -159,7 +161,7 @@ class TaskService:
             self.repo.set_status_unless_terminal(task_id, "RUNNING")
             # 提交前先注册取消事件,保证 create 返回后的任何 cancel 都不会丢失
             cancel_event = self._cancels.register(task_id)
-            self._pool.submit(
+            future = self._pool.submit(
                 self._execute,
                 task_id,
                 bug,
@@ -170,6 +172,8 @@ class TaskService:
                 cancel_event,
                 replay_script,
             )
+            # N-21 整改:登记 future,停机时可识别"已受理但从未开始"的任务
+            self._futures[task_id] = (future, lock_key)
         except Exception as exc:
             # 落库/提交失败必须回滚:否则锁要挂到 TTL(约 16 分钟),任务行卡死
             self._rollback_created(task_id, lock_key)
@@ -264,6 +268,7 @@ class TaskService:
             log.exception("task %s crashed", task_id)
             _ = exc
         finally:
+            self._futures.pop(task_id, None)
             self._cancels.unregister(task_id)
             self.lock.release(lock_key)
 
@@ -333,7 +338,41 @@ class TaskService:
         return self.repo.get_task(task_id)  # type: ignore[return-value]
 
     def recover_stale(self) -> int:
-        return self.repo.recover_stale_running()
+        """启动恢复:僵尸任务收敛为 NEEDS_REVIEW,并同步清掉残留任务锁(N-20 整改)。
+
+        此前只修状态不清锁——崩溃重启后同键重试会被 409 卡死到 TTL(约 16 分钟),
+        且报错语义错误("already running"而任务已是 NEEDS_REVIEW)。
+        """
+        stale_keys = self.repo.recover_stale_running()
+        for idem_key in stale_keys:
+            try:
+                self.lock.force_release(f"task:{idem_key}")
+            except Exception:  # 单把锁清理失败不得打断其余恢复
+                log.exception("failed to force-release stale lock task:%s", idem_key)
+        return len(stale_keys)
 
     def shutdown(self) -> None:
+        """优雅停机(N-21 整改):向在途任务传播协作式取消,收敛未开始的任务。
+
+        此前 cancel_futures=True 只砍掉"尚未开始"的 future——这些任务的
+        _execute 永不运行,其任务行永久滞留 RUNNING;在途任务则收不到任何
+        通知,非 daemon 工作线程把进程退出阻塞到任务自然结束。
+        """
+        # ① 在途任务:turn 边界协作中断(正在跑的一次 pytest/LLM 先完成)
+        for task_id in self._cancels.ids():
+            self._cancels.request_cancel(task_id)
+        # ② 已受理但未开始:future 可取消 → 任务行收敛 CANCELLED(没跑过,
+        #    无产物无成本,与运行期取消排队任务的语义一致),锁与事件释放
+        for task_id, (future, lock_key) in list(self._futures.items()):
+            if not future.cancel():
+                continue
+            self._futures.pop(task_id, None)
+            try:
+                self.repo.cancel_task_row(task_id)
+            except Exception:  # 单个清理失败不得打断其余
+                log.exception("task %s: failed to converge row on shutdown", task_id)
+            finally:
+                self._cancels.unregister(task_id)
+                self.lock.release(lock_key)
+        # ③ 兜底:不等待在途线程(它们会经 ① 的 turn 边界尽快自行收敛)
         self._pool.shutdown(wait=False, cancel_futures=True)

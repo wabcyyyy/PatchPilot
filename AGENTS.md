@@ -13,7 +13,7 @@ PatchPilot:面向软件仓库的测试失败诊断与补丁验证平台。
 ## 编码规范
 
 - Python 3.11+,全量类型标注;`ruff` 做 lint 与格式化(`ruff check . && ruff format --check .` 必须通过);
-- 异常分层:`TaskError / PatchError / ExecError / GateError / BudgetError`(见 `app/errors.py`),API 层兜底转统一错误结构 `{code, message, task_id}`;
+- 异常分层:`TaskError / ExecError / GateError / BudgetError / TaskCancelled`(见 `app/errors.py`;补丁应用失败是结构化 `PatchApplyResult` 而非异常,故无 PatchError),API 层兜底转统一错误结构 `{code, message, task_id}`;
 - 日志:stdlib `logging`,业务日志必须带 `task_id` 与 `request_id`;
 - 配置:一律走 `app/config.py` 的 `Settings`(pydantic-settings),禁止硬编码路径与密钥;
 - 测试:pytest;新功能必须带测试;测试不依赖网络,模型交互一律用 `app/llm/fake.py` 的 FakeLLM。

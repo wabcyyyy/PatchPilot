@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
 import re
-import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -129,6 +130,33 @@ def load_bug(path_or_id: str | Path, root: Path | str = BUGS_ROOT) -> BugTask:
     )
 
 
+def _custom_bug_id(
+    repo_path: Path,
+    issue_text: str,
+    failed: list[str],
+    regression: list[str],
+    allowed_paths: list[str] | None,
+) -> str:
+    """由任务内容确定性派生自定义任务 id(N-22 整改)。
+
+    纳入 allowed_paths:它是题目身份的一部分且直接决定门禁行为,
+    同 repo 同内容但不同 scope 的两个在途任务不能共享幂等键。
+    max_rounds 排除:运行参数,与正式题 idem_key 的口径一致。
+    12 位 hex(48-bit):碰撞后果是两个不同任务共享幂等键——比重复执行更糟,
+    不能为短而牺牲。
+    """
+    payload = "\x1f".join(
+        [
+            os.path.normcase(str(Path(repo_path).resolve())),
+            issue_text,
+            *sorted(failed),
+            *sorted(regression),
+            *sorted(allowed_paths or []),
+        ]
+    )
+    return "CUSTOM-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+
+
 def build_custom_bug(
     *,
     repo_path: Path | str,
@@ -140,7 +168,10 @@ def build_custom_bug(
 ) -> BugTask:
     """内存构造自定义任务(任意仓库接入):不经 bugs/ 目录结构,无回放脚本文件。
 
-    id 含随机段,天然不与正式题冲突;安全语义与正式题完全一致
+    id 由任务内容确定性派生(N-22 整改):此前含随机段导致幂等键每次必不同,
+    同一提交因超时重试就会并发跑多份。同内容重提 → 同 id → 在途幂等命中;
+    终态后允许重跑(与正式题语义一致)。issue_text 按原文字节参与散列,
+    空白差异视为不同任务。安全语义与正式题完全一致
     (禁改测试文件由门禁 forbid_test_files=True 无条件兜底,与本辅助无关)。
     """
     root = Path(repo_path).resolve()
@@ -152,7 +183,7 @@ def build_custom_bug(
     validate_test_ids(failed, "custom task")
     validate_test_ids(regression, "custom task")
     return BugTask(
-        id=f"CUSTOM-{uuid.uuid4().hex[:8]}",
+        id=_custom_bug_id(root, issue_text, failed, regression, allowed_paths),
         root=root,
         repo_dir=root,
         issue_text=issue_text,

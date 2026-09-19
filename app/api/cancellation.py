@@ -33,6 +33,11 @@ class CancelRegistry:
         event.set()
         return True
 
+    def ids(self) -> list[str]:
+        """当前注册的全部 task_id 快照(N-21 整改:停机时逐一传播取消)。"""
+        with self._lock:
+            return list(self._events)
+
     def unregister(self, task_id: str) -> None:
         with self._lock:
             self._events.pop(task_id, None)

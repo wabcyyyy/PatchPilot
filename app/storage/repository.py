@@ -150,18 +150,25 @@ class Repository:
             ).fetchall()
         return [_task_out(r) for r in rows]
 
-    def recover_stale_running(self) -> int:
-        """服务启动时把 RUNNING/QUEUED 的僵尸任务标记为 NEEDS_REVIEW,返回数量。"""
+    def recover_stale_running(self) -> list[str]:
+        """服务启动时把 RUNNING/QUEUED 的僵尸任务标记为 NEEDS_REVIEW。
+
+        N-20 整改:返回被恢复行的 idem_key,调用方(service)据此同步清掉
+        Redis 里的残留任务锁——否则重启后同键重试会被 409 卡死到 TTL。
+        """
         with self._lock, self._conn:
-            cur = self._conn.execute(
+            rows = self._conn.execute(
+                "SELECT idem_key FROM tasks WHERE status IN ('RUNNING','QUEUED')"
+            ).fetchall()
+            stale_keys = [r["idem_key"] for r in rows if r["idem_key"]]
+            self._conn.execute(
                 "UPDATE tasks SET status='NEEDS_REVIEW', finished_at=?"
                 " WHERE status IN ('RUNNING','QUEUED')",
                 (_now(),),
             )
-            count = cur.rowcount
-        if count:
-            log.warning("recovered %d stale running task(s) as NEEDS_REVIEW", count)
-        return count
+        if stale_keys:
+            log.warning("recovered %d stale running task(s) as NEEDS_REVIEW", len(stale_keys))
+        return stale_keys
 
     # ---------- trajectory ----------
 

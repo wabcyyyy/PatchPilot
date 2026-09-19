@@ -125,6 +125,7 @@ def run_task(
     result.provenance = build_provenance(result.model_provider, model_name, engine)
     tracker = Tracker(run_dir / "trajectory.jsonl", task_id=task_id)
     started = time.monotonic()
+    ctx: ToolContext | None = None  # materialize 失败时 finally 仍可安全引用
 
     try:
         # CREATED → BASELINE:bug 仓库是纯工作树,运行时物化为 git 仓库并固定基线 commit
@@ -224,10 +225,14 @@ def run_task(
         else:
             # 模型放弃/自认失败/静默结束,结局一致:VERIFY_FAILED(P3 死分支折叠)
             result.status, result.verdict = "VERIFY_FAILED", "failed"
-        (run_dir / "diff.patch").write_text(diff.diff_text, encoding="utf-8")
 
     except BudgetError as exc:
+        # N-11 整改:plain 引擎同样把循环已耗的 token/turns 记回账本
         result.status, result.verdict, result.error = "BUDGET_EXCEEDED", "failed", str(exc)
+        result.turns = getattr(exc, "turns", 0)
+        result.tokens_used = getattr(exc, "tokens_spent", 0)
+        result.tokens_prompt = getattr(exc, "tokens_prompt", 0)
+        result.tokens_completion = getattr(exc, "tokens_completion", 0)
     except TaskCancelled as exc:
         # 协作式取消:保留现场落盘;DB 状态由 cancel_task 置 CANCELLED,回写时让位
         result.status, result.verdict, result.error = "CANCELLED", "cancelled", str(exc)
@@ -241,6 +246,14 @@ def run_task(
             f"{type(exc).__name__}: {exc}",
         )
     finally:
+        # R3 整改:diff.patch 移入 finally——CANCELLED/崩溃/预算路径的工作区
+        # 未被回滚,现场仍在,取证产物不应缺失
+        try:
+            (run_dir / "diff.patch").write_text(
+                working_tree_diff(ctx.workspace).diff_text if ctx else "", encoding="utf-8"
+            )
+        except Exception:  # 落盘失败不影响任务结论
+            log.exception("task %s: failed to write diff.patch", task_id)
         result.duration_ms = int((time.monotonic() - started) * 1000)
         result.cost_usd = estimate_cost(
             result.model_name, result.tokens_prompt, result.tokens_completion

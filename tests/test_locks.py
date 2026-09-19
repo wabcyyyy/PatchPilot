@@ -51,3 +51,20 @@ def test_redis_lock_roundtrip() -> None:
     lock.release("k-redis")
     assert lock.acquire("k-redis", ttl_seconds=30)
     lock.release("k-redis")
+
+
+def test_inmemory_force_release_ignores_holder() -> None:
+    """N-20 整改:启动恢复需要无视持有者直接删锁(release 无 token 语义)。"""
+    lock = InMemoryLock()
+    assert lock.acquire("k-stale", ttl_seconds=600)
+    lock.force_release("k-stale")
+    assert lock.acquire("k-stale", ttl_seconds=600)
+
+
+@pytest.mark.skipif(not _redis_ping_ok(), reason="本机 6379 无可用 Redis 服务")
+def test_redis_force_release() -> None:
+    lock = build_lock("redis://localhost:6379/0")
+    assert lock.acquire("k-force", ttl_seconds=30)
+    lock.force_release("k-force")
+    assert lock.acquire("k-force", ttl_seconds=30)
+    lock.release("k-force")

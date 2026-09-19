@@ -56,11 +56,12 @@ def test_recover_stale_running(tmp_path: Path) -> None:
     repo.set_status_unless_terminal("T2", "RUNNING")
     repo.finalize_task("T3", "FINISHED", "resolved")
 
-    count = repo.recover_stale_running()
-    assert count == 2
+    # N-20 整改:返回被恢复行的 idem_key,供 service 同步清残留锁
+    stale_keys = repo.recover_stale_running()
+    assert sorted(stale_keys) == ["a", "b"]
     assert repo.get_task("T1")["status"] == "NEEDS_REVIEW"
     assert repo.get_task("T3")["status"] == "FINISHED"
-    assert repo.recover_stale_running() == 0  # 幂等
+    assert repo.recover_stale_running() == []  # 幂等
 
 
 def test_trajectory_roundtrip(tmp_path: Path) -> None:

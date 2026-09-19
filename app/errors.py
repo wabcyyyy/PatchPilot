@@ -25,12 +25,6 @@ class InvalidRequestError(TaskError):
     code = "invalid_request"
 
 
-class PatchError(PatchPilotError):
-    """补丁生成/应用失败(PATCH_REJECTED 的底层原因之一)。"""
-
-    code = "patch"
-
-
 class ExecError(PatchPilotError):
     """命令执行层失败(超时、无法启动等)。"""
 

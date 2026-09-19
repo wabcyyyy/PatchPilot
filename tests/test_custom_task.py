@@ -193,11 +193,13 @@ def test_repo_roots_case_insensitive_on_windows(
     assert resp.status_code == 201, resp.text
 
 
-def test_custom_tasks_never_idempotent(client: TestClient, custom_repo: Path) -> None:
-    """CUSTOM id 含随机段:同一请求两次创建是两个独立任务(正式题仍幂等,见 test_api)。"""
-    first = client.post("/api/tasks", json=_custom_payload(custom_repo)).json()
-    second = client.post("/api/tasks", json=_custom_payload(custom_repo)).json()
-    assert first["task_id"] != second["task_id"]
+def test_custom_tasks_idempotent_by_content(client: TestClient, custom_repo: Path) -> None:
+    """N-22 整改:CUSTOM id 由任务内容确定性派生——同一内容重提命中幂等
+    (同键在途返回原任务),不再是"每次必新任务"的防重失效。"""
+    first = client.post("/api/tasks", json=_custom_payload(custom_repo))
+    second = client.post("/api/tasks", json=_custom_payload(custom_repo))
+    assert first.status_code == 201 and second.status_code == 200
+    assert first.json()["task_id"] == second.json()["task_id"]
 
 
 # ---------- N4b:e2e 与攻击面 ----------
@@ -309,3 +311,28 @@ def test_custom_task_malicious_patch_rejected(
     assert report["verdict"] == "failed"
     assert report["changed_files"] == []  # 恶意补丁没有落盘
     assert (run_dir / "trajectory.jsonl").exists()  # 现场保留
+
+
+def test_custom_bug_id_is_content_derived(tmp_path: Path) -> None:
+    """N-22 整改:同内容同 id;内容差异(测试集/allowed_paths)产生不同 id。"""
+    from app.evals.bugset import build_custom_bug
+
+    kwargs = {
+        "repo_path": tmp_path,
+        "issue_text": "same issue",
+        "failed_tests": ["tests/test_a.py::t1", "tests/test_b.py::t2"],
+        "regression_tests": ["tests/test_c.py::t3"],
+    }
+    id1 = build_custom_bug(**kwargs).id
+    id2 = build_custom_bug(**kwargs).id
+    assert id1 == id2 and id1.startswith("CUSTOM-")
+
+    swapped = build_custom_bug(**{**kwargs, "failed_tests": list(reversed(kwargs["failed_tests"]))})
+    assert swapped.id == id1  # 顺序无关(排序后参与散列)
+
+    diff_content = build_custom_bug(**{**kwargs, "issue_text": "different issue"})
+    assert diff_content.id != id1
+    diff_tests = build_custom_bug(**{**kwargs, "failed_tests": ["tests/test_x.py::t"]})
+    assert diff_tests.id != id1
+    diff_scope = build_custom_bug(**{**kwargs, "allowed_paths": ["src/**"]})
+    assert diff_scope.id != id1

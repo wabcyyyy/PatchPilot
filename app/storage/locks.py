@@ -21,6 +21,15 @@ class BaseLock:
 
     def release(self, key: str) -> None: ...
 
+    def force_release(self, key: str) -> None:
+        """无视持有者直接删锁(N-20 整改)。
+
+        仅供启动恢复使用:进程崩溃后重启,新进程没有旧锁的 token,
+        走 release() 的 token 比对必然 no-op,同键任务会被 409 卡死到 TTL。
+        此处删除的对象是"已被 recover_stale 判死的前进程"之锁;
+        单实例部署下(见 design.md §8)无条件 DEL 不引入新风险。
+        """
+
 
 class RedisLock(BaseLock):
     """基于 Redis 的分布式锁:SET NX EX 加锁,比对 token 后删除释放。"""
@@ -52,6 +61,9 @@ class RedisLock(BaseLock):
             token,
         )
 
+    def force_release(self, key: str) -> None:
+        self._client.delete(self._prefix + key)
+
 
 class InMemoryLock(BaseLock):
     """进程内兜底锁:单进程部署(测试/开发)时与 Redis 语义一致。"""
@@ -69,6 +81,10 @@ class InMemoryLock(BaseLock):
             return True
 
     def release(self, key: str) -> None:
+        with self._mu:
+            self._expiry.pop(key, None)
+
+    def force_release(self, key: str) -> None:
         with self._mu:
             self._expiry.pop(key, None)
 

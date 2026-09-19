@@ -19,6 +19,7 @@ _DIFF_GIT_RE = re.compile(r"^diff --git a/(.+) b/(.+)$", re.MULTILINE)
 _PLUSPLUS_RE = re.compile(r"^\+\+\+ (.+)$", re.MULTILINE)
 _NEW_FILE_RE = re.compile(r"^new file mode ", re.MULTILINE)
 _RENAME_TO_RE = re.compile(r"^rename to (.+)$", re.MULTILINE)
+_COPY_TO_RE = re.compile(r"^copy to (.+)$", re.MULTILINE)
 
 # N-1 整改:`python -m pytest` 把 cwd(=工作区)置于 sys.path[0],工作区根下与
 # 解释器/工具链同名的顶层模块会遮蔽真身——影子 pytest 能读 argv 里的 --junitxml,
@@ -104,10 +105,15 @@ def parse_new_files(diff_text: str) -> list[str]:
             if rel and rel not in new_files:
                 new_files.append(rel)
         else:
-            # R2 整改:rename 段不带 new file mode 行(differ 已加 --no-renames,
-            # 这里对含 rename 的 diff 文本兜底)——rename 的落点等价于新增文件
-            for rename_match in _RENAME_TO_RE.finditer(section):
-                rel = normalize_rel(rename_match.group(1))
+            # R2/R3 整改:rename/copy 扩展头都不带 new file mode 行
+            # (differ 已加 --no-renames 封 rename;copy 头 git apply 同样接受,
+            # 且无需牺牲源文件)——两者的落点都等价于新增文件
+            for ext_match in _RENAME_TO_RE.finditer(section):
+                rel = normalize_rel(ext_match.group(1))
+                if rel and rel not in new_files:
+                    new_files.append(rel)
+            for ext_match in _COPY_TO_RE.finditer(section):
+                rel = normalize_rel(ext_match.group(1))
                 if rel and rel not in new_files:
                     new_files.append(rel)
     return new_files

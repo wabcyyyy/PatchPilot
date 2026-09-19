@@ -62,6 +62,7 @@ def run_task_graph(
     tracker = Tracker(run_dir / "trajectory.jsonl", task_id=task_id)
     started = time.monotonic()
     checkpointer = None
+    preserved_diff: str | None = None
 
     try:
         nodes = TaskNodes(
@@ -119,15 +120,9 @@ def run_task_graph(
         result.verify_failed_ok = final.get("verify_failed_ok", False)
         result.verify_regression_ok = final.get("verify_regression_ok", False)
         result.changed_files = list(final.get("changed_files", []))
-
         # N-12 整改:末轮经 rollback 的任务,工作区已被 reset,
         # diff.patch 必须用 rollback 保全的现场,而不是回滚后的空 diff
-        preserved = final.get("preserved_diff")
-        if preserved is not None:
-            (run_dir / "diff.patch").write_text(preserved, encoding="utf-8")
-        else:
-            diff = working_tree_diff(run_dir / "workspace")
-            (run_dir / "diff.patch").write_text(diff.diff_text, encoding="utf-8")
+        preserved_diff = final.get("preserved_diff")
 
     except TaskCancelled as exc:
         result.status = "CANCELLED"
@@ -149,6 +144,17 @@ def run_task_graph(
             result.verdict = "needs_review"
             result.error = f"{type(exc).__name__}: {exc}"
     finally:
+        # R3 整改:diff.patch 落盘移入 finally——CANCELLED/崩溃路径的现场
+        # (工作区未被回滚)同样应留下取证产物
+        try:
+            if preserved_diff is not None:
+                (run_dir / "diff.patch").write_text(preserved_diff, encoding="utf-8")
+            else:
+                (run_dir / "diff.patch").write_text(
+                    working_tree_diff(run_dir / "workspace").diff_text, encoding="utf-8"
+                )
+        except Exception:  # 落盘失败不影响任务结论
+            log.exception("task %s: failed to write diff.patch", task_id)
         # R2 整改:SqliteSaver 持有的是直接打开的 sqlite3 连接(见 checkpoint.py),
         # 每任务新建却不关闭会在长驻 API 进程中线性泄漏句柄,并锁住 run_dir 里的
         # checkpoints.sqlite(Windows 上长期占用)
