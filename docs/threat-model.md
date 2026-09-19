@@ -27,7 +27,8 @@ PatchPilot 是**单机个人工具**:给定本地 Git 仓库与 Bug 描述,Agent
 (read_file/search_code/list_files),并**在该目录执行 pytest**——而 pytest 会 import
 被测包,等价于执行该目录及其 import 链上的代码。
 缓解:compose 仅绑回环;可选 `PATCHPILOT_API_TOKEN` 鉴权;`PATCHPILOT_ALLOWED_REPO_ROOTS`
-根白名单(T12.2);容器部署时 API 容器只见 `/data` 与 `bugs/`。
+根白名单(T12.2);容器部署时 API 容器只见 `/data` 与 `bugs/`
+(例外:`/var/run/docker.sock`,为 M11 隔离闭环所必需,代价与前置条件见 R6)。
 
 ### R2 默认无鉴权
 
@@ -68,8 +69,13 @@ max_tokens/超时/重试、单任务 token 预算门禁(BUDGET_EXCEEDED)。
 
 - 多租户隔离、配额、审计(单机工具定位);
 - 恶意/越权的宿主本机用户(回环端口谁都能连,见 R2 的 token 缓解);
-- 物理访问、内存窃取、侧信道;
-- Agent 补丁的"语义恶意"——平台判定的是"测试通过 + 范围合法",不是"代码善良"。
+- 物理访问、内存窃听、侧信道;
+- Agent 补丁的"语义恶意"——平台判定的是"测试通过 + 范围合法",不是"代码善良";
+- **被测代码与判定器同进程**(audit-2026-09-20 N-1 残余):verify 阶段运行的是
+  Agent 改过的代码,它理论上可伪造 junit/退出码。影子门禁(新增文件不得与
+  pytest/stdlib 同名)封掉了最直接的伪造通道,但"恶意仓库作者在基线里预置
+  伪造逻辑"(基线仓库本身不可信)不在防线上——自定义任务请确保基线仓库可信,
+  或用 docker 后端 + 可信基线。
 
 ## 5. 部署形态与适用边界
 
@@ -81,5 +87,6 @@ max_tokens/超时/重试、单任务 token 预算门禁(BUDGET_EXCEEDED)。
 
 ## 6. 已知边界与残余风险的其他记录
 
-见 `docs/design.md` §8(单进程架构、协作式取消粒度等)与
-`docs/PatchPilot改进计划.md`(M11–M13 的后续项)。
+见 `docs/design.md` §8(单进程架构、协作式取消粒度等)、
+`docs/archive/2026-09-18-改进计划M10-M13.md`(已完成并归档)与
+`docs/audit-2026-09-19.md`(全量自检的**未整改**风险清单,按 P0–P3 分级)。
