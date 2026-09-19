@@ -45,6 +45,18 @@ def create_app(
             content={"code": "unauthorized", "message": str(exc), "task_id": None},
         )
 
+    @app.exception_handler(Exception)
+    async def unhandled_handler(request: Request, exc: Exception) -> JSONResponse:
+        """兜底:未预期异常也必须输出统一错误结构(AGENTS:API 层兜底)。"""
+        return JSONResponse(
+            status_code=500,
+            content={
+                "code": "internal",
+                "message": str(exc) or type(exc).__name__,
+                "task_id": None,
+            },
+        )
+
     app.include_router(router)
     return app
 

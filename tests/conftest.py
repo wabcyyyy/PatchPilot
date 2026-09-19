@@ -20,3 +20,19 @@ def demo_repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
     dest = tmp_path_factory.mktemp("demo") / "demo_repo"
     materialize_repo(FIXTURES / "demo_repo", dest)
     return dest
+
+
+@pytest.fixture(autouse=True)
+def _fresh_settings():
+    """每个用例前后清 Settings 缓存。
+
+    Settings 是全局 lru_cache,而测试会用 monkeypatch.setenv 改配置、且任务在
+    后台线程跑完全程——线程可能在"用例内 finally 清缓存之后、monkeypatch 撤销
+    环境变量之前"的窗口用带配置的 environ 重建缓存,污染后续用例(实际踩过:
+    repo 根白名单测试泄漏,后续任务被 422)。setup/teardown 各清一次,确定性封死。
+    """
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()

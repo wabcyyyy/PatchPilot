@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -177,6 +178,18 @@ def test_empty_roots_unrestricted(
     client: TestClient, custom_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     resp = _post_with_roots(client, _custom_payload(custom_repo), "", monkeypatch)
+    assert resp.status_code == 201, resp.text
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows 盘符大小写语义")
+def test_repo_roots_case_insensitive_on_windows(
+    client: TestClient, custom_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """根白名单比较经 normcase:盘符大小写不同的合法配置不得误拒(评审整改)。"""
+    parent = str(custom_repo.parent)
+    lowered = parent[0].lower() + parent[1:]
+    assert lowered != parent  # tmp_path 返回大写盘符
+    resp = _post_with_roots(client, _custom_payload(custom_repo), lowered, monkeypatch)
     assert resp.status_code == 201, resp.text
 
 

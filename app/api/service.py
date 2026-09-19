@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -45,10 +46,15 @@ def _now() -> str:
 
 def ensure_repo_allowed(resolved: Path) -> None:
     """repo_path 根白名单(T12.2):配置 PATCHPILOT_ALLOWED_REPO_ROOTS(逗号分隔绝对
-    路径)后,自定义任务只允许指向这些根之内;空配置不限制(个人本地模式,兼容现状)。"""
+    路径)后,自定义任务只允许指向这些根之内;空配置不限制(个人本地模式,兼容现状)。
+
+    比较经 os.path.normcase:Windows 路径大小写/斜杠不敏感,否则大小写不同的
+    合法配置(如 `d:\\repos` vs `D:\\repos\\proj`)会被误拒。
+    """
     raw = get_settings().allowed_repo_roots
     if not raw:
         return
+    resolved_n = os.path.normcase(str(resolved))
     for part in raw.split(","):
         if not part.strip():
             continue
@@ -57,8 +63,8 @@ def ensure_repo_allowed(resolved: Path) -> None:
             raise InvalidRequestError(
                 f"PATCHPILOT_ALLOWED_REPO_ROOTS entries must be absolute paths: {part!r}"
             )
-        root = root.resolve()
-        if resolved == root or resolved.is_relative_to(root):
+        root_n = os.path.normcase(str(root.resolve()))
+        if resolved_n == root_n or resolved_n.startswith(root_n + os.sep):
             return
     raise InvalidRequestError(f"repo_path outside allowed repo roots: {resolved}")
 
@@ -139,33 +145,55 @@ class TaskService:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         task_id = f"{bug.id}-{stamp}-{uuid.uuid4().hex[:6]}"
         run_dir = self.runs_root / task_id
-        run_dir.mkdir(parents=True, exist_ok=True)
-        self.repo.create_task(
-            task_id=task_id,
-            idem_key=idem_key,
-            bug_id=bug.id,
-            repo_path=str(bug.repo_dir),
-            issue_text=bug.issue_text[:500],
-            max_rounds=max_rounds or bug.max_rounds,
-            engine=engine,
-            model_provider=model,
-            run_dir=str(run_dir),
-        )
-        self.repo.update_task_status(task_id, "RUNNING")
-        # 提交前先注册取消事件,保证 create 返回后的任何 cancel 都不会丢失
-        cancel_event = self._cancels.register(task_id)
-        self._pool.submit(
-            self._execute,
-            task_id,
-            bug,
-            engine,
-            model,
-            run_dir,
-            lock_key,
-            cancel_event,
-            replay_script,
-        )
+        try:
+            run_dir.mkdir(parents=True, exist_ok=True)
+            self.repo.create_task(
+                task_id=task_id,
+                idem_key=idem_key,
+                bug_id=bug.id,
+                repo_path=str(bug.repo_dir),
+                issue_text=bug.issue_text[:500],
+                max_rounds=max_rounds or bug.max_rounds,
+                engine=engine,
+                model_provider=model,
+                run_dir=str(run_dir),
+            )
+            self.repo.update_task_status(task_id, "RUNNING")
+            # 提交前先注册取消事件,保证 create 返回后的任何 cancel 都不会丢失
+            cancel_event = self._cancels.register(task_id)
+            self._pool.submit(
+                self._execute,
+                task_id,
+                bug,
+                engine,
+                model,
+                run_dir,
+                lock_key,
+                cancel_event,
+                replay_script,
+            )
+        except Exception as exc:
+            # 落库/提交失败必须回滚:否则锁要挂到 TTL(约 16 分钟),任务行卡死
+            self._rollback_created(task_id, lock_key)
+            if isinstance(exc, RuntimeError):
+                # 线程池已关停(服务退出与受理请求的竞态):409,而不是裸 500
+                raise PatchPilotError(
+                    f"service is shutting down; task {task_id} not scheduled"
+                ) from exc
+            raise
         return self.repo.get_task(task_id), True  # type: ignore[return-value]
+
+    def _rollback_created(self, task_id: str, lock_key: str) -> None:
+        """创建中途失败的回收:任务行(若已落库)标记 NEEDS_REVIEW,锁与取消事件释放。"""
+        log.exception("task %s failed to schedule; rolling back", task_id)
+        try:
+            if self.repo.get_task(task_id) is not None:
+                self.repo.update_task_status(task_id, "NEEDS_REVIEW", "needs_review")
+        except Exception:  # noqa: BLE001 - 回滚失败只记日志,不掩盖原始异常
+            log.exception("task %s rollback failed", task_id)
+        finally:
+            self._cancels.unregister(task_id)
+            self.lock.release(lock_key)
 
     # ---------- 执行 ----------
 

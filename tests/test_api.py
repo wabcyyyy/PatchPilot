@@ -93,6 +93,24 @@ def test_error_structure(client: TestClient) -> None:
     assert client.post("/api/tasks/missing/cancel").status_code == 404
 
 
+def test_unhandled_exception_returns_unified_500(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """兜底:未预期异常也必须输出统一错误结构(AGENTS 要求,整改自评审)。"""
+    app = create_app(db_path=tmp_path / "api.sqlite3", runs_root=tmp_path / "runs")
+    with TestClient(app, raise_server_exceptions=False) as c:
+
+        def boom(**kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(c.app.state.service, "create_task", boom)
+        resp = c.post("/api/tasks", json={"bug_id": "BUG-001", "engine": "plain"})
+    assert resp.status_code == 500
+    body = resp.json()
+    assert set(body) == {"code", "message", "task_id"}
+    assert body["code"] == "internal" and "boom" in body["message"]
+
+
 def test_report_not_ready_returns_409(client: TestClient) -> None:
     task = client.post("/api/tasks", json={"bug_id": "BUG-005", "engine": "plain"}).json()
     # 任务刚开始执行,报告几乎必然尚未生成(9s 级任务)
