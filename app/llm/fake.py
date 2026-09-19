@@ -66,10 +66,3 @@ class FakeLLM:
             prompt_tokens=0,
             completion_tokens=usage,
         )
-
-    @classmethod
-    def from_json_file(cls, path) -> FakeLLM:
-        import pathlib
-
-        data = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
-        return cls(script=data if isinstance(data, list) else data.get("steps", []))

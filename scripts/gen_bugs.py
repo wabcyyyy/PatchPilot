@@ -21,8 +21,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BUGS = ROOT / "bugs"
 
-CONTEST = ""  # repo 根 conftest.py 内容(空文件,让 pytest 把 repo 根加进 sys.path)
-
 
 def _conftest() -> str:
     return '"""题目仓库根 conftest:让 `from src...` 导入生效(由生成器写入)。"""\n'
@@ -1151,7 +1149,7 @@ def gen_bug(spec: dict, root: Path | None = None) -> Path:
         f"id: {spec['id']}\n"
         f"category: {spec['category']}\n"
         f"difficulty: {spec['difficulty']}\n"
-        'test_cmd: "{python} -m pytest"\n'
+        # test_cmd removed (P1-5): platform builds the pytest command; nobody reads this
         "failed_tests:\n"
         + "".join(f"  - {t}\n" for t in failed)
         + "regression_tests:\n"

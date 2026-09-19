@@ -84,7 +84,7 @@ def test_load_instances_reports_bad_lines() -> None:
     ok_line = {"instance_id": "ok", "FAIL_TO_PASS": '["t"]', "PASS_TO_PASS": "[]"}
     bad.write_text(json.dumps(ok_line) + "\n{not json}\n", encoding="utf-8")
     try:
-        with pytest.raises(TaskError, match="bad.jsonl:2"):
+        with pytest.raises(TaskError, match=r"bad\.jsonl:2"):
             load_instances(bad)
     finally:
         bad.unlink()

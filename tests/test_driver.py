@@ -95,9 +95,17 @@ def test_test_file_patch_gets_rejected(tmp_path: Path) -> None:
     assert result.verdict == "failed"
     assert result.status in {"PATCH_REJECTED", "VERIFY_FAILED"}
     assert result.verify_failed_ok is False  # 原失败测试没有被修复
-    assert any("test file" in v for v in result.gate_violations) or "empty" in " ".join(
-        result.gate_violations
-    )
+    # R2 整改:此前 OR 断言把两种不同结局混为一谈。实际链路:apply_patch 在
+    # 工具层被 [files] 门禁拒绝(轨迹留痕)→ 终局 diff 为空 → 终局门禁报 [format]
+    events = [
+        json.loads(line)
+        for line in (Path(result.run_dir) / "trajectory.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    patch_events = [e for e in events if e.get("tool") == "apply_patch"]
+    assert patch_events and any("[files]" in (e.get("error") or "") for e in patch_events), events
+    assert result.gate_violations == ["[format] diff is empty"]
 
 
 def test_crash_converges_to_needs_review(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

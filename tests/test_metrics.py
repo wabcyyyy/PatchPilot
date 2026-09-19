@@ -82,8 +82,8 @@ def test_metrics_on_mixed_rows(tmp_path: Path) -> None:
     assert metrics["total_runs"] == 2
     assert metrics["final_resolution_rate"] == 0.0
     assert metrics["security_blocked_count"] == 1
-    # 回归引入率的分母是"补丁已应用"的运行
-    assert metrics["regression_introduction_rate"] in (0.0, None)
+    # 回归引入率的分母是"补丁已应用"的运行:该批次无回归引入,有分母则为 0.0
+    assert metrics["regression_introduction_rate"] == 0.0
 
     # BUG-001 同题两次运行取最新
     bug1 = next(r for r in per_bug if r.bug_id == "BUG-001")

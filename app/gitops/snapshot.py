@@ -1,6 +1,12 @@
 """工作区快照:把源仓库复制为隔离工作区并固定基线 commit。
 
 为什么复制而不是在源仓库上直接打补丁:验证失败时可整体丢弃,源仓库永远只读。
+
+与 app/gitops/testing.materialize_repo 的分工(P0-3 遗留说明,刻意保留两份):
+- materialize_repo 是**生产入口**(graph/evals/题目校验):模板只有工作树,
+  git 历史现场重建,保证基线 commit 确定性;
+- create_workspace 保留 .git 与历史,供**外部真实仓库/演示**接入
+  (scripts/demo_gitops.py 与测试夹具)。containment 校验两处都有。
 """
 
 from __future__ import annotations
@@ -19,14 +25,6 @@ _COPY_IGNORE = shutil.ignore_patterns("__pycache__", ".pytest_cache", "*.pyc", "
 
 def is_git_repo(path: Path) -> bool:
     return (path / ".git").exists()
-
-
-def resolve_commit(source: Path, commit: str | None) -> str:
-    """解析源仓库的基线 commit(默认 HEAD)。"""
-    rc, out, _ = run_git(source, "rev-parse", commit or "HEAD", check=False)
-    if rc != 0:
-        raise TaskError(f"cannot resolve commit {commit!r} in {source}")
-    return out.strip()
 
 
 def create_workspace(source: Path | str, workspace: Path | str, commit: str | None = None) -> str:

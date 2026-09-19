@@ -61,6 +61,7 @@ def run_task_graph(
     result.provenance = build_provenance(result.model_provider, model_name, "graph")
     tracker = Tracker(run_dir / "trajectory.jsonl", task_id=task_id)
     started = time.monotonic()
+    checkpointer = None
 
     try:
         nodes = TaskNodes(
@@ -91,7 +92,13 @@ def run_task_graph(
             "turns": 0,
             "tokens_used": 0,
         }
-        config = {"configurable": {"thread_id": task_id}, "recursion_limit": 80}
+        # recursion_limit 随 max_rounds 推导(R2 整改):固定前缀 3 步(prepare/baseline/
+        # localize),每轮 4 步(propose/apply/verify/rollback),成功收尾 1 步;
+        # 硬编码 80 会在 max_rounds=20 的长重试任务耗尽轮数前误抛 GraphRecursionError
+        config = {
+            "configurable": {"thread_id": task_id},
+            "recursion_limit": 4 * nodes.max_rounds + 8,
+        }
         final: TaskState = graph.invoke(initial, config=config)  # type: ignore[assignment]
 
         result.status = final.get("status", "NEEDS_REVIEW")
@@ -113,15 +120,21 @@ def run_task_graph(
         result.verify_regression_ok = final.get("verify_regression_ok", False)
         result.changed_files = list(final.get("changed_files", []))
 
-        diff = working_tree_diff(run_dir / "workspace")
-        (run_dir / "diff.patch").write_text(diff.diff_text, encoding="utf-8")
+        # N-12 整改:末轮经 rollback 的任务,工作区已被 reset,
+        # diff.patch 必须用 rollback 保全的现场,而不是回滚后的空 diff
+        preserved = final.get("preserved_diff")
+        if preserved is not None:
+            (run_dir / "diff.patch").write_text(preserved, encoding="utf-8")
+        else:
+            diff = working_tree_diff(run_dir / "workspace")
+            (run_dir / "diff.patch").write_text(diff.diff_text, encoding="utf-8")
 
     except TaskCancelled as exc:
         result.status = "CANCELLED"
         result.outcome = "cancelled"
         result.verdict = "cancelled"
         result.error = str(exc)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         if isinstance(exc, TaskError):
             result.status, result.outcome, result.verdict, result.error = (
                 "INVALID_TASK",
@@ -136,6 +149,14 @@ def run_task_graph(
             result.verdict = "needs_review"
             result.error = f"{type(exc).__name__}: {exc}"
     finally:
+        # R2 整改:SqliteSaver 持有的是直接打开的 sqlite3 连接(见 checkpoint.py),
+        # 每任务新建却不关闭会在长驻 API 进程中线性泄漏句柄,并锁住 run_dir 里的
+        # checkpoints.sqlite(Windows 上长期占用)
+        if checkpointer is not None:
+            try:
+                checkpointer.conn.close()
+            except Exception:
+                log.exception("failed to close checkpointer for task %s", task_id)
         result.duration_ms = int((time.monotonic() - started) * 1000)
         result.cost_usd = estimate_cost(
             result.model_name, result.tokens_prompt, result.tokens_completion

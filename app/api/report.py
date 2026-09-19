@@ -8,7 +8,14 @@ VERDICT_BADGE = {
     "resolved": "✅ resolved",
     "failed": "❌ failed",
     "needs_review": "👤 needs_review",
+    "cancelled": "🚫 cancelled",
 }
+
+
+def _md_escape(text: Any) -> str:
+    """转义 Markdown 结构字符(R2 整改):error/门禁文案来自不可信链路,
+    含反引号/换行/竖线会打断渲染结构;报告是只读渲染,无需 HTML 转义。"""
+    return str(text).replace("|", "\\|").replace("`", "'").replace("\n", " ")
 
 
 def render_markdown(result: dict[str, Any]) -> str:
@@ -17,7 +24,7 @@ def render_markdown(result: dict[str, Any]) -> str:
     cost = result.get("cost_usd")
     cost_text = f"${cost:.4f}" if isinstance(cost, (int, float)) else "n/a"
     lines = [
-        f"# 任务报告:{result.get('task_id', '?')}",
+        f"# 任务报告:{_md_escape(result.get('task_id', '?'))}",
         "",
         f"- 结论:**{VERDICT_BADGE.get(result.get('verdict'), result.get('verdict'))}**(状态 {result.get('status')})",
         f"- 题目:{bug_id} | 引擎:{result.get('engine')} | 模型:{result.get('model_provider')}",
@@ -39,12 +46,11 @@ def render_markdown(result: dict[str, Any]) -> str:
         "## 变更文件",
         "",
     ]
-    for path in result.get("changed_files", []) or ["(无)"]:
-        lines.append(f"- `{path}`")
+    lines.extend(f"- `{path}`" for path in result.get("changed_files", []) or ["(无)"])
     if result.get("gate_violations"):
         lines += ["", "## 门禁违规", ""]
-        lines += [f"- {v}" for v in result["gate_violations"]]
+        lines += [f"- {_md_escape(v)}" for v in result["gate_violations"]]
     if result.get("error"):
-        lines += ["", "## 错误信息", "", f"> {result['error']}"]
+        lines += ["", "## 错误信息", "", f"> {_md_escape(result['error'])}"]
     lines += ["", f"> 轨迹与补丁:{result.get('run_dir', '.')}"]
     return "\n".join(lines) + "\n"

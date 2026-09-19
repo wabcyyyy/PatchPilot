@@ -28,8 +28,11 @@ def working_tree_diff(workspace: Path | str) -> DiffResult:
     """
     ws = Path(workspace)
     run_git(ws, "add", "-A", "-N")
-    _, diff_out, _ = run_git(ws, "diff", "--no-color")
-    _, names_out, _ = run_git(ws, "diff", "--name-only")
+    # --no-renames(R2 整改):git 默认 rename 检测会把"改名为 pytest.py"渲染成
+    # rename 段(无 new file mode 行),影子门禁按新增文件判定的机制会被整体绕过;
+    # 关掉后 rename 退化为 delete+new file,旧/新路径都完整进入 diff 与证据链
+    _, diff_out, _ = run_git(ws, "diff", "--no-color", "--no-renames")
+    _, names_out, _ = run_git(ws, "diff", "--name-only", "--no-renames")
     changed = [line.strip() for line in names_out.splitlines() if line.strip()]
     result = DiffResult(diff_text=diff_out, changed_files=changed, is_empty=not diff_out.strip())
     log.debug("working_tree_diff: %d file(s) changed", len(changed))

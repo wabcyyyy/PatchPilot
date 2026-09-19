@@ -159,6 +159,9 @@ def test_graph_budget_exhausted_after_failed_verify(tmp_path: Path) -> None:
     assert result.status == "BUDGET_EXCEEDED"
     assert result.verdict == "failed"
     assert result.verify_failed_ok is False
+    # N-12 整改:末轮回滚前必须保全现场——diff.patch 是回滚前的工作区 diff,
+    # 而不是 reset 后的空文件
+    assert (Path(result.run_dir) / "diff.patch").read_text(encoding="utf-8").strip()
 
 
 def test_graph_verify_failed_when_agent_gives_up(tmp_path: Path) -> None:
@@ -186,8 +189,8 @@ def test_phase_tool_restriction(tmp_path: Path) -> None:
         test_sets=bug.test_sets,
     )
     model = FakeLLM(
-        _localize_script()[:1]
-        + [
+        [
+            *_localize_script()[:1],
             {"tool": "apply_patch", "args": {"diff_text": "junk"}},
             {"tool": "finish", "args": {"success": True, "summary": "x"}},
         ]
@@ -200,7 +203,7 @@ def test_phase_tool_restriction(tmp_path: Path) -> None:
 
 
 def test_checkpoint_roundtrip(tmp_path: Path) -> None:
-    """带 SqliteSaver 执行完整任务后,同 thread_id 可从 checkpoint 恢复出最终状态。"""
+    """带 SqliteSaver 全程执行任务无异常(仅轨迹留档;无跨进程恢复路径,见 checkpoint.py)。"""
     from app.graph.checkpoint import make_sqlite_checkpointer
     from app.graph.state import TaskState
 
@@ -247,7 +250,7 @@ def test_graph_needs_review_when_localize_fails(tmp_path: Path) -> None:
     """定位阶段模型声明失败 → NEEDS_REVIEW 转人工,不产生补丁。"""
     bug = load_bug("BUG-001", BUG_ROOT)
     give_up = [{"tool": "finish", "args": {"success": False, "summary": "找不到根因"}}]
-    model = FakeLLM(give_up + [{"tool": "finish", "args": {"success": True, "summary": "unused"}}])
+    model = FakeLLM([*give_up, {"tool": "finish", "args": {"success": True, "summary": "unused"}}])
     result = run_task_graph(bug, model, runs_root=tmp_path / "runs")
     assert result.status == "NEEDS_REVIEW" and result.verdict == "needs_review"
     assert result.verify_failed_ok is False
@@ -320,8 +323,8 @@ def test_graph_budget_exceeded_in_propose_does_not_reach_verify(tmp_path: Path) 
     也不得继续 apply/verify 把资源门禁"顺路"绕过去、最终误判 FINISHED。"""
     bug = load_bug("BUG-001", BUG_ROOT)
     inner = FakeLLM(
-        _localize_script()
-        + [
+        [
+            *_localize_script(),
             {"tool": "apply_patch", "args": {"diff_text": _fix_diff()}},
             {"tool": "finish", "args": {"success": True, "summary": "补丁已应用"}},
         ]
@@ -342,3 +345,41 @@ def test_graph_budget_exceeded_in_propose_does_not_reach_verify(tmp_path: Path) 
     assert result.verdict == "failed"
     # verify 从未执行:判定字段保持默认 False,而不是被"顺路"的 verify 刷成 True
     assert result.verify_failed_ok is False and result.verify_regression_ok is False
+
+
+def test_graph_last_round_gate_rejection_preserves_evidence(tmp_path: Path) -> None:
+    """N-12 整改:末轮被终局门禁拒绝的补丁——终态 BUDGET_EXCEEDED(企划书 4.2)
+    但 diff.patch 保留被拒补丁全文,取证现场不因回滚销毁。
+
+    场景:两片补丁各自合法(3 文件 ≤ max_patch_files=5,工具层放行),
+    合计 6 文件触发终局聚合 [scope] 拒绝——补丁已在工作区,回滚前必须保全。
+    """
+
+    def _padding_diff(start: int) -> str:
+        parts = []
+        for i in range(start, start + 3):
+            name = f"src/pad{i}.py"
+            parts.append(
+                f"diff --git a/{name} b/{name}\n"
+                "new file mode 100644\n"
+                "--- /dev/null\n"
+                f"+++ b/{name}\n"
+                "@@ -0,0 +1 @@\n"
+                "+padding\n"
+            )
+        return "".join(parts)
+
+    bug = load_bug("BUG-001", BUG_ROOT)
+    model = FakeLLM(
+        [
+            *_localize_script(),
+            {"tool": "apply_patch", "args": {"diff_text": _padding_diff(1)}},
+            {"tool": "apply_patch", "args": {"diff_text": _padding_diff(4)}},
+            {"tool": "finish", "args": {"success": True, "summary": "done"}},
+        ]
+    )
+    result = run_task_graph(bug, model, runs_root=tmp_path / "runs", max_rounds=1)
+    assert result.status == "BUDGET_EXCEEDED"
+    assert any("[scope]" in v for v in result.gate_violations), result.gate_violations
+    # 被拒补丁全文保留在 diff.patch(而非 reset 后的空 diff)
+    assert (Path(result.run_dir) / "diff.patch").read_text(encoding="utf-8").strip()

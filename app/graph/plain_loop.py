@@ -42,6 +42,27 @@ def _has_patch(ctx: ToolContext) -> bool:
     return not diff.is_empty
 
 
+def _budget_error(
+    message: str,
+    tokens_spent: int,
+    tokens_prompt: int,
+    tokens_completion: int,
+    turns: int = 0,
+) -> BudgetError:
+    """构造携带已耗用量的 BudgetError(N-11 整改)。
+
+    此前循环抛出预算异常时,本循环已烧掉的 token/turns 只存在于局部变量里,
+    上层把异常翻译成终态后这些用量"蒸发"——任务级 report.json 的 tokens_used
+    系统性低估,且任务级预算余量核算失真。
+    """
+    exc = BudgetError(message)
+    exc.tokens_spent = tokens_spent  # type: ignore[attr-defined]
+    exc.tokens_prompt = tokens_prompt  # type: ignore[attr-defined]
+    exc.tokens_completion = tokens_completion  # type: ignore[attr-defined]
+    exc.turns = turns  # type: ignore[attr-defined]
+    return exc
+
+
 def run_plain_loop(
     ctx: ToolContext,
     model: Model,
@@ -87,13 +108,21 @@ def run_plain_loop(
             and time_budget_seconds > 0
             and time.monotonic() - started_monotonic > time_budget_seconds
         ):
-            raise BudgetError(
-                f"agent loop exceeded time budget {time_budget_seconds}s at turn {turn_no}"
+            raise _budget_error(
+                f"agent loop exceeded time budget {time_budget_seconds}s at turn {turn_no}",
+                tokens_spent,
+                tokens_prompt,
+                tokens_completion,
+                turns=turn_no,
             )
         context_tokens = messages_tokens(messages)
         if budget > 0 and tokens_spent + context_tokens > budget:
-            raise BudgetError(
-                f"agent loop tokens {tokens_spent + context_tokens} exceed budget {budget}"
+            raise _budget_error(
+                f"agent loop tokens {tokens_spent + context_tokens} exceed budget {budget}",
+                tokens_spent,
+                tokens_prompt,
+                tokens_completion,
+                turns=turn_no,
             )
         response = model.complete(messages, tool_schemas())  # type: ignore[arg-type]
         tokens_spent += response.usage_tokens
@@ -145,7 +174,12 @@ def run_plain_loop(
                     output_summary={"patch_applied": outcome.patch_applied, "turns": turn_no},
                     duration_ms=0,
                 )
-                log.info("loop finished: success=%s turns=%s", success, turn_no)
+                log.info(
+                    "task %s loop finished: success=%s turns=%s",
+                    ctx.task_id,
+                    success,
+                    turn_no,
+                )
                 return outcome
 
             if allowed_tools is not None and call.name not in allowed_tools:
@@ -169,4 +203,10 @@ def run_plain_loop(
                 content = content[:8000] + "... (truncated)"
             messages.append({"role": "tool", "tool_call_id": call.id, "content": content})
 
-    raise BudgetError(f"agent loop exceeded max_turns={max_turns}")
+    raise _budget_error(
+        f"agent loop exceeded max_turns={max_turns}",
+        tokens_spent,
+        tokens_prompt,
+        tokens_completion,
+        turns=max_turns,
+    )

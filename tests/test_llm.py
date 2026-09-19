@@ -114,8 +114,9 @@ def test_complete_parses_prompt_completion_tokens(monkeypatch: pytest.MonkeyPatc
     assert turn.completion_tokens == 221
 
 
-def test_complete_without_usage_zeroes_token_detail(monkeypatch: pytest.MonkeyPatch) -> None:
-    """usage 缺失时明细回退 0,total 仍走字符估算(现状不变)。"""
+def test_complete_without_usage_estimates_token_detail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R2 整改:usage 缺失时 prompt/completion 明细走字符估算,不再恒 0——
+    此前成本核算对返回 usage 不全的端点(deepseek-r1 等)系统性失真。"""
     model = OpenAICompatModel(_settings(llm_enabled=True))
     message = SimpleNamespace(content="回复内容", tool_calls=None)
     response = SimpleNamespace(
@@ -124,7 +125,8 @@ def test_complete_without_usage_zeroes_token_detail(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(model._client.chat.completions, "create", lambda **kw: response)
     turn = model.complete([{"role": "user", "content": "hi"}], [])
     assert turn.usage_tokens > 0
-    assert turn.prompt_tokens == 0 and turn.completion_tokens == 0
+    assert turn.usage_tokens == turn.prompt_tokens + turn.completion_tokens
+    assert turn.prompt_tokens > 0 and turn.completion_tokens > 0
 
 
 def test_fake_llm_token_detail_is_estimate_only() -> None:

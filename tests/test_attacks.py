@@ -22,6 +22,11 @@ def _attack_dirs() -> list[Path]:
     return sorted(p for p in ATTACK_ROOT.iterdir() if p.is_dir() and p.name.startswith("ATTACK-"))
 
 
+def _diff_attack_dirs() -> list[Path]:
+    """补丁形态的样例(带 attack.diff);引擎级样例(如 budget)由专项测试驱动。"""
+    return [d for d in _attack_dirs() if (d / "attack.diff").exists()]
+
+
 def _make_ctx(target_bug: str, workspace: Path, tmp: Path) -> ToolContext:
     from app.evals.bugset import load_bug
 
@@ -38,7 +43,7 @@ def _make_ctx(target_bug: str, workspace: Path, tmp: Path) -> ToolContext:
     )
 
 
-@pytest.mark.parametrize("attack_dir", _attack_dirs())
+@pytest.mark.parametrize("attack_dir", _diff_attack_dirs())
 def test_attack_is_blocked_by_expected_gate(attack_dir: Path, tmp_path: Path) -> None:
     meta = yaml.safe_load((attack_dir / "meta.yaml").read_text(encoding="utf-8"))
     diff_text = (attack_dir / "attack.diff").read_text(encoding="utf-8")
@@ -63,7 +68,24 @@ def test_attacked_workspace_stays_clean(tmp_path: Path) -> None:
     from app.gitops.rollback import working_tree_is_clean
 
     ctx = _make_ctx("BUG-003", tmp_path / "ws", tmp_path)
-    for attack_dir in _attack_dirs():
+    for attack_dir in _diff_attack_dirs():
         apply_patch(ctx, (attack_dir / "attack.diff").read_text(encoding="utf-8"))
     assert working_tree_is_clean(ctx.workspace)
     assert working_tree_diff(ctx.workspace).is_empty
+
+
+def test_budget_attack_converges(tmp_path: Path) -> None:
+    """ATTACK-008:引擎级资源门禁样例——21 步无 finish 耗尽 max_turns=20,
+    必须收敛为 BUDGET_EXCEEDED 而不是无限空转或误判 resolved。"""
+    import json
+
+    from app.evals.bugset import load_bug
+    from app.evals.driver import run_task
+    from app.llm.fake import FakeLLM
+
+    bug = load_bug("BUG-001", BUG_ROOT)
+    steps = json.loads(
+        (ATTACK_ROOT / "ATTACK-008-budget" / "replay" / "script.json").read_text(encoding="utf-8")
+    )
+    result = run_task(bug, FakeLLM(steps), runs_root=tmp_path / "runs")
+    assert result.status == "BUDGET_EXCEEDED" and result.verdict == "failed"

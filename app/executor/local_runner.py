@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import subprocess
@@ -24,6 +25,10 @@ log = logging.getLogger(__name__)
 # PATCHPILOT_API_TOKEN / PATCHPILOT_LLM_API_KEY 会被 conftest/测试代码
 # `os.environ` 读走并写进工作区文件外带。改为最小白名单:只保留运行
 # pytest/工具链所需的系统级变量(不含任何平台密钥)。
+# home 系变量(R2 整改):Windows 服务/cmd 启动的进程通常没有 HOME,
+# 缺 USERPROFILE 会让子进程 Path.home()/expanduser('~') 失败。
+# DOCKER_* 系(R2 整改):docker 后端的 docker run 也走本执行器,
+# 远端 daemon(DOCKER_HOST/TLS)部署下没有它们会出现"可用性检查通过、执行必败"。
 _ENV_ALLOWLIST = (
     "PATH",
     "PATHEXT",
@@ -35,10 +40,19 @@ _ENV_ALLOWLIST = (
     "TMP",
     "TMPDIR",
     "HOME",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "APPDATA",
+    "LOCALAPPDATA",
     "LANG",
     "LC_ALL",
     "PYTHONIOENCODING",
     "NUMBER_OF_PROCESSORS",
+    "DOCKER_HOST",
+    "DOCKER_TLS_VERIFY",
+    "DOCKER_CERT_PATH",
+    "DOCKER_CONFIG",
 )
 
 
@@ -74,10 +88,8 @@ def _kill_tree(proc: subprocess.Popen[bytes]) -> None:
         import os
         import signal
 
-        try:
+        with contextlib.suppress(ProcessLookupError):
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except ProcessLookupError:
-            pass
     try:
         proc.wait(timeout=10)
     except subprocess.TimeoutExpired:
@@ -129,11 +141,19 @@ def run_tests(
         try:
             stdout_b, stderr_b = proc.communicate(timeout=10)
         except subprocess.TimeoutExpired:
-            # N-15 整改:逃逸出进程组的分离孙子进程持有管道写端,kill 树杀不到
-            # 它们;二次 communicate 必须带超时兜底,否则任务线程在此永久挂死,
-            # 锁 TTL 到期后同键任务还会并发进入同一工作区
+            # N-15/R2 整改:逃逸出进程组的分离孙子进程持有管道写端时,
+            # kill 杀不到它们;proc.kill() 只杀直接子进程,最后一次
+            # communicate 也必须限时,超时改走"关管道回收"兜底,
+            # 否则任务线程在此永久挂死
             proc.kill()
-            stdout_b, stderr_b = proc.communicate()
+            try:
+                proc.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                if proc.stdout:
+                    proc.stdout.close()
+                if proc.stderr:
+                    proc.stderr.close()
+            stdout_b, stderr_b = b"", b""
         timed_out = True
         log.warning("run_tests timed out after %ss: %s", timeout, command)
 

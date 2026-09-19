@@ -171,7 +171,7 @@ def test_boot_recovery_marks_stale_running(tmp_path: Path) -> None:
         model_provider="fake",
         run_dir=str(tmp_path / "run"),
     )
-    repo.update_task_status("T-STALE", "RUNNING")
+    repo.set_status_unless_terminal("T-STALE", "RUNNING")
 
     app = create_app(db_path=db, runs_root=tmp_path / "runs")
     with TestClient(app):
@@ -183,3 +183,22 @@ def test_create_task_rejects_bug_id_path_traversal(client: TestClient) -> None:
     for bad in ("../../etc", "D:/evil/task", "BUG-001/repo", "bugs/BUG-001"):
         resp = client.post("/api/tasks", json={"bug_id": bad, "engine": "plain"})
         assert resp.status_code == 422, (bad, resp.status_code)
+
+
+def test_task_responses_do_not_leak_internal_fields(client: TestClient) -> None:
+    """R2 整改:响应经 TaskOut 收敛——idem_key/repo_path/内部主键 id 不得外泄。"""
+    task = client.post("/api/tasks", json={"bug_id": "BUG-005", "engine": "plain"}).json()
+    assert set(task) == {
+        "task_id",
+        "bug_id",
+        "status",
+        "verdict",
+        "engine",
+        "model_provider",
+        "max_rounds",
+        "run_dir",
+        "created_at",
+        "finished_at",
+    }
+    listing = client.get("/api/tasks").json()
+    assert listing["tasks"] and set(listing["tasks"][0]) == set(task)

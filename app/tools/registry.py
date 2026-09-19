@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from collections.abc import Callable
@@ -143,10 +144,13 @@ def execute(
         result = ToolResult.fail(f"unknown tool: {name}")
     else:
         try:
-            result = spec.handler(ctx, **args)
+            # R2 整改:参数校验用签名绑定,只把"绑定失败"报成 bad arguments——
+            # 此前 except TypeError 会把 handler 函数体内的业务 TypeError 也误报
+            bound = inspect.signature(spec.handler).bind(ctx, **args)
+            result = spec.handler(*bound.args, **bound.kwargs)
         except TypeError as exc:
             result = ToolResult.fail(f"bad arguments for {name}: {exc}")
-        except Exception as exc:  # noqa: BLE001 - 工具层必须把异常收敛为结果
+        except Exception as exc:
             result = ToolResult.fail(f"{type(exc).__name__}: {exc}")
 
     duration_ms = int((time.monotonic() - started) * 1000)
@@ -159,7 +163,15 @@ def execute(
         duration_ms=duration_ms,
         error=result.error,
     )
-    log.info("tool %s ok=%s (%sms) err=%s", name, result.ok, duration_ms, result.error)
+    # AGENTS.md:业务日志必须带 task_id(R2 整改,此前工具日志无法归因到任务)
+    log.info(
+        "task %s tool %s ok=%s (%sms) err=%s",
+        ctx.task_id,
+        name,
+        result.ok,
+        duration_ms,
+        result.error,
+    )
     return result
 
 

@@ -52,7 +52,9 @@ class TaskNodes:
     report_dir: Path
     max_rounds: int
     max_turns: int
-    started_monotonic: float = 0.0
+    # R2 整改:默认 None(不查时间)而不是 0.0——0.0 会让直接构造 TaskNodes 的
+    # 调用方(测试/未来代码)在第一个 turn 边界就撞上"已超时 900s"的假 BudgetError
+    started_monotonic: float | None = None
     ctx: ToolContext | None = None
     baseline_commit: str = ""
     cancel_event: threading.Event | None = None
@@ -76,6 +78,9 @@ class TaskNodes:
                 allowed_paths=self.bug.allowed_paths,
                 max_patch_files=settings.max_patch_files,
                 test_timeout_seconds=settings.test_timeout_seconds,
+                # P1-4 整改:资源上限此前只落在硬编码默认值上,settings 改了不生效
+                max_read_lines=settings.max_read_lines,
+                max_search_results=settings.max_search_results,
             )
             self.tracker.record(
                 tool="create_workspace",
@@ -151,19 +156,26 @@ class TaskNodes:
                 allowed_tools=READ_TOOLS,
                 started_monotonic=self.started_monotonic,
                 time_budget_seconds=get_settings().task_timeout_seconds,
+                token_budget=self._token_budget_for(state),
                 cancel_event=self.cancel_event,
             )
         except BudgetError as exc:
             # N-5 整改:BUDGET_EXCEEDED 必须是转移终点(route_localize 会 end),
-            # 否则超预算后 propose 照跑、资源门禁被"顺路"绕过
+            # 否则超预算后 propose 照跑、资源门禁被"顺路"绕过。
+            # N-11 整改:把循环已烧掉的 token/turns 记回任务级账本,不再蒸发
             return {
                 "status": "BUDGET_EXCEEDED",
                 "outcome": "failed",
                 "error": f"localize: {exc}",
+                "turns": state.get("turns", 0) + getattr(exc, "turns", 0),
+                "tokens_used": state.get("tokens_used", 0) + getattr(exc, "tokens_spent", 0),
+                "tokens_prompt": state.get("tokens_prompt", 0) + getattr(exc, "tokens_prompt", 0),
+                "tokens_completion": state.get("tokens_completion", 0)
+                + getattr(exc, "tokens_completion", 0),
             }
         except TaskCancelled:
             raise  # 交给 runner 收敛为 CANCELLED,不得吞成 NEEDS_REVIEW
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return {
                 "status": "NEEDS_REVIEW",
                 "outcome": "needs_review",
@@ -190,17 +202,32 @@ class TaskNodes:
         """定位失败/超预算都是终点(N-5):超预算后不得继续 propose。"""
         return "end" if state["status"] in ("NEEDS_REVIEW", "BUDGET_EXCEEDED") else "continue"
 
+    def _token_budget_for(self, state: TaskState) -> int | None:
+        """本循环可用的 token 余量(N-11 整改)。
+
+        此前每个循环都各自拿满 Settings.token_budget——localize 烧满后 propose
+        又是全新一份,任务级真实消耗可达配置的数倍。None 表示任务级不限制。
+        调用方需先处理余量已耗尽的情形(0 会被 run_plain_loop 当作"不限制")。
+        """
+        settings = get_settings()
+        if settings.token_budget <= 0:
+            return None
+        return max(settings.token_budget - state.get("tokens_used", 0), 1)
+
     # ---------- PROPOSE_PATCH ----------
 
     def propose(self, state: TaskState) -> dict[str, Any]:
         assert self.ctx is not None
+        # started_monotonic 未接线时(直接构造 TaskNodes 的测试场景)以"当前"为
+        # 时间零点,时间预算从 propose 起算;生产路径由 runner 赋任务真实起点
+        started = self.started_monotonic if self.started_monotonic is not None else time.monotonic()
         try:
             ensure_budget(
                 round_no=state["round_no"],
                 max_rounds=self.max_rounds,
                 tokens_used=state.get("tokens_used", 0),
                 token_budget=get_settings().token_budget,
-                started_monotonic=self.started_monotonic,
+                started_monotonic=started,
                 time_budget_seconds=get_settings().task_timeout_seconds,
             )
         except BudgetError as exc:
@@ -225,21 +252,28 @@ class TaskNodes:
                 round_no=state["round_no"],
                 state_label="PROPOSE_PATCH",
                 allowed_tools=WRITE_TOOLS,
-                started_monotonic=self.started_monotonic,
+                started_monotonic=started,
                 time_budget_seconds=get_settings().task_timeout_seconds,
+                token_budget=self._token_budget_for(state),
                 cancel_event=self.cancel_event,
             )
         except BudgetError as exc:
             # N-5 整改:超预算必须终止(route_propose 会 end),不得带着已应用
-            # 的补丁继续 apply/verify 把资源门禁绕过去
+            # 的补丁继续 apply/verify 把资源门禁绕过去。
+            # N-11 整改:已耗 token/turns 记回任务级账本
             return {
                 "status": "BUDGET_EXCEEDED",
                 "outcome": "failed",
                 "error": f"propose: {exc}",
+                "turns": state.get("turns", 0) + getattr(exc, "turns", 0),
+                "tokens_used": state.get("tokens_used", 0) + getattr(exc, "tokens_spent", 0),
+                "tokens_prompt": state.get("tokens_prompt", 0) + getattr(exc, "tokens_prompt", 0),
+                "tokens_completion": state.get("tokens_completion", 0)
+                + getattr(exc, "tokens_completion", 0),
             }
         except TaskCancelled:
             raise  # 交给 runner 收敛为 CANCELLED,不得吞成 NEEDS_REVIEW
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return {"status": "NEEDS_REVIEW", "outcome": "needs_review", "error": f"propose: {exc}"}
 
         update: dict[str, Any] = {
@@ -354,20 +388,25 @@ class TaskNodes:
     # ---------- 回滚与预算 ----------
 
     def rollback(self, state: TaskState) -> dict[str, Any]:
+        # N-12 整改:回滚会 reset 掉工作区,末轮(验证失败/门禁拒绝)的直接证据
+        # 必须先取下——否则 runner 落盘的 diff.patch 是回滚后的空 diff,取证现场被毁
+        from app.gitops.differ import working_tree_diff
         from app.gitops.rollback import reset_workspace
 
+        preserved = working_tree_diff(self.workspace).diff_text
         reset_workspace(self.workspace, self.baseline_commit)
         self.tracker.record(
             tool="reset_workspace",
             state="PROPOSE_PATCH",
             input_payload={"round": state["round_no"]},
-            output_summary={"rolled_back": True},
+            output_summary={"rolled_back": True, "preserved_diff_bytes": len(preserved)},
         )
         if state["round_no"] >= self.max_rounds:
             return {
                 "status": "BUDGET_EXCEEDED",
                 "outcome": "failed",
                 "error": "rounds exhausted after failed verify",
+                "preserved_diff": preserved,
             }
         return {
             "status": "PROPOSE_PATCH",
@@ -378,21 +417,3 @@ class TaskNodes:
 
     def route_rollback(self, state: TaskState) -> str:
         return "end" if state["status"] == "BUDGET_EXCEEDED" else "propose"
-
-    # ---------- 兜底 ----------
-
-    @staticmethod
-    def state_error_guard(state: TaskState) -> dict[str, Any]:
-        return dict(state)
-
-
-def build_report_extra(state: TaskState) -> dict[str, Any]:
-    return {
-        "round_no": state.get("round_no", 1),
-        "status": state.get("status"),
-        "outcome": state.get("outcome"),
-    }
-
-
-def monotonic_now() -> float:
-    return time.monotonic()

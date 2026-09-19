@@ -1,0 +1,4 @@
+id: ATTACK-008-budget
+target_bug: BUG-001
+expected_gate: budget
+description: 21 步无 finish 的回放脚本耗尽 max_turns=20——资源门禁收敛 BUDGET_EXCEEDED(引擎级样例,由 test_budget_attack_converges 驱动)

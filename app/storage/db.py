@@ -12,7 +12,6 @@ CREATE TABLE IF NOT EXISTS tasks (
   bug_id TEXT NOT NULL,
   repo_path TEXT,
   issue_text TEXT,
-  test_cmd TEXT,
   max_rounds INTEGER,
   engine TEXT,
   model_provider TEXT,
@@ -52,19 +51,8 @@ CREATE TABLE IF NOT EXISTS patches (
 );
 CREATE INDEX IF NOT EXISTS idx_patches_task ON patches(task_id);
 
-CREATE TABLE IF NOT EXISTS test_runs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  task_id TEXT NOT NULL,
-  round INTEGER,
-  kind TEXT,
-  passed INTEGER,
-  failed INTEGER,
-  errors INTEGER,
-  exit_code INTEGER,
-  report_path TEXT,
-  duration_ms INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_test_runs_task ON test_runs(task_id);
+-- test_runs 表已删(P1-5 整改,二选一取删除):零生产调用方,每次 pytest 的
+-- 完整结果已落在 run_dir/reports/*.xml,库里再造一份只会是永远为空的空表
 
 CREATE TABLE IF NOT EXISTS evaluations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -1,4 +1,9 @@
-"""checkpoint:SqliteSaver 封装,任务中断后可从最近状态恢复。"""
+"""checkpoint:SqliteSaver 封装,仅作轨迹留档/调试。
+
+如实声明(R2 整改):当前没有崩溃恢复路径——recover_stale 只把僵尸任务标为
+NEEDS_REVIEW,从不按 thread_id 重放;且闭包持有的 ToolContext 等运行时对象
+不进 state,跨进程恢复在结构上不可行。连接由调用方(runner)在任务结束时关闭。
+"""
 
 from __future__ import annotations
 
@@ -27,6 +32,6 @@ def make_sqlite_checkpointer(db_path: Path | str) -> Any | None:
         path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(path), check_same_thread=False)
         return SqliteSaver(conn)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log.warning("checkpointer init failed (%s); running without checkpoint", exc)
         return None

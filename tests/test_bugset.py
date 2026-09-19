@@ -110,7 +110,7 @@ def test_validate_test_ids_rejects_workspace_escape() -> None:
         "//host/share/test_x.py::t",
         "/abs/test_x.py::t",
     ):
-        with pytest.raises(InvalidRequestError, match="escapes the workspace|workspace-relative"):
+        with pytest.raises(InvalidRequestError, match=r"escapes the workspace|workspace-relative"):
             validate_test_ids([tid], "escape guard")
 
     # 合法形态(含参数化)不受影响

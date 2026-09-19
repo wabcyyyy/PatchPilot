@@ -8,28 +8,8 @@ from __future__ import annotations
 
 from typing import TypedDict
 
-# 状态常量(企划书 4.1)
-STATUS_CREATED = "CREATED"
-STATUS_BASELINE = "BASELINE"
-STATUS_LOCALIZE = "LOCALIZE"
-STATUS_PROPOSE = "PROPOSE_PATCH"
-STATUS_APPLY = "APPLY_PATCH"
-STATUS_VERIFY = "VERIFY"
-STATUS_FINISHED = "FINISHED"
-STATUS_INVALID_TASK = "INVALID_TASK"
-STATUS_PATCH_REJECTED = "PATCH_REJECTED"
-STATUS_VERIFY_FAILED = "VERIFY_FAILED"
-STATUS_BUDGET_EXCEEDED = "BUDGET_EXCEEDED"
-STATUS_NEEDS_REVIEW = "NEEDS_REVIEW"
-
-TERMINAL_STATUSES = {
-    STATUS_FINISHED,
-    STATUS_INVALID_TASK,
-    STATUS_PATCH_REJECTED,
-    STATUS_VERIFY_FAILED,
-    STATUS_BUDGET_EXCEEDED,
-    STATUS_NEEDS_REVIEW,
-}
+# 状态以字面量流转;终态集合的唯一权威在 app/storage/repository.py
+# (P2-2 收敛,含 CANCELLED——引擎不产出它,由 service 收敛)。
 
 
 class TaskState(TypedDict, total=False):
@@ -65,3 +45,5 @@ class TaskState(TypedDict, total=False):
     tokens_completion: int
     error: str | None
     outcome: str  # resolved | failed | needs_review | invalid
+    # N-12 整改:rollback 在 reset 前保全的工作区 diff,供 runner 落盘取证
+    preserved_diff: str

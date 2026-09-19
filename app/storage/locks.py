@@ -82,6 +82,6 @@ def build_lock(redis_url: str = "") -> BaseLock:
         lock._client.ping()
         log.info("using Redis task lock (%s)", redis_url)
         return lock
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log.warning("redis unavailable (%s); falling back to in-memory lock", exc)
         return InMemoryLock()

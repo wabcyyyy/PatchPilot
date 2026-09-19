@@ -51,9 +51,7 @@ def materialize_repo(template_dir: Path | str, dest: Path | str, extra_commit: b
     - 模板只保存工作树文件,git 历史现场构建,避免主仓库嵌套 .git
       (模板自带 .git 时被 ignore 剥离,不拒绝——自定义仓库任务就是真实 checkout);
     - 第二个 commit 只改 README,保持被测源码行号稳定;
-    - 模板与目标不得互为祖先(P0-3 整改:此校验原本只在无人调用的
-      snapshot.create_workspace 里,生产入口 materialize_repo 反而裸奔,
-      嵌套时 copytree 递归展开报 shutil.Error 而非结构化 TaskError)。
+    - 模板与目标不得互为祖先(P0-3 整改;两份实现的分工见 snapshot.py 模块注释)。
     """
     template = Path(template_dir).resolve()
     dest = Path(dest).resolve()

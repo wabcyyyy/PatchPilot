@@ -88,7 +88,7 @@ def collect_runs(runs_root: Path | str) -> list[RunRow]:
 
 
 def latest_per_bug(rows: list[RunRow]) -> list[RunRow]:
-    """同一 bug 多次运行时取最新一次(按目录名时间戳)。"""
+    """同一 bug 多次运行时取最新一次(按 report.json 的 mtime,见 RunRow.finished_stamp)。"""
 
     def sort_key(row: RunRow) -> tuple[str, float]:
         return row.bug_id, row.finished_stamp

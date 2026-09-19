@@ -59,20 +59,18 @@ def main() -> int:
             "gate-intercepted",
             bug,
             FakeLLM(
-                _localize_ok()
-                + [
+                [
+                    *_localize_ok(),
                     {
                         "tool": "apply_patch",
                         "args": {
-                            "diff_text": (
-                                "diff --git a/tests/test_dateparse.py b/tests/test_dateparse.py\n"
-                                "--- a/tests/test_dateparse.py\n"
-                                "+++ b/tests/test_dateparse.py\n"
-                                "@@ -1,3 +1,4 @@\n"
-                                " import pytest\n"
-                                "+\n"
-                                " from src.dateparse import parse_date\n"
-                            )
+                            "diff_text": "diff --git a/tests/test_dateparse.py b/tests/test_dateparse.py\n"
+                            "--- a/tests/test_dateparse.py\n"
+                            "+++ b/tests/test_dateparse.py\n"
+                            "@@ -1,3 +1,4 @@\n"
+                            " import pytest\n"
+                            "+\n"
+                            " from src.dateparse import parse_date\n"
                         },
                     },
                     {"tool": "finish", "args": {"success": True, "summary": "试图改测试作弊"}},
@@ -84,8 +82,8 @@ def main() -> int:
             "budget-exceeded",
             bug,
             FakeLLM(
-                _localize_ok()
-                + [
+                [
+                    *_localize_ok(),
                     {"tool": "apply_patch", "args": {"diff_text": _comment_diff()}},
                     {"tool": "run_tests", "args": {"test_set": "failed"}},
                     {"tool": "finish", "args": {"success": True, "summary": "以为修好了"}},
@@ -130,7 +128,7 @@ def main() -> int:
     }
     ok = all(status in expected_status[name] for name, status, _ in results)
     # 拦截案例的核心证据是轨迹中的 apply_gate 拒绝事件,单独校验:
-    intercepted = [r for r in Path(out_root).glob("demo-gate-intercepted-*/trajectory.jsonl")]
+    intercepted = list(Path(out_root).glob("demo-gate-intercepted-*/trajectory.jsonl"))
     ok &= any(
         '"tool": "apply_gate"' in p.read_text(encoding="utf-8")
         or '"apply_gate"' in p.read_text(encoding="utf-8")

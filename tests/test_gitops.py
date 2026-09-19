@@ -139,8 +139,10 @@ def test_materialize_repo_refuses_nesting(tmp_path: Path) -> None:
     (template / "a.txt").write_text("x", encoding="utf-8")
     with pytest.raises(TaskError, match="contain each other"):
         materialize_repo(template, template / "nested" / "ws")
-    outer = tmp_path / "outer-ws"
+    # 反向嵌套(dest 是 template 的祖先):dest 内放模板目录再以 dest 为目标
+    outer = tmp_path / "outer"
     outer.mkdir()
     (outer / "tpl").mkdir()
+    (outer / "tpl" / "b.txt").write_text("x", encoding="utf-8")
     with pytest.raises(TaskError, match="contain each other"):
-        materialize_repo(outer, tmp_path / "outer-ws")
+        materialize_repo(outer / "tpl", outer)

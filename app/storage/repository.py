@@ -101,17 +101,17 @@ class Repository:
             ).fetchone()
         return _task_out(row)
 
-    def update_task_status(self, task_id: str, status: str, verdict: str | None = None) -> None:
-        """无条件状态写入:仅限非终态流转(RUNNING 等);终态回写请用 finalize_task。"""
-        finished = _now() if status in TERMINAL_STATUSES else None
+    def set_status_unless_terminal(self, task_id: str, status: str) -> bool:
+        """非终态流转写入(RUNNING 等,N-7/R2 整改):任务已到终态(含并发取消)
+        时写入不生效并返回 False——此前 create_task 置 RUNNING 是无条件写,
+        可以把并发 cancel 写入的 CANCELLED"复活"成 RUNNING。"""
+        placeholders = ",".join("?" * len(TERMINAL_STATUSES))
         with self._lock, self._conn:
-            if finished:
-                self._conn.execute(
-                    "UPDATE tasks SET status=?, verdict=?, finished_at=? WHERE id=?",
-                    (status, verdict, finished, task_id),
-                )
-            else:
-                self._conn.execute("UPDATE tasks SET status=? WHERE id=?", (status, task_id))
+            cur = self._conn.execute(
+                f"UPDATE tasks SET status=? WHERE id=? AND status NOT IN ({placeholders})",
+                (status, task_id, *TERMINAL_STATUSES),
+            )
+        return cur.rowcount > 0
 
     def finalize_task(self, task_id: str, status: str, verdict: str | None = None) -> bool:
         """终态回写(N-7 整改):任务已被取消时不覆盖,返回 False 表示输掉竞争。
@@ -232,35 +232,8 @@ class Repository:
                 ),
             )
 
-    def insert_test_run(
-        self,
-        *,
-        task_id: str,
-        round_no: int,
-        kind: str,
-        passed: int,
-        failed: int,
-        errors: int,
-        exit_code: int,
-        report_path: str,
-        duration_ms: int,
-    ) -> None:
-        with self._lock, self._conn:
-            self._conn.execute(
-                "INSERT INTO test_runs (task_id, round, kind, passed, failed, errors, exit_code,"
-                " report_path, duration_ms) VALUES (?,?,?,?,?,?,?,?,?)",
-                (
-                    task_id,
-                    round_no,
-                    kind,
-                    passed,
-                    failed,
-                    errors,
-                    exit_code,
-                    report_path,
-                    duration_ms,
-                ),
-            )
+    # insert_test_run 已删(P1-5 整改):test_runs 表零生产调用方,
+    # pytest 完整结果以 junit xml 形式落在 run_dir/reports/,不入库
 
     def upsert_evaluation(self, **fields: Any) -> None:
         keys = [

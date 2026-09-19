@@ -14,7 +14,6 @@ class Settings(BaseSettings):
 
     # 目录
     runs_root: Path = Path("runs")
-    workspace_root: Path = Path("runs/workspaces")
     db_path: Path = Path("patchpilot.sqlite3")
 
     # 模型(OpenAI 兼容端点;留空则仅回放模式可用)
@@ -50,10 +49,13 @@ class Settings(BaseSettings):
         return value
 
     # 预算与限制(企划书第 9 节资源门禁的默认值)
+    # P1-4/R2 整改:default_max_rounds/max_read_lines/max_search_results 已接线
+    # (load_bug、build_custom_bug 与 ToolContext 构造);
+    # round_timeout_seconds 曾是零读者死键已删——现行实现为任务级 task_timeout_seconds
+    # 在 turn 边界复查(plain_loop),不做单轮独立计时
     token_budget: int = 200_000  # 单任务累计 token 预算;0 = 不限制
     default_max_rounds: int = 5
     task_timeout_seconds: int = 900
-    round_timeout_seconds: int = 300
     test_timeout_seconds: int = 120
     max_patch_files: int = 5
     max_read_lines: int = 400

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -191,3 +192,40 @@ def test_assistant_tool_calls_use_openai_wire_format(ctx: ToolContext) -> None:
     assert call["id"] == "call_1"
     assert call["function"]["name"] == "list_files"
     assert json.loads(call["function"]["arguments"]) == {}
+
+
+def test_plain_loop_enforces_time_budget_at_turn_boundary(ctx: ToolContext) -> None:
+    """N-10/R2 整改:时间预算必须在每个 turn 边界复查,而不是只有进入循环前一次——
+    一次 LLM 调用 + 一次 pytest 可远超剩余额度,锁 TTL 会早于任务结束。"""
+    script = [
+        {"tool": "search_code", "args": {"keyword": "parse_date"}},
+        {"tool": "finish", "args": {"success": True, "summary": "done"}},
+    ]
+    model = FakeLLM(script)
+    started = time.monotonic() - 10_000  # 伪起点:任务早已超时
+    with pytest.raises(BudgetError, match="time budget"):
+        run_plain_loop(
+            ctx,
+            model,
+            "issue",
+            max_turns=5,
+            started_monotonic=started,
+            time_budget_seconds=1,
+        )
+    # turn 边界在 model.complete 之前:模型不应被调用(事件里只有 start 无 tool)
+
+
+def test_plain_loop_without_started_monotonic_skips_time_check(ctx: ToolContext) -> None:
+    """started_monotonic 未接线(直接构造场景)不得产生假超时(R2 整改)。"""
+    script = [{"tool": "finish", "args": {"success": True, "summary": "done"}}]
+    outcome = run_plain_loop(ctx, FakeLLM(script), "issue", max_turns=5)
+    assert outcome.success and outcome.finish_declared
+
+
+def test_budget_error_carries_usage(ctx: ToolContext) -> None:
+    """N-11 整改:预算异常携带已耗 token/turns,上层才能记回任务级账本。"""
+    script = [{"tool": "search_code", "args": {"keyword": f"k{i}"}} for i in range(5)]
+    with pytest.raises(BudgetError) as exc_info:
+        run_plain_loop(ctx, FakeLLM(script), "issue", max_turns=3)
+    assert exc_info.value.turns == 3  # type: ignore[attr-defined]
+    assert getattr(exc_info.value, "tokens_spent", 0) > 0

@@ -41,6 +41,7 @@ class TaskResult:
     bug_id: str
     status: str = "CREATED"
     verdict: str = "needs_review"
+    outcome: str = ""  # graph 引擎的终局描述(resolved/failed/needs_review/...);plain 恒空(R2)
     model_provider: str = ""
     model_name: str = ""  # 真实模型名(openai 时来自 Settings.llm_model;fake 为空)
     engine: str = "plain"
@@ -70,13 +71,18 @@ def _write_report(result: TaskResult, run_dir: Path) -> None:
 
     /report 端点按"文件存在"判定就绪并被轮询;原地覆写时轮询方可能读到半截
     JSON 撞出 500。原子替换保证"存在即可完整读"。
+    Windows 残留(R2 整改):轮询方恰持读句柄时 os.replace 抛 PermissionError,
+    发生在任务收尾 finally 里会把已完成的任务吞成 NEEDS_REVIEW——退化为
+    直接覆写(放弃原子性,保住报告)。
     """
+    payload = json.dumps(result.as_dict(), ensure_ascii=False, indent=2)
     tmp = run_dir / "report.json.tmp"
-    tmp.write_text(
-        json.dumps(result.as_dict(), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    os.replace(tmp, run_dir / "report.json")
+    tmp.write_text(payload, encoding="utf-8")
+    try:
+        os.replace(tmp, run_dir / "report.json")
+    except OSError:
+        (run_dir / "report.json").write_text(payload, encoding="utf-8")
+        tmp.unlink(missing_ok=True)
 
 
 def run_task(
@@ -92,6 +98,10 @@ def run_task(
     cancel_event: threading.Event | None = None,
 ) -> TaskResult:
     """执行一个任务:基线 → 工具循环 → 验证 → 判定,全程落盘。
+
+    口径说明(R2 整改):plain 引擎是单轮多步循环,不消费 bug.max_rounds
+    (那只在 graph 引擎的轮次语义里有意义);plain 的资源约束是
+    max_turns + task_timeout_seconds + token_budget。
 
     task_id/run_dir 可由调用方(API 服务)指定,保证产物目录与服务记录一致。
     """
@@ -130,6 +140,9 @@ def run_task(
             allowed_paths=bug.allowed_paths,
             max_patch_files=settings.max_patch_files,
             test_timeout_seconds=settings.test_timeout_seconds,
+            # P1-4 整改:资源上限此前只落在硬编码默认值上,settings 改了不生效
+            max_read_lines=settings.max_read_lines,
+            max_search_results=settings.max_search_results,
         )
         tracker.record(
             tool="create_workspace",
@@ -208,9 +221,8 @@ def run_task(
             result.status, result.verdict = "FINISHED", "resolved"
         elif not gate.ok:
             result.status, result.verdict = "PATCH_REJECTED", "failed"
-        elif outcome.finish_declared and not outcome.success:
-            result.status, result.verdict = "VERIFY_FAILED", "failed"
         else:
+            # 模型放弃/自认失败/静默结束,结局一致:VERIFY_FAILED(P3 死分支折叠)
             result.status, result.verdict = "VERIFY_FAILED", "failed"
         (run_dir / "diff.patch").write_text(diff.diff_text, encoding="utf-8")
 
@@ -221,7 +233,7 @@ def run_task(
         result.status, result.verdict, result.error = "CANCELLED", "cancelled", str(exc)
     except TaskError as exc:
         result.status, result.verdict, result.error = "INVALID_TASK", "failed", str(exc)
-    except Exception as exc:  # noqa: BLE001 - 驱动器必须把异常收敛为可复盘报告
+    except Exception as exc:
         log.exception("task %s crashed", task_id)
         result.status, result.verdict, result.error = (
             "NEEDS_REVIEW",

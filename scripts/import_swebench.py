@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -59,6 +60,8 @@ def main(argv: list[str] | None = None) -> int:
 
     ready, missing = [], []
     for instance in instances:
+        if not re.fullmatch(r"[\w.-]+", instance.instance_id):
+            raise TaskError(f"unsafe instance_id (path guard): {instance.instance_id!r}")
         try:
             task = to_bug_task(instance, root / instance.instance_id)
         except TaskError as exc:

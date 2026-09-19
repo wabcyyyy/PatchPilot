@@ -8,7 +8,7 @@ from typing import Any
 
 from app.config import Settings
 from app.errors import TaskError
-from app.llm.base import AssistantTurn, ToolCall, estimate_tokens
+from app.llm.base import AssistantTurn, ToolCall, estimate_tokens, messages_tokens
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +59,11 @@ class OpenAICompatModel:
             max_tokens=self._max_tokens or None,
             extra_body=self._extra_body,
         )
-        choice = response.choices[0]
+        choice = response.choices[0] if response.choices else None
+        if choice is None:
+            # R2 整改:空 choices(部分端点在内容过滤/故障时返回)收敛为结构化
+            # TaskError,而不是 IndexError 被上层吞成 NEEDS_REVIEW
+            raise TaskError("llm endpoint returned no choices")
         message = choice.message
         usage = getattr(response, "usage", None)
         tokens = getattr(usage, "total_tokens", 0) if usage else 0
@@ -76,11 +80,23 @@ class OpenAICompatModel:
             calls.append(ToolCall(id=item.id or f"call_{len(calls)}", name=fn.name, arguments=args))
 
         text = getattr(message, "content", None)
+        if choice.finish_reason == "length":
+            # R2 整改:截断的 tool arguments 多半是废补丁,早失败好过假进行;
+            # 至少留痕,排查"模型补丁行为怪异"时有据可查
+            log.warning("llm completion truncated by max_tokens; tool args may be broken")
+        # R2 整改:usage 缺失时此前 prompt/completion 恒 0,成本核算系统性失真;
+        # 改为字符估算拆分(与 plain_loop 的预算口径同源)
+        if not tokens:
+            prompt_tokens = messages_tokens(messages)
+            completion_tokens = estimate_tokens(
+                text or json.dumps([c.arguments for c in calls], ensure_ascii=False, default=str)
+            )
+            tokens = prompt_tokens + completion_tokens
         return AssistantTurn(
             content=text,
             tool_calls=calls,
             finish_reason=choice.finish_reason or "stop",
-            usage_tokens=int(tokens) or estimate_tokens(text or ""),
+            usage_tokens=int(tokens),
             prompt_tokens=int(prompt_tokens or 0),
             completion_tokens=int(completion_tokens or 0),
         )

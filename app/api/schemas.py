@@ -51,15 +51,27 @@ class TaskCreateIn(BaseModel):
 
 
 class TaskOut(BaseModel):
+    """任务对外表示(R2 整改:路由实际挂载,收敛响应面)。
+
+    刻意不外泄:idem_key(内部幂等键,可探测同键任务)、repo_path/issue_text
+    (请求方自有输入回显无意义)、id(与 task_id 冗余的库内主键)。
+    run_dir 保留:单机工具定位产物需要;多租户部署前必须一并去掉。
+    """
+
     task_id: str
     bug_id: str
     status: str
     verdict: str | None = None
     engine: str | None = None
     model_provider: str | None = None
+    max_rounds: int | None = None
     run_dir: str | None = None
     created_at: str | None = None
     finished_at: str | None = None
+
+
+class TaskListOut(BaseModel):
+    tasks: list[TaskOut]
 
 
 class ErrorResponse(BaseModel):

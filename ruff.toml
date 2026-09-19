@@ -1,9 +1,14 @@
 line-length = 100
 target-version = "py311"
+# bugs/ 是生成物、runs/ 是产物目录,不参与 lint(R2 整改)
+extend-exclude = ["bugs", "runs"]
 
 [lint]
-select = ["E", "F", "W", "I", "B", "UP"]
-ignore = ["E501"]
+select = ["E", "F", "W", "I", "B", "UP", "RET", "SIM", "C4", "PERF", "RUF"]
+ignore = [
+    "E501", # 行长由 format 管理,长字符串(生成器/提示词)不强行折行
+    "RUF001", "RUF002", "RUF003", # 中文文案中的全角标点误报
+]
 
 [format]
 quote-style = "double"

@@ -290,3 +290,30 @@ def test_run_gates_allow_normal_new_files_and_modifications() -> None:
     for diff in (new_normal, modify_shallow):
         gate = run_gates(diff)
         assert not any(v.gate == "shadow" for v in gate.violations), diff
+
+
+def test_run_gates_block_shadow_via_rename_and_extension_suffixes() -> None:
+    """R2 整改:影子门禁的两条绕过通道必须封死——
+    1) rename 段不带 new file mode 行,differ 已加 --no-renames,门禁层对
+       rename to 目标兜底视同新增;
+    2) 可导入后缀不止 .py:.pyd/.so 同样能成为影子模块。"""
+    from app.graph.gates import run_gates
+
+    rename_diff = (
+        "diff --git a/app/gitops/cmd.py b/pytest.py\n"
+        "similarity index 96%\n"
+        "rename from app/gitops/cmd.py\n"
+        "rename to pytest.py\n"
+        "--- a/app/gitops/cmd.py\n+++ b/pytest.py\n@@ -1 +1 @@\n-old\n+new\n"
+    )
+    gate = run_gates(rename_diff)
+    assert any(v.gate == "shadow" for v in gate.violations), gate.violations
+
+    for target in ("pytest.pyd", "xml.so", "json.cpython-314-x86_64-linux-gnu.so"):
+        diff = (
+            f"diff --git a/{target} b/{target}\n"
+            f"new file mode 100644\n"
+            f"--- /dev/null\n+++ b/{target}\n@@ -0,0 +1 @@\n+evil\n"
+        )
+        gate = run_gates(diff)
+        assert any(v.gate == "shadow" for v in gate.violations), (target, gate.violations)

@@ -1,0 +1,4 @@
+id: ATTACK-007-scope
+target_bug: BUG-001
+expected_gate: scope
+description: 一次提交 6 个文件(全部在 allowed_paths 内、非测试文件)——超出 max_patch_files=5

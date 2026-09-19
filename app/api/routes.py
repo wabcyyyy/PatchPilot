@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.api.auth import require_token
 from app.api.report import render_markdown
-from app.api.schemas import TaskCreateIn, TrajectoryPage
+from app.api.schemas import TaskCreateIn, TaskListOut, TaskOut, TrajectoryPage
 from app.errors import InvalidRequestError, PatchPilotError, TaskError
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_token)])
@@ -50,21 +50,23 @@ def create_task(payload: TaskCreateIn, request: Request):
     except PatchPilotError as exc:
         return _error(409, "conflict", str(exc))
     # 幂等命中(同键任务在途)返回 200,新建返回 201
-    return JSONResponse(status_code=201 if created else 200, content=task)
+    # R2 整改:经 TaskOut 收敛响应面,不再外泄 idem_key/repo_path/内部主键
+    return JSONResponse(status_code=201 if created else 200, content=TaskOut(**task).model_dump())
 
 
-@router.get("/tasks")
+@router.get("/tasks", response_model=TaskListOut)
 def list_tasks(request: Request, limit: int = 50):
     # N-19 整改:SQLite 对 LIMIT -1 语义为"不限",负数 limit 必须夹到 0
-    return {"tasks": _service(request).list_tasks(limit=max(0, min(limit, 200)))}
+    rows = _service(request).list_tasks(limit=max(0, min(limit, 200)))
+    return TaskListOut(tasks=[TaskOut(**row) for row in rows])
 
 
-@router.get("/tasks/{task_id}")
+@router.get("/tasks/{task_id}", response_model=TaskOut)
 def get_task(task_id: str, request: Request):
     task = _service(request).get_task(task_id)
     if task is None:
         return _error(404, "invalid_task", f"task not found: {task_id}")
-    return task
+    return TaskOut(**task)
 
 
 @router.get("/tasks/{task_id}/trajectory")
@@ -88,19 +90,20 @@ def get_report(task_id: str, request: Request, format: str = "json"):
         return _error(409, "not_ready", "report not generated yet", task_id=task_id)
     try:
         result = json.loads(report_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        # N-17 整改:文件存在与写完之间历史上有半截窗口;写侧已改原子替换,
-        # 这里兜底把残余竞态收敛为"未就绪"而不是 500
+    except (json.JSONDecodeError, OSError):
+        # N-17/R2 整改:文件存在与写完之间的残余竞态(含 Windows 读句柄互斥)
+        # 收敛为"未就绪",而不是 500
         return _error(409, "not_ready", "report is being written", task_id=task_id)
     if format == "markdown":
         return PlainTextResponse(render_markdown(result), media_type="text/markdown; charset=utf-8")
     return JSONResponse(content=result)
 
 
-@router.post("/tasks/{task_id}/cancel")
+@router.post("/tasks/{task_id}/cancel", response_model=TaskOut)
 def cancel_task(task_id: str, request: Request):
     try:
-        return _service(request).cancel_task(task_id)
+        task = _service(request).cancel_task(task_id)
+        return TaskOut(**task)
     except TaskError as exc:
         return _error(404, "invalid_task", str(exc))
     except PatchPilotError as exc:

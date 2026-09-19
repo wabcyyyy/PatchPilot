@@ -12,6 +12,7 @@ from typing import Any
 
 import yaml
 
+from app.config import get_settings
 from app.errors import InvalidRequestError, TaskError
 
 log = logging.getLogger(__name__)
@@ -20,7 +21,8 @@ BUGS_ROOT = Path("bugs")
 
 # P2-5 整改:测试 id 是要拼进 pytest argv 的外部输入(manifest 或 API 请求),
 # 必须先过格式白名单——否则 "-p evil" 这类 pytest 选项会构成注入。
-_TEST_ID_RE = re.compile(r"^[A-Za-z0-9_./\-\[\]:]+$")
+# 空格允许:参数化 id 如 test_x[a b] 是合法节点 id,argv 单元素传参无注入语义。
+_TEST_ID_RE = re.compile(r"^[A-Za-z0-9_ ./\-\[\]:]+$")
 # N-3 整改:id 里的路径部分还可能把 pytest 的收集范围指到工作区之外
 # (cwd=物化工作区下,`../x`、盘符、UNC 都是合法 argv 操作数),一并拒绝。
 _DRIVE_RE = re.compile(r"^[A-Za-z]:")
@@ -33,7 +35,12 @@ def validate_test_ids(ids: list[str], ctx: str) -> None:
     收集范围逃逸工作区等于把判定权交给工作区外的任意文件。
     """
     for tid in ids:
-        if not tid or tid.startswith("-") or not _TEST_ID_RE.fullmatch(tid):
+        if (
+            not tid
+            or tid != tid.strip()  # 前导空白可掩盖 "-p" 形态,一并拒绝
+            or tid.startswith("-")
+            or not _TEST_ID_RE.fullmatch(tid)
+        ):
             raise InvalidRequestError(
                 f"{ctx}: invalid test id {tid!r} (pytest option injection guard)"
             )
@@ -66,10 +73,6 @@ class BugTask:
 
     def __post_init__(self) -> None:
         self.test_sets = {"failed": self.failed_tests, "regression": self.regression_tests}
-
-    @property
-    def all_tests(self) -> list[str]:
-        return self.failed_tests + self.regression_tests
 
 
 def _require(data: dict[str, Any], key: str, ctx: str) -> Any:
@@ -118,7 +121,8 @@ def load_bug(path_or_id: str | Path, root: Path | str = BUGS_ROOT) -> BugTask:
         failed_tests=failed,
         regression_tests=regression,
         allowed_paths=[str(p) for p in allowed] if allowed else None,
-        max_rounds=int(data.get("max_rounds", 5)),
+        # P1-4 整改:默认轮数走 Settings,不再是硬编码 5
+        max_rounds=int(data.get("max_rounds", get_settings().default_max_rounds)),
         category=str(data.get("category", "")),
         difficulty=str(data.get("difficulty", "simple")),
         replay_script_path=replay if replay.exists() else None,
@@ -132,7 +136,7 @@ def build_custom_bug(
     failed_tests: list[str],
     regression_tests: list[str],
     allowed_paths: list[str] | None = None,
-    max_rounds: int = 5,
+    max_rounds: int | None = None,
 ) -> BugTask:
     """内存构造自定义任务(任意仓库接入):不经 bugs/ 目录结构,无回放脚本文件。
 
@@ -140,6 +144,8 @@ def build_custom_bug(
     (禁改测试文件由门禁 forbid_test_files=True 无条件兜底,与本辅助无关)。
     """
     root = Path(repo_path).resolve()
+    # P1-4 整改:默认轮数走 Settings;None 才取默认,调用方显式传值不被覆盖
+    max_rounds = get_settings().default_max_rounds if max_rounds is None else max_rounds
     failed = list(failed_tests)
     regression = list(regression_tests)
     # 自定义任务直接来自 API 请求体,是注入面最大的入口,同样强制校验

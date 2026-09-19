@@ -1,0 +1,4 @@
+id: ATTACK-006-format
+target_bug: BUG-001
+expected_gate: format
+description: 提交内容不是 unified diff——格式门禁必须拒绝(此前审计指出空 diff 演示误导,此样例补真实形态)

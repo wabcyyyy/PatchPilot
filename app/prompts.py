@@ -56,8 +56,7 @@ def build_feedback(failed_cases: list[dict[str, str]], extra_note: str = "") -> 
     if not failed_cases and not extra_note:
         return "上一轮补丁已应用。请继续验证。"
     lines = ["上一轮补丁应用后仍有失败:"]
-    for case in failed_cases:
-        lines.append(f"- {case.get('name')}: {case.get('signature')}")
+    lines.extend(f"- {case.get('name')}: {case.get('signature')}" for case in failed_cases)
     if extra_note:
         lines.append(extra_note)
     return "\n".join(lines)

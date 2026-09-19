@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import importlib.machinery
 import re
 import sys
 import time
@@ -17,6 +18,7 @@ from app.tools.paths import is_test_file, normalize_rel, path_allowed
 _DIFF_GIT_RE = re.compile(r"^diff --git a/(.+) b/(.+)$", re.MULTILINE)
 _PLUSPLUS_RE = re.compile(r"^\+\+\+ (.+)$", re.MULTILINE)
 _NEW_FILE_RE = re.compile(r"^new file mode ", re.MULTILINE)
+_RENAME_TO_RE = re.compile(r"^rename to (.+)$", re.MULTILINE)
 
 # N-1 整改:`python -m pytest` 把 cwd(=工作区)置于 sys.path[0],工作区根下与
 # 解释器/工具链同名的顶层模块会遮蔽真身——影子 pytest 能读 argv 里的 --junitxml,
@@ -33,6 +35,22 @@ _RESERVED_TOP_LEVEL = frozenset(sys.stdlib_module_names) | {
     "sitecustomize",
     "usercustomize",
 }
+# R2 整改:可导入后缀不止 .py——.pyd(windows)/.so(posix)/.pyc 同样能成为
+# 影子模块,顶层段比对前先剥掉全部可导入后缀取模块名。
+# 必须用静态全集而不是 importlib.machinery:门禁结论要跨平台可复现(P2-6),
+# Windows 解释器的 EXTENSION_SUFFIXES 不含 .so,反之亦然。
+_IMPORTABLE_SUFFIXES = (
+    ".py",
+    ".pyc",
+    ".pyo",
+    ".pyd",
+    ".so",
+    *tuple(
+        s
+        for s in importlib.machinery.all_suffixes()
+        if s not in (".py", ".pyc", ".pyo", ".pyd", ".so")
+    ),
+)
 
 
 @dataclass
@@ -79,11 +97,19 @@ def parse_new_files(diff_text: str) -> list[str]:
     for i, match in enumerate(matches):
         section_start = match.end()
         section_end = matches[i + 1].start() if i + 1 < len(matches) else len(diff_text)
-        if not _NEW_FILE_RE.search(diff_text[section_start:section_end]):
-            continue
-        rel = normalize_rel(match.group(2))
-        if rel and rel not in new_files:
-            new_files.append(rel)
+        section = diff_text[section_start:section_end]
+        if _NEW_FILE_RE.search(section):
+            # 新增文件:取 b/ 侧路径
+            rel = normalize_rel(match.group(2))
+            if rel and rel not in new_files:
+                new_files.append(rel)
+        else:
+            # R2 整改:rename 段不带 new file mode 行(differ 已加 --no-renames,
+            # 这里对含 rename 的 diff 文本兜底)——rename 的落点等价于新增文件
+            for rename_match in _RENAME_TO_RE.finditer(section):
+                rel = normalize_rel(rename_match.group(1))
+                if rel and rel not in new_files:
+                    new_files.append(rel)
     return new_files
 
 
@@ -126,11 +152,19 @@ def run_gates(
 
     # 2.5 影子门禁(N-1):新增文件不得与解释器/工具链顶层模块同名,
     # 否则 python -m pytest 的 sys.path[0]=cwd 会让影子包劫持整个判定层。
-    # 顶层段可能是包目录(pytest/)或模块文件(os.py),两种写法都要比对。
+    # 顶层段可能是包目录(pytest/)或模块文件(os.py/.pyd/.so),剥可导入后缀后比对。
     for rel in parse_new_files(diff_text):
         top = normalize_rel(rel).split("/")[0]
-        candidates = {top, top[:-3] if top.endswith(".py") else ""}
-        if any(name and name in _RESERVED_TOP_LEVEL for name in candidates):
+        candidates = {top}
+        for suffix in _IMPORTABLE_SUFFIXES:
+            if top.endswith(suffix) and len(top) > len(suffix):
+                candidates.add(top[: -len(suffix)])
+        # PEP 3149 扩展标签链:json.cpython-314-x86_64-linux-gnu.so 可作为
+        # 顶层模块 json 导入——扩展链里含可导入后缀时,首段点号前即模块名
+        first_dot = top.find(".")
+        if first_dot > 0 and any(s in top[first_dot:] for s in _IMPORTABLE_SUFFIXES):
+            candidates.add(top[:first_dot])
+        if any(name in _RESERVED_TOP_LEVEL for name in candidates):
             violations.append(
                 GateViolation("shadow", f"new top-level module shadows toolchain: {rel}")
             )

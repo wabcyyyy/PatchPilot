@@ -154,7 +154,9 @@ class TaskService:
                 model_provider=model,
                 run_dir=str(run_dir),
             )
-            self.repo.update_task_status(task_id, "RUNNING")
+            # N-7/R2 整改:置 RUNNING 走条件写——QUEUED 与 RUNNING 之间存在
+            # cancel 窗口,无条件写会把并发 cancel 写入的 CANCELLED 复活
+            self.repo.set_status_unless_terminal(task_id, "RUNNING")
             # 提交前先注册取消事件,保证 create 返回后的任何 cancel 都不会丢失
             cancel_event = self._cancels.register(task_id)
             self._pool.submit(
@@ -184,8 +186,9 @@ class TaskService:
         log.exception("task %s failed to schedule; rolling back", task_id)
         try:
             if self.repo.get_task(task_id) is not None:
-                self.repo.update_task_status(task_id, "NEEDS_REVIEW", "needs_review")
-        except Exception:  # noqa: BLE001 - 回滚失败只记日志,不掩盖原始异常
+                # finalize_task 自带 != CANCELLED 守卫:回滚不得覆盖并发取消
+                self.repo.finalize_task(task_id, "NEEDS_REVIEW", "needs_review")
+        except Exception:
             log.exception("task %s rollback failed", task_id)
         finally:
             self._cancels.unregister(task_id)
@@ -255,7 +258,7 @@ class TaskService:
             self.repo.finalize_task(task_id, "CANCELLED", "cancelled")
             log.info("task %s cancelled at turn boundary", task_id)
             _ = exc
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # N-7:同上,崩溃收敛也走原子守卫,不得覆盖 CANCELLED
             self.repo.finalize_task(task_id, "NEEDS_REVIEW", "needs_review")
             log.exception("task %s crashed", task_id)

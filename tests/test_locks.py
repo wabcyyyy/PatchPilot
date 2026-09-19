@@ -16,7 +16,7 @@ def _redis_ping_ok() -> bool:
             "redis://localhost:6379/0", socket_connect_timeout=1, socket_timeout=1
         )
         return bool(client.ping())
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
 
 

@@ -90,9 +90,11 @@ def validate(bug_dir: Path) -> list[str]:
         return [f"manifest.yaml is not a mapping in {bug_dir}"]
 
     problems: list[str] = []
-    for field in REQUIRED_FIELDS:
-        if data.get(field) in (None, "", [], {}):
-            problems.append(f"manifest missing/empty field: {field}")
+    problems.extend(
+        f"manifest missing/empty field: {field}"
+        for field in REQUIRED_FIELDS
+        if data.get(field) in (None, "", [], {})
+    )
     problems += _replay_problems(bug_dir)
     if problems:
         return problems

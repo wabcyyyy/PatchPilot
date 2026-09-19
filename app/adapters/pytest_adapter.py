@@ -17,12 +17,9 @@ from app.executor.local_runner import TestRunResult, run_tests
 
 log = logging.getLogger(__name__)
 
-# pytest 退出码含义(用于判定,不依赖输出文本)
+# pytest 退出码:0 成功,1 用例失败,2 被中断,3 内部错误,4 用法错误,5 未收集到。
+# 判定只依赖 RC_OK 与 RC_NO_TESTS_COLLECTED 两个常量,其余以注释存档。
 RC_OK = 0
-RC_TESTS_FAILED = 1
-RC_INTERRUPTED = 2
-RC_INTERNAL_ERROR = 3
-RC_USAGE_ERROR = 4
 RC_NO_TESTS_COLLECTED = 5
 
 

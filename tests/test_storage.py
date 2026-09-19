@@ -27,10 +27,10 @@ def test_task_lifecycle(tmp_path: Path) -> None:
     task = repo.get_task("T1")
     assert task and task["status"] == "QUEUED"
 
-    repo.update_task_status("T1", "RUNNING")
+    repo.set_status_unless_terminal("T1", "RUNNING")
     assert repo.get_task("T1")["status"] == "RUNNING"
 
-    repo.update_task_status("T1", "FINISHED", "resolved")
+    repo.finalize_task("T1", "FINISHED", "resolved")
     finished = repo.get_task("T1")
     assert finished["status"] == "FINISHED" and finished["verdict"] == "resolved"
     assert finished["finished_at"]
@@ -52,9 +52,9 @@ def test_recover_stale_running(tmp_path: Path) -> None:
     _make_task(repo, "T1", "a")
     _make_task(repo, "T2", "b")
     _make_task(repo, "T3", "c")
-    repo.update_task_status("T1", "RUNNING")
-    repo.update_task_status("T2", "RUNNING")
-    repo.update_task_status("T3", "FINISHED", "resolved")
+    repo.set_status_unless_terminal("T1", "RUNNING")
+    repo.set_status_unless_terminal("T2", "RUNNING")
+    repo.finalize_task("T3", "FINISHED", "resolved")
 
     count = repo.recover_stale_running()
     assert count == 2
@@ -108,7 +108,7 @@ def test_evaluation_upsert(tmp_path: Path) -> None:
     assert len(rows) == 1 and rows[0]["rounds"] == 3 and rows[0]["tokens"] == 100
 
 
-def test_patch_and_test_run_insert(tmp_path: Path) -> None:
+def test_patch_insert(tmp_path: Path) -> None:
     repo = Repository(tmp_path / "t.sqlite3")
     repo.insert_patch(
         task_id="T1",
@@ -118,18 +118,8 @@ def test_patch_and_test_run_insert(tmp_path: Path) -> None:
         gate_result="passed",
         applied=True,
     )
-    repo.insert_test_run(
-        task_id="T1",
-        round_no=1,
-        kind="baseline",
-        passed=2,
-        failed=1,
-        errors=0,
-        exit_code=1,
-        report_path="reports/x.xml",
-        duration_ms=900,
-    )
     assert True  # 写入不抛异常即通过;读取由 API e2e 覆盖
+    # insert_test_run 用例已随 P1-5 整改删除(test_runs 表无生产调用方)
 
 
 def test_finalize_and_cancel_are_atomically_guarded(tmp_path: Path) -> None:
@@ -141,8 +131,8 @@ def test_finalize_and_cancel_are_atomically_guarded(tmp_path: Path) -> None:
     repo = Repository(tmp_path / "t.sqlite3")
     _make_task(repo, "T1", "idem-1")
     _make_task(repo, "T2", "idem-2")
-    repo.update_task_status("T1", "RUNNING")
-    repo.update_task_status("T2", "RUNNING")
+    repo.set_status_unless_terminal("T1", "RUNNING")
+    repo.set_status_unless_terminal("T2", "RUNNING")
 
     # 方向 a:取消后自然完成不得覆盖 CANCELLED
     assert repo.cancel_task_row("T1") is True
@@ -158,5 +148,5 @@ def test_finalize_and_cancel_are_atomically_guarded(tmp_path: Path) -> None:
 
     # 非终态流转(RUNNING)仍走无条件写入
     _make_task(repo, "T3", "idem-3")
-    repo.update_task_status("T3", "RUNNING")
+    repo.set_status_unless_terminal("T3", "RUNNING")
     assert repo.get_task("T3")["status"] == "RUNNING"

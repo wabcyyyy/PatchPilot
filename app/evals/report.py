@@ -12,7 +12,13 @@ from pathlib import Path
 
 from app.evals.metrics import RunRow, annotate, collect_runs, compute_metrics, latest_per_bug
 
-_ATTACK_COUNT = 5  # bugs/attacks/ 中构造的越权样例数(见 tests/test_attacks.py)
+
+def _attack_count(bugs_root: Path) -> int:
+    """bugs/attacks/ 下的攻击样例数(自动发现,增删样例不再漂移)。"""
+    attacks = Path(bugs_root) / "attacks"
+    if not attacks.is_dir():
+        return 0
+    return sum(1 for p in attacks.iterdir() if p.is_dir() and p.name.startswith("ATTACK-"))
 
 
 def _model_flag(provider: str) -> str:
@@ -110,7 +116,7 @@ def render(runs_root: Path, bugs_root: Path, report_out: str = "docs/eval-report
         f"| 定位成功率 | {metrics['localization_rate']} |",
         f"| 补丁应用率 | {metrics['patch_application_rate']} |",
         f"| 回归引入率 | {metrics['regression_introduction_rate']} |",
-        f"| 越权拦截 | {metrics['security_blocked_count']} 次(另有攻击样例 {_ATTACK_COUNT}/{_ATTACK_COUNT} 被门禁拦截) |",
+        f"| 越权拦截 | {metrics['security_blocked_count']} 次(攻击样例 {_attack_count(bugs_root)} 个,拦截验证见 tests/test_attacks.py) |",
         f"| 平均修复轮数 | {metrics['avg_rounds']} |",
         f"| 平均耗时 | {metrics['avg_duration_ms']} ms |",
         f"| 平均 Token | {metrics['avg_tokens']} |",
