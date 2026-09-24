@@ -13,6 +13,14 @@
 > 不传 `model_name`;provenance 缺失说明本批次早于 T10.1 落地后未重生成。
 > 缺陷与整改见 `docs/audit-2026-09-19.md` P1-2。
 
+> **历史批次溯源缺失(2026-09-25 补注,与 E2 整改呼应)**:本批次的 28 份 report.json
+> `model_name` 全空、provenance 全缺,属历史遗留,**不回填、不重生成**(零花费红线)。
+> 自 2026-09-25 起(E2 落地):`build_provenance` 自带 `git_commit`/`config_snapshot`/
+> `started_at`,批次收尾写 `batch_manifest.json`;`PATCHPILOT_LLM_ENABLED=true` 时
+> 缺 `model_name` 的任务/批次在发起前即被 `require_model_name` 拒绝——
+> "缺溯源的批次根本生不出来"。下一次真实批(36 题,须人工触发)将自带完整溯源,
+> 届时以同命令重跑刷新本文件,本快照原样存档。
+
 > **数据来源声明**:本报告由 `python -m app.evals.report` 从运行产物自动生成;
 > 每个指标都有判定脚本(metrics.py),无人工标注。本批次为**真实模型在线调用成绩**(openai),结论由平台测试执行与门禁脚本自动判定;各任务 report.json 内含 token 明细与成本(约值,价目表未收录的模型显示 n/a)。
 

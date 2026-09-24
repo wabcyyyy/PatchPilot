@@ -1,16 +1,10 @@
 # PatchPilot 评测报告
 
-- 生成时间:2026-09-18 01:14 UTC
-- 运行目录:`runs\m9`(共 50 次运行,每题取最新 28 题)
+- 生成时间:2026-09-24 19:12 UTC
+- 运行目录:`runs\fake36-2026-09-25`(共 35 次运行,每题取最新 35 题)
 - 模型提供方:**fake-replay**
-- 引擎:**混合批次**——实测 50 份 report.json 为 `plain` 30 份 + `graph` 20 份
-
-> **读数口径(2026-09-19 补注)**:本文件是**生成产物快照**,不是规范。存在两个必须先读掉的口径问题:
-> ① 批次混了 plain 与 graph 两种引擎,而汇总指标把它们揉成同一个数字,不代表任一引擎的成绩;
-> ② 指标按 `metrics.latest_per_bug` "每题取最新一次运行"聚合——50 份报告中有 **2 份
-> `PATCH_REJECTED`** 被该口径掩盖,故下表 1.0 的含义是"重跑到成功为止",不是首试成功率。
-> 完整缺陷清单见 `docs/audit-2026-09-19.md` P1-3。重生成:
-> `python -m app.evals.report --runs runs/m9 --out docs/eval-report.md`。
+- 引擎:plain
+- 批次溯源:执行后端 local · 代码 367ae367aeb4(取自批次最新运行)
 
 > **数据来源声明**:本报告由 `python -m app.evals.report` 从运行产物自动生成;
 > 每个指标都有判定脚本(metrics.py),无人工标注。当前批次为 fake-replay 回放模型,用于验证平台闭环的确定性,**不代表真实模型成绩**;接入真实模型后同命令重跑即可替换。
@@ -19,14 +13,19 @@
 
 | 指标 | 值 |
 |---|---|
-| 最终修复率 | 1.0 |
+| 最终修复率(每题取最新) | 1.0 |
+| 全量运行修复率(含同题重试,35 次) | 1.0 |
 | 定位成功率 | 1.0 |
 | 补丁应用率 | 1.0 |
 | 回归引入率 | 0.0 |
-| 越权拦截 | 0 次(另有攻击样例 4/4 被门禁拦截) |
+| 越权拦截 | 0 次(攻击样例 9 个,拦截验证见 tests/test_attacks.py) |
 | 平均修复轮数 | 1.0 |
-| 平均耗时 | 6664 ms |
-| 平均 Token | 163 |
+| 平均耗时 | 7021 ms |
+| 平均 Token | 177 |
+| 耗时 min/p50/p95/max | 6679 / 6876 / 7509 / 9752 ms |
+| Token min/max | 133 / 314 |
+| 轮数分布(1 / 2 / 3+) | 35 / 0 / 0 |
+| 判型计数 | resolved 35 · PATCH_REJECTED 0 · NEEDS_REVIEW 0 · 其他 0 |
 
 ## 分题结果
 
@@ -60,6 +59,13 @@
 | BUG-026 | ✅ resolved | FINISHED | 1 | `src/dispatch.py` | 命中 | 通过 |
 | BUG-027 | ✅ resolved | FINISHED | 1 | `src/dedup.py` | 命中 | 通过 |
 | BUG-028 | ✅ resolved | FINISHED | 1 | `src/accounting.py` | 命中 | 通过 |
+| BUG-029 | ✅ resolved | FINISHED | 1 | `src/aggregator.py` | 命中 | 通过 |
+| BUG-030 | ✅ resolved | FINISHED | 1 | `src/checkout.py`, `src/fees.py` | 命中 | 通过 |
+| BUG-031 | ✅ resolved | FINISHED | 1 | `src/dec.py` | 命中 | 通过 |
+| BUG-032 | ✅ resolved | FINISHED | 1 | `src/units.py` | 命中 | 通过 |
+| BUG-033 | ✅ resolved | FINISHED | 1 | `src/notify.py`, `src/rules.py` | 命中 | 通过 |
+| BUG-034 | ✅ resolved | FINISHED | 1 | `src/escaping.py`, `src/exporter.py` | 命中 | 通过 |
+| BUG-035 | ✅ resolved | FINISHED | 1 | `src/escapes.py`, `src/template.py` | 命中 | 通过 |
 
 ## 失败任务复盘索引
 
@@ -67,9 +73,10 @@
 
 ## 复现方式
 
+以下命令由本批次运行产物的 provenance 字段归并生成(模型/引擎/目录均为批次实际取值):
+
 ```bash
-# 单题回放
-python -m app.evals.run_single --bug BUG-001 --model fake --engine graph --out runs
-# 批量评测 + 本报告
-python -m app.evals.report --runs runs/m9 --out docs/eval-report.md
+# 单题示例(--bug 换成同批任意题目即可)
+python -m app.evals.run_single --bug BUG-001 --model fake --engine plain --out runs/fake36-2026-09-25
+python -m app.evals.report --runs runs/fake36-2026-09-25 --out docs/eval-report.md
 ```

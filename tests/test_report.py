@@ -176,3 +176,63 @@ def test_main_accepts_multiple_runs(tmp_path: Path) -> None:
     text = out.read_text(encoding="utf-8")
     assert "多批次对比" in text
     assert "BUG-001" in text and "BUG-002" in text
+
+
+# ---------- E7:报告分布字段与判型计数 ----------
+
+
+def test_distribution_rows_counts_and_percentiles(tmp_path: Path) -> None:
+    """3 份不同耗时/token/轮数/判型的 report → 分布值与计数逐一断言。"""
+    from app.evals.report import distribution_rows
+
+    runs = tmp_path / "runs" / "dist"
+    _write_report(
+        runs / "BUG-001-a",
+        duration_ms=1000,
+        tokens_used=100,
+        rounds=1,
+    )
+    _write_report(
+        runs / "BUG-002-b",
+        bug_id="BUG-002",
+        duration_ms=2000,
+        tokens_used=200,
+        rounds=2,
+        verdict="failed",
+        status="PATCH_REJECTED",
+    )
+    _write_report(
+        runs / "BUG-003-c",
+        bug_id="BUG-003",
+        duration_ms=9000,
+        tokens_used=300,
+        rounds=3,
+        verdict="needs_review",
+        status="NEEDS_REVIEW",
+    )
+
+    rows = distribution_rows(_per_bug(runs))
+    table = dict(rows)
+    assert table["耗时 min/p50/p95/max"] == "1000 / 2000 / 9000 / 9000 ms"
+    assert table["Token min/max"] == "100 / 300"
+    assert table["轮数分布(1 / 2 / 3+)"] == "1 / 1 / 1"
+    assert table["判型计数"] == "resolved 1 · PATCH_REJECTED 1 · NEEDS_REVIEW 1 · 其他 0"
+
+
+def test_distribution_rows_empty_batch_and_missing_fields(tmp_path: Path) -> None:
+    """空批次记 n/a 不抛异常;渲染端到端含分布表(缺字段行容忍)。"""
+    from app.evals.report import distribution_rows, render
+
+    empty = dict(distribution_rows([]))
+    assert set(empty) == {
+        "耗时 min/p50/p95/max",
+        "Token min/max",
+        "轮数分布(1 / 2 / 3+)",
+        "判型计数",
+    }
+    assert all(v == "n/a" for v in empty.values())
+
+    runs = tmp_path / "runs" / "sparse"
+    _write_report(runs / "BUG-001-x")  # 默认字段即可渲染
+    text = render(runs, BUG_ROOT)
+    assert "耗时 min/p50/p95/max" in text and "判型计数" in text

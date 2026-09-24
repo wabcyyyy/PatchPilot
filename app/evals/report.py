@@ -78,6 +78,59 @@ def _blind_flag(runs_root: Path) -> bool:
     return bool(manifest.get("blind"))
 
 
+def _pctl(values: list[int], q: float) -> int | None:
+    """最近秩分位数(报告层口径,非统计库);空输入返回 None → 展示 n/a。"""
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, max(0, round(q * (len(ordered) - 1))))
+    return ordered[index]
+
+
+def _fmt(value: int | None) -> str:
+    return "n/a" if value is None else str(value)
+
+
+def distribution_rows(per_bug: list[RunRow]) -> list[tuple[str, str]]:
+    """批次分布与判型计数(E7):让"太软的评测集"在报告上自我暴露。
+
+    数据全部来自 report.json 现有字段(duration/tokens/rounds/verdict/status),
+    不重跑任务,metrics.py 判定逻辑零改动;空批次/缺字段记 n/a 不抛异常。
+    """
+    if not per_bug:
+        return [
+            ("耗时 min/p50/p95/max", "n/a"),
+            ("Token min/max", "n/a"),
+            ("轮数分布(1 / 2 / 3+)", "n/a"),
+            ("判型计数", "n/a"),
+        ]
+    durations = [r.duration_ms for r in per_bug]
+    tokens = [r.tokens_used for r in per_bug]
+    rounds = {"1": 0, "2": 0, "3+": 0}
+    for row in per_bug:
+        key = "1" if row.rounds <= 1 else "2" if row.rounds == 2 else "3+"
+        rounds[key] += 1
+    counts = {
+        "resolved": sum(1 for r in per_bug if r.verdict == "resolved"),
+        "PATCH_REJECTED": sum(1 for r in per_bug if r.status == "PATCH_REJECTED"),
+        "NEEDS_REVIEW": sum(
+            1 for r in per_bug if r.status == "NEEDS_REVIEW" or r.verdict == "needs_review"
+        ),
+    }
+    counts["其他"] = len(per_bug) - sum(counts.values())
+    counter_text = " · ".join(f"{key} {value}" for key, value in counts.items())
+    return [
+        (
+            "耗时 min/p50/p95/max",
+            f"{_fmt(min(durations))} / {_fmt(_pctl(durations, 0.50))} / "
+            f"{_fmt(_pctl(durations, 0.95))} / {_fmt(max(durations))} ms",
+        ),
+        ("Token min/max", f"{_fmt(min(tokens))} / {_fmt(max(tokens))}"),
+        ("轮数分布(1 / 2 / 3+)", f"{rounds['1']} / {rounds['2']} / {rounds['3+']}"),
+        ("判型计数", counter_text),
+    ]
+
+
 def render(runs_root: Path, bugs_root: Path, report_out: str = "docs/eval-report.md") -> str:
     rows = [annotate(r, bugs_root) for r in collect_runs(runs_root)]
     per_bug = latest_per_bug(rows)
@@ -137,6 +190,8 @@ def render(runs_root: Path, bugs_root: Path, report_out: str = "docs/eval-report
         f"| 平均修复轮数 | {metrics['avg_rounds']} |",
         f"| 平均耗时 | {metrics['avg_duration_ms']} ms |",
         f"| 平均 Token | {metrics['avg_tokens']} |",
+        # E7:分布与判型计数——均值与通过率之外,让重试/失败/耗时离群在报告上可见
+        *(f"| {label} | {value} |" for label, value in distribution_rows(per_bug)),
         "",
         "## 分题结果",
         "",
