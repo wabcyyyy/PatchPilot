@@ -64,14 +64,21 @@ class TaskService:
         bugs_root: Path | str = BUGS_ROOT,
         redis_url: str = "",
         lock: BaseLock | None = None,
-        max_workers: int = 2,
+        max_workers: int | None = None,
     ) -> None:
         self.repo = repo
         self.runs_root = (runs_root or get_settings().runs_root).resolve()
         self.bugs_root = Path(bugs_root)
         self.lock = lock or build_lock(redis_url or get_settings().redis_url)
         self._cancels = CancelRegistry()
-        self._pool = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="patchpilot")
+        # E4:并发上限配置化——显式传参优先(既有调用方行为不变),
+        # 未传时读 Settings.task_max_workers(默认 2,行为向后兼容)
+        resolved_workers = (
+            max_workers if max_workers is not None else get_settings().task_max_workers
+        )
+        self._pool = ThreadPoolExecutor(
+            max_workers=resolved_workers, thread_name_prefix="patchpilot"
+        )
         # N-21 整改:task_id → (Future, lock_key),供停机时收敛未开始的任务
         self._futures: dict[str, tuple[Any, str]] = {}
 

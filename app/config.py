@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     max_read_lines: int = 400
     max_search_results: int = 50
     max_output_chars: int = 20_000
+    # E4:任务执行线程池并发上限(容量模型见 design.md §8:单进程、local 后端
+    # 无 CPU/内存配额、SQLite 单连接写串行——默认 2 是实测基线而非高并发声明)
+    task_max_workers: int = 2
     # E3:verify 双跑一致性复核——第一遍双测试集全绿(即将判 resolved)时同命令
     # 重跑一遍比对;伪造成绿需同时伪造两次独立运行且一致,攻击成本翻倍。
     # 关闭只降开销不降拦截,排障时可置 false。

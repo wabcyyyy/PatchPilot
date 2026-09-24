@@ -128,3 +128,124 @@ def test_shutdown_converges_queued_and_cancels_running(tmp_path: Path, monkeypat
     assert service.lock.acquire(f"task:{idem2}", ttl_seconds=5)
     service.lock.release(f"task:{idem2}")
     _ = release  # 在途任务由解释器退出/事件驱动收敛,此处只验证排队语义
+
+
+# ---------- E4:并发冒烟与容量基线 ----------
+
+_TINY_SRC = '''"""日期解析工具。"""
+
+from datetime import datetime
+
+DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d")
+
+
+def parse_date(value):
+    """解析日期字符串;空输入返回 None,非法格式抛 ValueError。"""
+    if value is None:
+        return None
+    for fmt in DATE_FORMATS:
+        try:
+            return datetime.strptime(value, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(f"unrecognized date format: {value!r}")
+'''
+
+_TINY_TESTS = """import pytest
+from src.dateparse import parse_date
+
+
+def test_iso_format():
+    assert parse_date("2026-01-31").isoformat() == "2026-01-31"
+
+
+def test_none_returns_none():
+    assert parse_date(None) is None
+
+
+def test_empty_string_returns_none():
+    assert parse_date("") is None
+"""
+
+_TINY_FIX_DIFF = (
+    "--- a/src/dateparse.py\n"
+    "+++ b/src/dateparse.py\n"
+    "@@ -9,6 +9,8 @@\n"
+    '     """解析日期字符串;空输入返回 None,非法格式抛 ValueError。"""\n'
+    "     if value is None:\n"
+    "         return None\n"
+    "+    if not value.strip():\n"
+    "+        return None\n"
+    "     for fmt in DATE_FORMATS:\n"
+    "         try:\n"
+    "             return datetime.strptime(value, fmt).date()\n"
+)
+
+
+def _materialize_tiny_repo(root: Path) -> None:
+    """tiny fixture 仓库:BUG-001 语义的最小副本(空白串缺陷)。"""
+    (root / "src").mkdir(parents=True)
+    (root / "tests").mkdir()
+    (root / "conftest.py").write_text("", encoding="utf-8", newline="\n")
+    (root / "src" / "dateparse.py").write_text(_TINY_SRC, encoding="utf-8", newline="\n")
+    (root / "tests" / "test_dateparse.py").write_text(_TINY_TESTS, encoding="utf-8", newline="\n")
+
+
+def test_ten_custom_tasks_concurrent_smoke(tmp_path: Path) -> None:
+    """E4 并发冒烟基线:10 个 CUSTOM 任务(默认并发 2,池内 8 个真实排队)全部
+    到达终态且 FINISHED/resolved,不丢任务、无 RUNNING 残留;180s 总上限防死锁。
+    实测耗时记录于 runs/night-log-2026-09-25.md。"""
+    import time
+
+    from app.storage.repository import TERMINAL_STATUSES
+
+    repo_root = tmp_path / "tiny-repo"
+    _materialize_tiny_repo(repo_root)
+    service = _service(tmp_path)  # 不传 max_workers:读 Settings.task_max_workers(默认 2)
+    replay = [
+        {"tool": "search_code", "args": {"keyword": "parse_date"}},
+        {"tool": "read_file", "args": {"path": "src/dateparse.py"}},
+        {"tool": "apply_patch", "args": {"diff_text": _TINY_FIX_DIFF}},
+        {"tool": "run_tests", "args": {"test_set": "failed"}},
+        {"tool": "run_tests", "args": {"test_set": "regression"}},
+        {"tool": "finish", "args": {"success": True, "summary": "fixed empty input"}},
+    ]
+    failed = ["tests/test_dateparse.py::test_empty_string_returns_none"]
+    regression = [
+        "tests/test_dateparse.py::test_iso_format",
+        "tests/test_dateparse.py::test_none_returns_none",
+    ]
+
+    started = time.monotonic()
+    task_ids = []
+    for i in range(10):
+        task, created = service.create_task(
+            repo_path=str(repo_root),
+            issue_text=f"concurrency smoke #{i}",  # issue 参与散列:10 个不同幂等键
+            failed_tests=failed,
+            regression_tests=regression,
+            allowed_paths=["src/dateparse.py"],
+            replay_script=replay,
+            engine="plain",
+        )
+        assert created, f"task #{i} hit idempotency conflict"
+        task_ids.append(task["task_id"])
+
+    pending = set(task_ids)
+    while pending and time.monotonic() - started < 180:
+        for tid in sorted(pending):
+            row = service.repo.get_task(tid)
+            assert row is not None, f"task {tid} lost from repository"
+            if row["status"] in TERMINAL_STATUSES:
+                pending.discard(tid)
+        time.sleep(0.2)
+    elapsed = time.monotonic() - started
+    print(f"[E4 smoke] 10 tasks elapsed {elapsed:.1f}s (budget 180s)")
+    service.shutdown()
+
+    assert elapsed < 180, f"total time budget blown: {elapsed:.1f}s"
+    assert not pending, f"10 tasks did not reach terminal state within 180s: {sorted(pending)}"
+    statuses = [service.repo.get_task(tid)["status"] for tid in task_ids]
+    assert statuses == ["FINISHED"] * 10, statuses  # 无 RUNNING 残留、无丢任务
+    verdicts = {service.repo.get_task(tid)["verdict"] for tid in task_ids}
+    assert verdicts == {"resolved"}

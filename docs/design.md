@@ -54,6 +54,11 @@ regression 必须绿)由生成器与测试双重把关——回归集在基线�
 
 - verify 双跑一致性复核(E3,`verify_double_run` 默认开):成功路径 pytest 拉起
   次数 4→6(基线 2 + verify 第一遍 2 + 复核 2),失败路径不重跑、开销不变;
+- **容量模型(E4,如实陈述)**:单进程架构;任务并发上限 = `task_max_workers`
+  (默认 2,配置化);local 后端无 CPU/内存配额,失控测试仅受超时杀树约束;
+  SQLite 单连接,任务行写入串行。**不据此宣称"支持高并发"**——实测基线:
+  10 个 CUSTOM 任务(默认并发 2、pool 内 8 个排队)全部 FINISHED 约 36s
+  (tests/test_service_robustness.py 并发冒烟);流量 ×10 时先挂执行资源(审计 3-Q12);
 - 多语言适配只有 pytest 一个实现,接口预留;
 - token 统计在回放模式下是字符估算;
 - 越权拦截率在评测批次里体现为 PATCH_REJECTED 计数,
