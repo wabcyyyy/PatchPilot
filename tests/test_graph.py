@@ -8,6 +8,8 @@ import tempfile
 import threading
 from pathlib import Path
 
+import pytest
+
 from app.errors import BudgetError
 from app.evals.bugset import load_bug
 from app.graph.builder import build_graph
@@ -383,3 +385,118 @@ def test_graph_last_round_gate_rejection_preserves_evidence(tmp_path: Path) -> N
     assert any("[scope]" in v for v in result.gate_violations), result.gate_violations
     # 被拒补丁全文保留在 diff.patch(而非 reset 后的空 diff)
     assert (Path(result.run_dir) / "diff.patch").read_text(encoding="utf-8").strip()
+
+
+# ---------- E3:verify 双跑一致性复核 ----------
+
+
+def _count_node_pytest(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """给 nodes.run_pytest 包一层计数器(透传真实执行),返回记录 junit 文件名的列表。"""
+    import app.graph.nodes as nodes
+
+    calls: list[str] = []
+    real_run = nodes.run_pytest
+
+    def counting_run(python_exe, workspace, test_ids, junit_path, *args, **kwargs):
+        calls.append(Path(junit_path).name)
+        return real_run(python_exe, workspace, test_ids, junit_path, *args, **kwargs)
+
+    monkeypatch.setattr(nodes, "run_pytest", counting_run)
+    return calls
+
+
+def test_verify_double_run_resolved_runs_pytest_six_times(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E3:resolved 路径(基线 2 + verify 第一遍 2 + 复核 2)pytest 恰 6 次拉起,
+    且任务 FINISHED、两次 junit 证据文件齐全。"""
+    calls = _count_node_pytest(monkeypatch)
+    bug = load_bug("BUG-001", BUG_ROOT)
+    model = FakeLLM(_localize_script() + _propose_script(_fix_diff()))
+    result = run_task_graph(bug, model, runs_root=tmp_path / "runs")
+
+    assert result.status == "FINISHED" and result.verdict == "resolved"
+    assert sorted(calls) == sorted(
+        [
+            "baseline-failed.xml",
+            "baseline-regression.xml",
+            "verify-failed.xml",
+            "verify-regression.xml",
+            "verify-failed-rerun.xml",
+            "verify-regression-rerun.xml",
+        ]
+    )
+    run_dir = Path(result.run_dir)
+    assert (run_dir / "reports" / "verify-failed-rerun.xml").exists()
+    assert (run_dir / "reports" / "verify-regression-rerun.xml").exists()
+
+
+def test_verify_double_run_mismatch_converges_needs_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """第二遍与第一遍不一致(junit 伪造需同时伪造两次运行):NEEDS_REVIEW,
+    error 带 verify_mismatch,轨迹记录两次运行摘要。"""
+    import json
+
+    import app.graph.nodes as nodes
+    from app.adapters.pytest_adapter import PytestReport
+
+    pass_report = PytestReport(exit_code=0, passed=2, collected=2)
+    fail_report = PytestReport(exit_code=1, failed=1, collected=1)
+
+    def scripted_run(python_exe, workspace, test_ids, junit_path, *args, **kwargs):
+        name = Path(junit_path).name
+        if name.startswith("baseline-failed"):
+            return fail_report, ""  # 基线必须真有失败,否则 INVALID_TASK
+        if name.startswith("baseline-regression"):
+            return pass_report, ""
+        if name.startswith("verify-failed-rerun"):
+            return fail_report, ""  # 复核遍出现失败 → 与第一遍(全绿)不一致
+        return pass_report, ""
+
+    monkeypatch.setattr(nodes, "run_pytest", scripted_run)
+    bug = load_bug("BUG-001", BUG_ROOT)
+    model = FakeLLM(_localize_script() + _propose_script(_fix_diff()))
+    result = run_task_graph(bug, model, runs_root=tmp_path / "runs")
+
+    assert result.status == "NEEDS_REVIEW" and result.verdict == "needs_review"
+    assert "verify_mismatch" in (result.error or "")
+    assert result.verify_failed_ok is False and result.verify_regression_ok is False
+    events = [
+        json.loads(line)
+        for line in (Path(result.run_dir) / "trajectory.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    double_events = [e for e in events if e.get("tool") == "verify_double_run"]
+    assert double_events and double_events[0]["error"].startswith("verify_mismatch")
+    assert double_events[0]["output_summary"]["first"]["failed_ok"] is True
+    assert double_events[0]["output_summary"]["rerun"]["failed_ok"] is False
+
+
+def test_verify_double_run_disabled_runs_pytest_four_times(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """verify_double_run=False:回归为 4 次拉起,行为与引入 double-run 之前一致。"""
+    from app.config import get_settings
+
+    calls = _count_node_pytest(monkeypatch)
+    real_settings = get_settings()
+    monkeypatch.setattr(
+        "app.graph.nodes.get_settings",
+        lambda: real_settings.model_copy(update={"verify_double_run": False}),
+    )
+    bug = load_bug("BUG-001", BUG_ROOT)
+    model = FakeLLM(_localize_script() + _propose_script(_fix_diff()))
+    result = run_task_graph(bug, model, runs_root=tmp_path / "runs")
+
+    assert result.status == "FINISHED" and result.verdict == "resolved"
+    assert sorted(calls) == sorted(
+        [
+            "baseline-failed.xml",
+            "baseline-regression.xml",
+            "verify-failed.xml",
+            "verify-regression.xml",
+        ]
+    )
+    assert not (Path(result.run_dir) / "reports" / "verify-failed-rerun.xml").exists()

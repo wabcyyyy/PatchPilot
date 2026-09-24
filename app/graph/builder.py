@@ -40,7 +40,10 @@ def build_graph(nodes: TaskNodes, checkpointer: Any | None = None) -> Any:
         {"verify": "verify", "retry": "propose", "exhausted": "rollback"},
     )
     graph.add_conditional_edges(
-        "verify", nodes.route_verify, {"finish": "finish", "rollback": "rollback"}
+        "verify",
+        nodes.route_verify,
+        # "end": E3 double-run 不一致 → NEEDS_REVIEW 终点(与 localize 的 end 同构)
+        {"finish": "finish", "rollback": "rollback", "end": END},
     )
     graph.add_edge("finish", END)
     graph.add_conditional_edges(

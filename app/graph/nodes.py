@@ -41,6 +41,30 @@ WRITE_TOOLS = [
 ]
 
 
+def _case_ids(report: Any) -> set[tuple[str, str, str]]:
+    """junit 两次运行比对用的测试 id 集合(file, class, name 三元组,不含判定)。"""
+    return {(file_attr, classname, name) for file_attr, classname, name, _ in report.case_results}
+
+
+def _double_run_mismatch(
+    first_failed: Any, first_reg: Any, rerun_failed: Any, rerun_reg: Any
+) -> str:
+    """比对 verify 双跑的两次 junit;一致返回空串,不一致返回不匹配原因。
+
+    一致 = 两个测试集各自满足:两次收集到的测试 id 集合相等,且第一遍
+    (全绿)通过的 id 在第二遍无任何非 passed 记录(rerun 亦须 all_passed)。
+    """
+    for label, first, rerun in (
+        ("failed", first_failed, rerun_failed),
+        ("regression", first_reg, rerun_reg),
+    ):
+        if _case_ids(first) != _case_ids(rerun):
+            return f"{label}: junit test id set differs between runs"
+        if not rerun.all_passed:
+            return f"{label}: rerun not all passed (first run was)"
+    return ""
+
+
 @dataclass
 class TaskNodes:
     """一个任务一次图执行的节点集合(闭包状态,不进 LangGraph state)。"""
@@ -366,6 +390,56 @@ class TaskNodes:
                     for c in failed_report.failed_cases
                 ]
             )
+        # E3 double-run 分支:仅当第一遍双测试集全绿(即即将判 resolved)时,
+        # 用相同命令再跑一遍并比对两次 junit——判定面与被测代码同机(threat-model
+        # §4 不防 junit 伪造),伪造成绿必须同时伪造两次独立运行且一致。
+        # 非 resolved 路径(本就失败)不多跑,开销不变;resolved 判定规则本身不改。
+        mismatch = ""
+        if (
+            failed_report.all_passed
+            and regression_report.all_passed
+            and get_settings().verify_double_run
+        ):
+            rerun_failed, _ = run_pytest(
+                self.ctx.python_exe,
+                self.workspace,
+                self.bug.failed_tests,
+                self.report_dir / "verify-failed-rerun.xml",
+            )
+            rerun_regression, _ = run_pytest(
+                self.ctx.python_exe,
+                self.workspace,
+                self.bug.regression_tests,
+                self.report_dir / "verify-regression-rerun.xml",
+            )
+            mismatch = _double_run_mismatch(
+                failed_report, regression_report, rerun_failed, rerun_regression
+            )
+            self.tracker.record(
+                tool="verify_double_run",
+                state="VERIFY",
+                input_payload={"round": state["round_no"]},
+                output_summary={
+                    "first": {
+                        "failed_ok": failed_report.all_passed,
+                        "regression_ok": regression_report.all_passed,
+                    },
+                    "rerun": {
+                        "failed_ok": rerun_failed.all_passed,
+                        "regression_ok": rerun_regression.all_passed,
+                    },
+                    "mismatch": mismatch or None,
+                },
+                error=f"verify_mismatch: {mismatch}" if mismatch else None,
+            )
+            if mismatch:
+                return {
+                    "status": "NEEDS_REVIEW",
+                    "outcome": "needs_review",
+                    "error": f"verify: verify_mismatch ({mismatch})",
+                    "verify_failed_ok": False,
+                    "verify_regression_ok": False,
+                }
         self.tracker.record(
             tool="verify",
             state="VERIFY",
@@ -378,6 +452,8 @@ class TaskNodes:
         return update
 
     def route_verify(self, state: TaskState) -> str:
+        if state["status"] == "NEEDS_REVIEW":
+            return "end"
         ok = state["verify_failed_ok"] and state["verify_regression_ok"]
         return "finish" if ok else "rollback"
 

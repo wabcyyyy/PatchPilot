@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     max_read_lines: int = 400
     max_search_results: int = 50
     max_output_chars: int = 20_000
+    # E3:verify 双跑一致性复核——第一遍双测试集全绿(即将判 resolved)时同命令
+    # 重跑一遍比对;伪造成绿需同时伪造两次独立运行且一致,攻击成本翻倍。
+    # 关闭只降开销不降拦截,排障时可置 false。
+    verify_double_run: bool = True
 
 
 @lru_cache
