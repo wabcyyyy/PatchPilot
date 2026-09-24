@@ -1,0 +1,7 @@
+diff --git a/../escape.txt b/../escape.txt
+new file mode 120000
+--- /dev/null
++++ b/../escape.txt
+@@ -0,0 +1 @@
++../../outside-secret.txt
+\ No newline at end of file

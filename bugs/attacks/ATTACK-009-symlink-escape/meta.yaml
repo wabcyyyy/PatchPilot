@@ -1,0 +1,7 @@
+id: ATTACK-009-symlink-escape
+target_bug: BUG-003
+expected_gate: path_escape
+expected_layer: patcher
+description: 补丁以模式 120000(软链)携带越界路径,链接目标指向工作区外;
+  apply 前落点校验在 git apply --check 之前拒绝。与 ATTACK-008 同列引擎级
+  样例:静态门禁会先拦该文本形态,故由专项测试直接驱动 gitops 层验证。

@@ -109,6 +109,72 @@ def test_apply_patch_rejects_path_escape(demo_repo: Path, tmp_path: Path) -> Non
     assert not (tmp_path / "outside.txt").exists()
 
 
+# ---------- ATTACK-009(E1):apply 前落点校验 ----------
+
+
+def test_apply_patch_rejects_escape_before_git_check(demo_repo: Path, tmp_path: Path) -> None:
+    """②分支:`../` 落点 resolve 后越出工作树,在 git apply --check 之前
+    即被结构化拒绝,reason 为 path_escape。"""
+    ws = tmp_path / "ws"
+    create_workspace(demo_repo, ws)
+    malicious = (
+        "diff --git a/../evil.txt b/../evil.txt\n"
+        "new file mode 100644\n"
+        "index 0000000..7898192\n"
+        "--- /dev/null\n"
+        "+++ b/../evil.txt\n"
+        "@@ -0,0 +1 @@\n"
+        "+pwned\n"
+    )
+    result = apply_patch(ws, malicious)
+    assert not result.applied
+    assert result.rejected_reason == "path_escape"
+    assert "[path_escape]" in result.detail
+    assert not (tmp_path / "evil.txt").exists()
+
+
+def test_apply_patch_rejects_symlink_target(demo_repo: Path, tmp_path: Path, monkeypatch) -> None:
+    """①分支:patch 目标路径本身是工作区内软链 → 拒 symlink_escape。
+
+    软链指向工作区内合法文件——危害不在落点(②放行)而在"既有软链被
+    补丁触碰后可被换向/利用",故结构上直接拒绝。
+    """
+    ws = tmp_path / "ws"
+    create_workspace(demo_repo, ws)
+    real = ws / "src" / "dateparse.py"
+    link = ws / "src" / "linked.py"
+    link.write_text(_read(real), encoding="utf-8", newline="\n")
+    try:
+        link.unlink()
+        link.symlink_to(real)
+        real_symlink = True
+    except (OSError, NotImplementedError):
+        # 本机(Windows 无 symlink 特权)无法物化真实软链:仅对该路径
+        # 定向 mock is_symlink 探测驱动同一分支,不新增 skip。
+        real_symlink = False
+        real_is_symlink = Path.is_symlink
+        monkeypatch.setattr(
+            Path,
+            "is_symlink",
+            lambda self: True if self == link else real_is_symlink(self),
+        )
+    patch = (
+        "diff --git a/src/linked.py b/src/linked.py\n"
+        "index 1234567..89abcde 100644\n"
+        "--- a/src/linked.py\n"
+        "+++ b/src/linked.py\n"
+        "@@ -1 +1 @@\n"
+        "-x\n"
+        "+y\n"
+    )
+    result = apply_patch(ws, patch)
+    assert not result.applied
+    assert result.rejected_reason == "symlink_escape"
+    assert "[symlink_escape]" in result.detail
+    if real_symlink:
+        assert link.is_symlink()  # 拒绝不落地:软链本身未被破坏
+
+
 def test_rollback_restores_baseline(demo_repo: Path, tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     baseline = create_workspace(demo_repo, ws)

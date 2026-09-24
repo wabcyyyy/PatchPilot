@@ -23,8 +23,21 @@ def _attack_dirs() -> list[Path]:
 
 
 def _diff_attack_dirs() -> list[Path]:
-    """补丁形态的样例(带 attack.diff);引擎级样例(如 budget)由专项测试驱动。"""
-    return [d for d in _attack_dirs() if (d / "attack.diff").exists()]
+    """补丁形态的样例(带 attack.diff);引擎级样例(如 budget)由专项测试驱动。
+
+    ATTACK-009(expected_layer: patcher)攻击的是 apply 前落点校验:其越界路径
+    会先被静态门禁的 paths 规则拦截,经工具层永远到不了 patcher——故与
+    ATTACK-008 同列为引擎级样例,由专项测试直接驱动 gitops 层。
+    """
+    result: list[Path] = []
+    for d in _attack_dirs():
+        if not (d / "attack.diff").exists():
+            continue
+        meta = yaml.safe_load((d / "meta.yaml").read_text(encoding="utf-8"))
+        if meta.get("expected_layer") == "patcher":
+            continue
+        result.append(d)
+    return result
 
 
 def _make_ctx(target_bug: str, workspace: Path, tmp: Path) -> ToolContext:
@@ -72,6 +85,38 @@ def test_attacked_workspace_stays_clean(tmp_path: Path) -> None:
         apply_patch(ctx, (attack_dir / "attack.diff").read_text(encoding="utf-8"))
     assert working_tree_is_clean(ctx.workspace)
     assert working_tree_diff(ctx.workspace).is_empty
+
+
+def test_symlink_escape_attack_blocked_at_patcher(tmp_path: Path) -> None:
+    """ATTACK-009:模式 120000 软链补丁 + 越界路径,在 git apply --check 之前
+    被 apply 前落点校验拒绝(reason=path_escape),链接目标不落地。
+
+    直接驱动 gitops 层(expected_layer: patcher):静态门禁的 paths 规则会先拦
+    该形态的文本,这里验证的是即使绕过门禁直接调 patcher,落点校验同样拒绝。
+    """
+    import yaml as _yaml
+
+    from app.gitops.patcher import apply_patch as git_apply_patch
+
+    attack_dir = ATTACK_ROOT / "ATTACK-009-symlink-escape"
+    meta = _yaml.safe_load((attack_dir / "meta.yaml").read_text(encoding="utf-8"))
+    assert meta["expected_layer"] == "patcher"
+
+    from app.evals.bugset import load_bug
+    from app.gitops.testing import materialize_repo
+
+    bug = load_bug(meta["target_bug"], BUG_ROOT)
+    ws = tmp_path / "ws"
+    materialize_repo(bug.repo_dir, ws, extra_commit=False)
+
+    result = git_apply_patch(ws, (attack_dir / "attack.diff").read_text(encoding="utf-8"))
+    assert not result.applied
+    assert result.rejected_reason == "path_escape"
+    assert "[path_escape]" in result.detail
+    # 恶意补丁不落地:工作树内无 escape.txt,工作树外亦无 outside-secret.txt
+    assert not (ws / "escape.txt").exists()
+    assert not (tmp_path / "outside-secret.txt").exists()
+    assert not (ws / "outside-secret.txt").exists()
 
 
 def test_budget_attack_converges(tmp_path: Path) -> None:
