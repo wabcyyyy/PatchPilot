@@ -1,4 +1,4 @@
-id: BUG-C102
+id: BUG-030
 category: 跨文件协同
 difficulty: hard
 test_cmd: "{python} -m pytest"

@@ -1,4 +1,4 @@
-id: BUG-C101
+id: BUG-029
 category: 跨文件定位
 difficulty: hard
 test_cmd: "{python} -m pytest"

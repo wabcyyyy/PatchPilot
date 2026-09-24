@@ -22,6 +22,15 @@ def test_bug_inventory() -> None:
     assert "BUG-001" in ids
 
 
+def test_bugset_count_after_e5_expansion() -> None:
+    """E5 扩编计数护栏:正式集 35 题(28 + 候选 C101..C107 转正为 BUG-029..035;
+    C108 因难度标定不符留在 candidates/,见 bugs/candidates/review-2026-09-25.md)。
+    后续增删正式题须同步本断言。"""
+    ids = list_bug_ids(BUG_ROOT)
+    assert len(ids) == 35
+    assert "BUG-028" in ids and "BUG-029" in ids and "BUG-035" in ids
+
+
 @pytest.mark.parametrize("bug_id", list_bug_ids(BUG_ROOT))
 def test_bug_schema(bug_id: str) -> None:
     bug = load_bug(bug_id, BUG_ROOT)

@@ -1,4 +1,4 @@
-id: BUG-C103
+id: BUG-031
 category: 对照定位
 difficulty: hard
 test_cmd: "{python} -m pytest"
