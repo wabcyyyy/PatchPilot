@@ -89,6 +89,23 @@ def test_driver_records_provenance(tmp_path: Path) -> None:
     assert isinstance(prov["git_commit"], str)
 
 
+def test_provenance_new_fields_keep_repro_merge_stable(tmp_path: Path) -> None:
+    """E2:provenance 新增 config_snapshot/started_at 后,复现命令归并与溯源
+    说明行为不变(既有字段是唯一输入,新字段只增不改)。"""
+    from app.evals.provenance import build_provenance
+
+    runs = tmp_path / "runs" / "b1"
+    _write_report(runs / "BUG-001-x", provenance=build_provenance("fake-replay", "", "plain"))
+    rows = _per_bug(runs.parent)
+
+    from app.evals.report import repro_commands
+
+    cmds = repro_commands(runs, rows, "docs/eval-report.md")
+    assert any("--model fake" in c and "--bug BUG-001" in c for c in cmds)
+    text = render(runs, BUG_ROOT)
+    assert "批次溯源:" in text  # git_commit 非空,溯源行照常归并
+
+
 def test_graph_engine_records_provenance(tmp_path: Path) -> None:
     bug = load_bug("BUG-001", BUG_ROOT)
     model = FakeLLM(load_replay_script(bug, kind="graph"))

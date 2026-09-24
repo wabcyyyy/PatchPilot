@@ -13,7 +13,7 @@ import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +21,7 @@ from app.adapters.pytest_adapter import run_pytest
 from app.config import get_settings
 from app.errors import BudgetError, TaskCancelled, TaskError
 from app.evals.pricing import estimate_cost
-from app.evals.provenance import build_provenance
+from app.evals.provenance import build_provenance, config_snapshot, git_commit, require_model_name
 from app.gitops.differ import working_tree_diff
 from app.gitops.testing import materialize_repo
 from app.graph.gates import run_gates
@@ -106,6 +106,10 @@ def run_task(
     task_id/run_dir 可由调用方(API 服务)指定,保证产物目录与服务记录一致。
     """
     settings = get_settings()
+    provider = getattr(model, "provider", "unknown")
+    # E2 fail-fast:真实模型(llm_enabled=True 且非 fake 回放)缺 model_name 时,
+    # 在物化任何仓库、发起任何任务之前拒绝——花了钱生不出可信记录是最坏结局
+    require_model_name(model_name, settings.llm_enabled and provider != "fake-replay")
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     task_id = task_id or f"{bug.id}-{stamp}-{uuid.uuid4().hex[:6]}"
     # 绝对路径:junit 等报告若以相对路径传入,会被 pytest 相对 cwd 写进工作区,污染 diff
@@ -116,7 +120,7 @@ def run_task(
     result = TaskResult(
         task_id=task_id,
         bug_id=bug.id,
-        model_provider=getattr(model, "provider", "unknown"),
+        model_provider=provider,
         model_name=model_name,
         engine=engine,
         run_dir=str(run_dir),
@@ -264,3 +268,56 @@ def run_task(
         )
 
     return result
+
+
+def run_batch(
+    bugs: list[Any],
+    model_for: Any,  # Callable[[Any], Model]
+    *,
+    runs_root: Path,
+    max_turns: int = 20,
+    engine: str = "plain",
+    model_name: str = "",
+) -> list[TaskResult]:
+    """批次驱动(E2):逐题执行,收尾写 `runs/<batch>/batch_manifest.json`。
+
+    model_for(bug) 返回该题的模型实例——fake 回放按题装载脚本,真实模型
+    通常恒返回同一 client。fail-fast 守卫在批次发起前执行;manifest 的
+    started_at/ended_at/config_snapshot 与任务级 provenance 同口径,批次级
+    溯源从此不依赖人工记台账。
+    """
+    settings = get_settings()
+    require_model_name(model_name, settings.llm_enabled)
+    batch_dir = Path(runs_root).resolve()
+    batch_dir.mkdir(parents=True, exist_ok=True)
+    started_at = datetime.now(UTC).isoformat(timespec="milliseconds")
+
+    results = [
+        run_task(
+            bug,
+            model_for(bug),
+            runs_root=batch_dir,
+            max_turns=max_turns,
+            engine=engine,
+            model_name=model_name,
+        )
+        for bug in bugs
+    ]
+
+    verdict_counts: dict[str, int] = {}
+    for res in results:
+        verdict_counts[res.verdict] = verdict_counts.get(res.verdict, 0) + 1
+    manifest = {
+        "git_commit": git_commit(),
+        "started_at": started_at,
+        "ended_at": datetime.now(UTC).isoformat(timespec="milliseconds"),
+        "config_snapshot": config_snapshot(),
+        "model": model_name,
+        "bug_ids": [res.bug_id for res in results],
+        "verdict_counts": verdict_counts,
+    }
+    (batch_dir / "batch_manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n"
+    )
+    log.info("batch %s done: %s tasks, verdicts=%s", batch_dir.name, len(results), verdict_counts)
+    return results

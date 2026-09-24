@@ -16,6 +16,7 @@ from pathlib import Path
 from app.config import get_settings
 from app.evals.bugset import load_bug, load_replay_script
 from app.evals.driver import run_task
+from app.evals.provenance import require_model_name
 from app.llm.openai_client import build_model
 
 
@@ -35,6 +36,9 @@ def main(argv: list[str] | None = None) -> int:
     # P1-2 整改:CLI 批次必须携带真实模型名,否则 report.json 无成本与模型身份,
     # "真实模型成绩"的证据链断裂(API 侧 service.py 一直传了)
     real_model_name = settings.llm_model if args.model == "openai" else ""
+    # E2 fail-fast:真实模型在线调用缺 model_name 时,发起任务前即拒绝;
+    # fake 回放零花费,不受该守卫约束
+    require_model_name(real_model_name, settings.llm_enabled and args.model == "openai")
 
     if args.engine == "graph":
         from app.graph.runner import run_task_graph

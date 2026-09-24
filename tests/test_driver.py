@@ -130,3 +130,95 @@ def test_report_contains_token_detail(tmp_path: Path) -> None:
     assert report["tokens_prompt"] >= 0 and report["tokens_completion"] >= 0
     assert result.tokens_prompt == 0
     assert result.tokens_completion == result.tokens_used > 0
+
+
+# ---------- E2:评测溯源强制与批次清单 ----------
+
+
+def test_provenance_carries_new_traceability_fields() -> None:
+    """E2:provenance 自带 git_commit/config_snapshot/started_at 三新字段;
+    git_commit 在本仓库(git 工作树)内实测非 unknown。"""
+    from datetime import datetime
+
+    from app.evals.provenance import build_provenance
+
+    prov = build_provenance("fake-replay", "", "plain")
+    assert prov["git_commit"] not in ("", "unknown")
+    assert len(prov["git_commit"]) == 40
+    snapshot = prov["config_snapshot"]
+    assert set(snapshot) == {
+        "llm_model",
+        "llm_enabled",
+        "execution_backend",
+        "test_timeout_seconds",
+        "llm_timeout_seconds",
+        "token_budget",
+        "max_patch_files",
+    }
+    started = datetime.fromisoformat(prov["started_at"])
+    assert started.tzinfo is not None
+
+
+def test_require_model_name_guard_three_branches() -> None:
+    """E2 守卫三分支:回放放行 / 真实有名放行 / 真实空名 raise。"""
+    from app.evals.provenance import require_model_name
+
+    require_model_name("", llm_enabled=False)
+    require_model_name(None, llm_enabled=False)
+    require_model_name("deepseek-flash", llm_enabled=True)
+    with pytest.raises(ValueError, match="model_name"):
+        require_model_name("", llm_enabled=True)
+    with pytest.raises(ValueError, match="model_name"):
+        require_model_name(None, llm_enabled=True)
+    with pytest.raises(ValueError, match="model_name"):
+        require_model_name("   ", llm_enabled=True)
+
+
+def test_real_run_without_model_name_fails_fast(tmp_path: Path, monkeypatch) -> None:
+    """fail-fast 落点:真实模型(llm_enabled=True、provider 非 fake-replay)缺
+    model_name 时,run_task 在物化任何仓库之前拒绝——零花费地失败,而不是
+    花钱买回无身份的报告。fake-replay 豁免:回放零花费,不受守卫约束。"""
+    from types import SimpleNamespace
+
+    from app.config import get_settings
+
+    real_settings = get_settings()
+    monkeypatch.setattr(
+        "app.evals.driver.get_settings",
+        lambda: real_settings.model_copy(update={"llm_enabled": True}),
+    )
+    bug = load_bug("BUG-001", BUG_ROOT)
+    real_stub = SimpleNamespace(provider="openai")  # 守卫先 raise,该模型不参与执行
+    with pytest.raises(ValueError, match="model_name"):
+        run_task(bug, real_stub, runs_root=tmp_path / "runs")
+    # 守卫先于任何落盘:runs 目录根本不会被创建
+    assert not (tmp_path / "runs").exists()
+
+
+def test_fake_batch_writes_manifest(tmp_path: Path) -> None:
+    """E2:fake 批次收尾写 batch_manifest.json,字段齐全、计数正确、自带溯源。"""
+    from app.evals.driver import run_batch
+
+    bugs = [load_bug(b, BUG_ROOT) for b in ("BUG-001", "BUG-005")]
+    results = run_batch(
+        bugs, lambda bug: FakeLLM(load_replay_script(bug)), runs_root=tmp_path / "fake-batch"
+    )
+    assert [r.verdict for r in results] == ["resolved", "resolved"]
+
+    manifest = json.loads(
+        (tmp_path / "fake-batch" / "batch_manifest.json").read_text(encoding="utf-8")
+    )
+    assert set(manifest) == {
+        "git_commit",
+        "started_at",
+        "ended_at",
+        "config_snapshot",
+        "model",
+        "bug_ids",
+        "verdict_counts",
+    }
+    assert manifest["bug_ids"] == ["BUG-001", "BUG-005"]
+    assert manifest["verdict_counts"] == {"resolved": 2}
+    assert manifest["git_commit"] not in ("", "unknown")
+    assert manifest["model"] == ""
+    assert manifest["config_snapshot"]["execution_backend"] in {"local", "docker"}
