@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -67,6 +68,16 @@ def _provenance_note(per_bug: list[RunRow]) -> str:
     return " · ".join(parts)
 
 
+def _blind_flag(runs_root: Path) -> bool:
+    """批次是否为盲跑对照(E6):读 batch_manifest.json 的 blind 标记;
+    无 manifest(历史批次/单任务目录)视为非盲跑。"""
+    try:
+        manifest = json.loads((Path(runs_root) / "batch_manifest.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return bool(manifest.get("blind"))
+
+
 def render(runs_root: Path, bugs_root: Path, report_out: str = "docs/eval-report.md") -> str:
     rows = [annotate(r, bugs_root) for r in collect_runs(runs_root)]
     per_bug = latest_per_bug(rows)
@@ -102,6 +113,12 @@ def render(runs_root: Path, bugs_root: Path, report_out: str = "docs/eval-report
     provenance_note = _provenance_note(per_bug)
     if provenance_note:
         lines.append(f"- 批次溯源:{provenance_note}(取自批次最新运行)")
+    if _blind_flag(runs_root):
+        lines.append(
+            "- **盲跑对照批次**:装载时不带 issue 描述"
+            "(占位替换,失败/回归测试集原样保留)——"
+            "度量 localize 的真实贡献,与正常批次对比阅读"
+        )
     lines += [
         "",
         "> **数据来源声明**:本报告由 `python -m app.evals.report` 从运行产物自动生成;",

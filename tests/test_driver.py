@@ -216,9 +216,69 @@ def test_fake_batch_writes_manifest(tmp_path: Path) -> None:
         "model",
         "bug_ids",
         "verdict_counts",
+        "blind",
     }
     assert manifest["bug_ids"] == ["BUG-001", "BUG-005"]
     assert manifest["verdict_counts"] == {"resolved": 2}
     assert manifest["git_commit"] not in ("", "unknown")
     assert manifest["model"] == ""
     assert manifest["config_snapshot"]["execution_backend"] in {"local", "docker"}
+    assert manifest["blind"] is False  # 不带旗标:非盲跑(E6 回归口径)
+
+
+# ---------- E6:盲跑对照模式 ----------
+
+
+def test_blind_load_replaces_issue_only(tmp_path: Path) -> None:
+    """blind 装载:issue 置固定占位;failed/regression 测试集原样保留。"""
+    from app.evals.driver import BLIND_ISSUE, apply_blind
+
+    bug = load_bug("BUG-001", BUG_ROOT)
+    failed_before, regression_before = list(bug.failed_tests), list(bug.regression_tests)
+    original_issue = bug.issue_text
+
+    apply_blind(bug)
+
+    assert bug.issue_text == BLIND_ISSUE == "Blind run: no issue description provided."
+    assert bug.issue_text != original_issue
+    assert bug.failed_tests == failed_before
+    assert bug.regression_tests == regression_before
+
+
+def test_blind_fake_batch_resolved_and_manifest_flagged(tmp_path: Path) -> None:
+    """--blind + fake 回放 BUG-001:FakeLLM 无视消息内容,resolved 不受影响;
+    manifest 记录 blind=true,报告展示层可读出盲跑标记。"""
+    from app.evals.driver import run_batch
+    from app.evals.report import render
+
+    bug = load_bug("BUG-001", BUG_ROOT)
+    results = run_batch(
+        [bug],
+        lambda b: FakeLLM(load_replay_script(b)),
+        runs_root=tmp_path / "fake-blind",
+        blind=True,
+    )
+    assert [r.verdict for r in results] == ["resolved"]
+
+    manifest = json.loads(
+        (tmp_path / "fake-blind" / "batch_manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["blind"] is True
+    text = render(tmp_path / "fake-blind", BUG_ROOT)
+    assert "盲跑对照批次" in text
+
+    non_blind = render(tmp_path / "plain-batch", BUG_ROOT)  # 无 manifest 的目录不受影响
+    assert "盲跑对照批次" not in non_blind
+
+
+def test_batch_cli_blind_end_to_end(tmp_path: Path) -> None:
+    """批次 CLI --blind 端到端:python -m app.evals.driver 走通占位装载与落盘。"""
+    from app.evals.driver import main
+
+    rc = main(["--bugs", "BUG-001", "--out", str(tmp_path / "cli-blind"), "--blind"])
+    assert rc == 0
+    manifest = json.loads(
+        (tmp_path / "cli-blind" / "batch_manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["blind"] is True and manifest["bug_ids"] == ["BUG-001"]
+    assert manifest["verdict_counts"] == {"resolved": 1}

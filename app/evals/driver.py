@@ -6,9 +6,11 @@ M5 的 LangGraph 状态机会复用本模块的基线/验证逻辑;
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import os
+import sys
 import threading
 import time
 import uuid
@@ -278,6 +280,7 @@ def run_batch(
     max_turns: int = 20,
     engine: str = "plain",
     model_name: str = "",
+    blind: bool = False,
 ) -> list[TaskResult]:
     """批次驱动(E2):逐题执行,收尾写 `runs/<batch>/batch_manifest.json`。
 
@@ -285,9 +288,15 @@ def run_batch(
     通常恒返回同一 client。fail-fast 守卫在批次发起前执行;manifest 的
     started_at/ended_at/config_snapshot 与任务级 provenance 同口径,批次级
     溯源从此不依赖人工记台账。
+
+    blind=True(E6):发起前把每题 issue 替换为固定占位——盲跑对照只给失败
+    测试,度量 localize 的真实贡献;测试集原样保留,graph 层零感知。
     """
     settings = get_settings()
     require_model_name(model_name, settings.llm_enabled)
+    if blind:
+        for bug in bugs:
+            apply_blind(bug)
     batch_dir = Path(runs_root).resolve()
     batch_dir.mkdir(parents=True, exist_ok=True)
     started_at = datetime.now(UTC).isoformat(timespec="milliseconds")
@@ -315,9 +324,78 @@ def run_batch(
         "model": model_name,
         "bug_ids": [res.bug_id for res in results],
         "verdict_counts": verdict_counts,
+        "blind": blind,
     }
     (batch_dir / "batch_manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n"
     )
     log.info("batch %s done: %s tasks, verdicts=%s", batch_dir.name, len(results), verdict_counts)
     return results
+
+
+def apply_blind(bug: Any) -> None:
+    """盲跑装载(E6):issue 置固定占位;failed/regression 测试集原样保留——
+    模型仍可从基线失败输出获得信息,被度量的是"无描述时能否定位"。
+    只改 evals 层数据装载,`app/graph/` 零改动。"""
+    bug.issue_text = BLIND_ISSUE
+
+
+BLIND_ISSUE = "Blind run: no issue description provided."
+
+
+def main(argv: list[str] | None = None) -> int:
+    """批次 CLI(E6):`python -m app.evals.driver --bugs all --out runs/xxx [--blind]`。
+
+    fake 模式按题装载 replay 脚本;盲跑批次建议批次名带 -blind 后缀,
+    报告展示层读 batch_manifest.json 的 blind 标记。
+    """
+    parser = argparse.ArgumentParser(description="PatchPilot 批次驱动器")
+    parser.add_argument("--bugs", default="all", help='"all" 或逗号分隔的 BUG-xxx 列表')
+    parser.add_argument("--model", default="fake", choices=["fake", "openai"])
+    parser.add_argument("--engine", default="plain", choices=["plain", "graph"])
+    parser.add_argument("--out", required=True, help="批次 runs 目录")
+    parser.add_argument("--blind", action="store_true", help="盲跑对照:issue 置占位")
+    parser.add_argument("--max-turns", type=int, default=20)
+    args = parser.parse_args(argv)
+
+    from app.config import get_settings
+    from app.evals.bugset import list_bug_ids, load_bug, load_replay_script
+    from app.llm.fake import FakeLLM
+    from app.llm.openai_client import build_model
+
+    settings = get_settings()
+    if args.bugs.strip().lower() == "all":
+        ids = list_bug_ids(Path("bugs"))
+    else:
+        ids = [b.strip() for b in args.bugs.split(",") if b.strip()]
+    bugs = [load_bug(bug_id, Path("bugs")) for bug_id in ids]
+    if args.model == "fake":
+        scripts = {bug.id: load_replay_script(bug, kind=args.engine) for bug in bugs}
+
+        def model_for(bug: Any) -> Any:
+            return FakeLLM(scripts[bug.id])
+
+    else:
+
+        def model_for(bug: Any) -> Any:
+            return build_model("openai", settings)
+
+    model_name = settings.llm_model if args.model == "openai" else ""
+    results = run_batch(
+        bugs,
+        model_for,
+        runs_root=Path(args.out),
+        max_turns=args.max_turns,
+        engine=args.engine,
+        model_name=model_name,
+        blind=args.blind,
+    )
+    from collections import Counter
+
+    verdicts = dict(Counter(r.verdict for r in results))
+    print(f"[batch] {args.out}: {len(results)} tasks, verdicts={verdicts}, blind={args.blind}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
