@@ -99,8 +99,8 @@
 ## 5. 验证
 
 - `PATCHPILOT_LLM_ENABLED=false .venv/Scripts/python.exe -m pytest -q`:
-  **324 passed + 2 skipped**(起点 290+2;新增 34 个用例;
-  2 个 skip 为本机 6379 无 Redis 的预期跳过),418.75s,全绿;
+  **324 passed + 2 skipped**(起点 290+2;净增 34 个用例 = 新增 36 − 随表删除 2;
+  2 个 skip 为本机 6379 无 Redis 的预期跳过);**最终 HEAD 复跑 442.19s,exit 0**;
 - `.venv/Scripts/python.exe -m ruff check .` 与 `ruff format --check .`:全绿
   (138 files already formatted;唯一 unformatted 是 `demo/run_dirty_ticket.py`
   ——任务开始前就存在的未跟踪用户文件,不在本任务声明范围内,未改动);
