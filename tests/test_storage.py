@@ -101,14 +101,6 @@ def test_trajectory_query_uses_index(tmp_path: Path) -> None:
     assert "idx_traj_task" in detail
 
 
-def test_evaluation_upsert(tmp_path: Path) -> None:
-    repo = Repository(tmp_path / "t.sqlite3")
-    repo.upsert_evaluation(task_id="T1", bug_id="BUG-001", final_resolved=1, rounds=2)
-    repo.upsert_evaluation(task_id="T1", bug_id="BUG-001", final_resolved=1, rounds=3, tokens=100)
-    rows = repo.list_evaluations()
-    assert len(rows) == 1 and rows[0]["rounds"] == 3 and rows[0]["tokens"] == 100
-
-
 def test_patch_insert(tmp_path: Path) -> None:
     repo = Repository(tmp_path / "t.sqlite3")
     repo.insert_patch(
@@ -121,6 +113,7 @@ def test_patch_insert(tmp_path: Path) -> None:
     )
     assert True  # 写入不抛异常即通过;读取由 API e2e 覆盖
     # insert_test_run 用例已随 P1-5 整改删除(test_runs 表无生产调用方)
+    # test_evaluation_upsert 用例已随 P3-8 整改删除(evaluations 表零生产读方)
 
 
 def test_finalize_and_cancel_are_atomically_guarded(tmp_path: Path) -> None:

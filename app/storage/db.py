@@ -53,38 +53,12 @@ CREATE INDEX IF NOT EXISTS idx_patches_task ON patches(task_id);
 
 -- test_runs 表已删(P1-5 整改,二选一取删除):零生产调用方,每次 pytest 的
 -- 完整结果已落在 run_dir/reports/*.xml,库里再造一份只会是永远为空的空表
-
-CREATE TABLE IF NOT EXISTS evaluations (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  task_id TEXT UNIQUE,
-  bug_id TEXT,
-  localized INTEGER,
-  patch_applied INTEGER,
-  final_resolved INTEGER,
-  regression_introduced INTEGER,
-  security_blocked INTEGER,
-  rounds INTEGER,
-  tokens INTEGER,
-  duration_ms INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_eval_bug ON evaluations(bug_id);
+--
+-- evaluations 表已删(P3-8 整改,P1-5 同先例):唯一写方是任务收尾的
+-- upsert_evaluation,全仓零生产读方;取消×自然完成时它还会与 tasks/report.json
+-- 三处分裂(审计 R2-Q1)。读口径:tasks = 服务生命周期真相,
+-- report.json = 引擎判定取证,平台口径以 tasks 为准(design.md §7)。
 """
-
-
-# 旧库升级:evaluations 建表后补列(缺则 ALTER,已有则跳过)
-_EVALUATION_MIGRATIONS: list[tuple[str, str]] = [
-    ("cost_usd", "ALTER TABLE evaluations ADD COLUMN cost_usd REAL"),
-    ("tokens_prompt", "ALTER TABLE evaluations ADD COLUMN tokens_prompt INTEGER"),
-    ("tokens_completion", "ALTER TABLE evaluations ADD COLUMN tokens_completion INTEGER"),
-]
-
-
-def _migrate_evaluations(conn: sqlite3.Connection) -> None:
-    existing = {row[1] for row in conn.execute("PRAGMA table_info(evaluations)")}
-    for column, statement in _EVALUATION_MIGRATIONS:
-        if column not in existing:
-            conn.execute(statement)
-            conn.commit()
 
 
 def connect(db_path: Path | str) -> sqlite3.Connection:
@@ -95,6 +69,5 @@ def connect(db_path: Path | str) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
-    _migrate_evaluations(conn)
     conn.commit()
     return conn

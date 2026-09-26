@@ -290,7 +290,8 @@ class TaskService:
             self.lock.release(lock_key)
 
     def _persist_artifacts(self, task_id: str, result: Any, run_dir: Path) -> None:
-        """轨迹 JSONL → 入库;评测汇总 → evaluations 表。"""
+        """轨迹 JSONL → 入库;补丁行 → 入库(评测读口径见 design.md §7:
+        tasks=生命周期真相,report.json=引擎取证;evaluations 表已删,P3-8)。"""
         traj_path = run_dir / "trajectory.jsonl"
         if traj_path.exists():
             events = [
@@ -311,24 +312,6 @@ class TaskService:
             if not report.get("gate_violations")
             else "; ".join(report["gate_violations"])[:500],
             applied=bool(report.get("changed_files")),
-        )
-        self.repo.upsert_evaluation(
-            task_id=task_id,
-            bug_id=report.get("bug_id"),
-            localized=int(bool(report.get("changed_files"))),
-            patch_applied=int(bool(report.get("changed_files"))),
-            final_resolved=int(report.get("verdict") == "resolved"),
-            regression_introduced=int(
-                bool(report.get("verify_failed_ok"))
-                and not report.get("verify_regression_ok", True)
-            ),
-            security_blocked=int(bool(report.get("gate_violations"))),
-            rounds=report.get("rounds"),
-            tokens=report.get("tokens_used"),
-            duration_ms=report.get("duration_ms"),
-            cost_usd=report.get("cost_usd"),
-            tokens_prompt=report.get("tokens_prompt"),
-            tokens_completion=report.get("tokens_completion"),
         )
 
     # ---------- 查询与控制 ----------

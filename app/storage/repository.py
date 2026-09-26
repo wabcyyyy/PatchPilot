@@ -217,7 +217,8 @@ class Repository:
             out.append(item)
         return out
 
-    # ---------- patches / test_runs / evaluations ----------
+    # ---------- patches ----------
+    # (test_runs/evaluations 表已删,见 P1-5/P3-8 注记)
 
     def insert_patch(
         self,
@@ -245,33 +246,6 @@ class Repository:
 
     # insert_test_run 已删(P1-5 整改):test_runs 表零生产调用方,
     # pytest 完整结果以 junit xml 形式落在 run_dir/reports/,不入库
-
-    def upsert_evaluation(self, **fields: Any) -> None:
-        keys = [
-            "task_id",
-            "bug_id",
-            "localized",
-            "patch_applied",
-            "final_resolved",
-            "regression_introduced",
-            "security_blocked",
-            "rounds",
-            "tokens",
-            "duration_ms",
-            "cost_usd",
-            "tokens_prompt",
-            "tokens_completion",
-        ]
-        values = [fields.get(k) for k in keys]
-        with self._lock, self._conn:
-            self._conn.execute(
-                f"INSERT INTO evaluations ({','.join(keys)}) VALUES ({','.join('?' * len(keys))})"
-                " ON CONFLICT(task_id) DO UPDATE SET "
-                + ",".join(f"{k}=excluded.{k}" for k in keys[1:]),
-                values,
-            )
-
-    def list_evaluations(self) -> list[dict[str, Any]]:
-        with self._lock:
-            rows = self._conn.execute("SELECT * FROM evaluations ORDER BY bug_id").fetchall()
-        return [dict(r) for r in rows]
+    # upsert_evaluation/list_evaluations 已删(P3-8 整改,P1-5 同先例):
+    # evaluations 表零生产读方,取消×自然完成时与 tasks/report.json 三处分裂;
+    # 读口径 tasks=生命周期真相、report.json=引擎取证(design.md §7)

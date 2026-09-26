@@ -62,6 +62,11 @@ regression 必须绿)由生成器与测试双重把关——回归集在基线�
 - LangGraph checkpoint(SqliteSaver)仅作轨迹留档,不提供崩溃恢复
   (P3-7 如实化,与 app/graph/checkpoint.py:3-5 自述一致)——
   恢复=recover_stale 收敛 NEEDS_REVIEW,从不按 thread_id 重放。
+- **评测数据读口径(P3-8)**:`tasks` 表 = 服务生命周期真相(状态机/取消/恢复
+  都以它为准),`report.json` = 引擎判定取证(逐任务结论/token/门禁明细);
+  平台口径以 tasks 为准。evaluations 表已裁删(P1-5 test_runs 同先例:唯一
+  写方是任务收尾,全仓零生产读方;取消×自然完成时曾与 tasks/report.json
+  三处分裂,审计 R2-Q1)。
 
 ## 8. 已知边界(如实记录)
 
