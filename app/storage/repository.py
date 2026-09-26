@@ -154,6 +154,19 @@ class Repository:
             ).fetchall()
         return [_task_out(r) for r in rows]
 
+    def list_tasks_finished_before(self, status: str, finished_before: str) -> list[dict[str, Any]]:
+        """终态早于给定 ISO 时间戳的任务行(P3-12 启动 Grace 扫描的读方)。
+
+        finished_at 与入参同为 UTC isoformat 同精度字符串,可直接字典序比较。
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM tasks WHERE status=? AND finished_at IS NOT NULL"
+                " AND finished_at < ? ORDER BY finished_at",
+                (status, finished_before),
+            ).fetchall()
+        return [_task_out(r) for r in rows]
+
     def recover_stale_running(self) -> list[str]:
         """服务启动时把 RUNNING/QUEUED 的僵尸任务标记为 NEEDS_REVIEW。
 

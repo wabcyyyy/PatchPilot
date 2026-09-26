@@ -1,6 +1,9 @@
 """轨迹记录器:每个工具调用一条 JSONL 事件(企划书第 5 节格式)。
 
-先落文件(runs/<task>/trajectory.jsonl),入库在 storage 层;文件副本永久保留。
+先落文件(runs/<task>/trajectory.jsonl),入库在 storage 层。
+保留承诺(P3-12 整改,如实版):轨迹属**取证集,永久保留**;
+工作区副本等**可弃集**由终态回收器回收(app/api/recycle.py)——
+「全部永久」与无界增长在数学上不可同时成立(审计 R3-Q3)。
 """
 
 from __future__ import annotations

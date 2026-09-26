@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from app.api.cancellation import CancelRegistry
+from app.api.recycle import recycle_run_dir
 from app.config import get_settings
 from app.errors import InvalidRequestError, PatchPilotError, TaskCancelled, TaskError
 from app.evals.bugset import BUGS_ROOT, build_custom_bug, load_bug, load_replay_script
@@ -299,7 +300,12 @@ class TaskService:
             # N-7 整改:终态回写用原子守卫——任务已被取消时 finalize 返回 False,
             # 自然完成不得覆盖 CANCELLED(此前先读后写是 check-then-act,双向可打穿)
             self._persist_artifacts(task_id, result, run_dir)
-            self.repo.finalize_task(task_id, result.status, result.verdict)
+            finalized = self.repo.finalize_task(task_id, result.status, result.verdict)
+            # P3-12:终态回收挂 finally 之前——仅 FINISHED 且赢了终态竞争时
+            # 回收可弃集(workspace/checkpoints);取证文件(report/diff/轨迹/
+            # junit)永久保留,失败/取消现场一律不回收(策略见 app/api/recycle.py)
+            if finalized and result.status == "FINISHED" and settings.recycle_finished_workspace:
+                recycle_run_dir(run_dir)
         except TaskError as exc:
             self.repo.finalize_task(task_id, "INVALID_TASK", "failed")
             log.error("task %s invalid: %s", task_id, exc)

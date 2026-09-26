@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     execution_backend: str = "local"  # 测试执行后端:local | docker(容器集成留待人工验证)
     # P3-9:进程级日志级别(此前 25 键无 log_level,判定为"漏"——业务日志零装配)
     log_level: str = "WARNING"
+    # P3-12:终态产物回收——取证集(report/diff/trajectory/junit)永久保留,
+    # FINISHED 任务的可弃集(workspace/checkpoints)回收;失败/取消现场不回收
+    recycle_finished_workspace: bool = True
+    recycle_grace_seconds: int = 3600  # 启动扫描只动"终于 grace 前"的行,刚结束的留人看
 
     @field_validator("log_level")
     @classmethod

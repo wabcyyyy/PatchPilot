@@ -12,6 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.api.auth import UnauthorizedError
+from app.api.recycle import recycle_finished_tasks
 from app.api.routes import router
 from app.api.service import TaskService
 from app.config import Settings, get_settings
@@ -72,6 +73,13 @@ def create_app(
             bugs_root=bugs_root or Path("bugs"),
         )
         service.recover_stale()
+        # P3-12:启动 Grace 扫描——回收停机期间到终态的 FINISHED 任务的可弃集
+        # (finally 没跑到的场景);grace 截止内的刚结束任务留给人看
+        if settings.recycle_finished_workspace:
+            try:
+                recycle_finished_tasks(repo, settings.recycle_grace_seconds)
+            except Exception:  # 回收失败不得阻断服务启动
+                log.exception("startup recycle scan failed")
         app.state.service = service
         yield
         service.shutdown()

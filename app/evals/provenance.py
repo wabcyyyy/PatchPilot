@@ -77,6 +77,8 @@ EXEMPT_KEYS: frozenset[str] = frozenset(
         "max_search_results",
         "max_output_chars",
         "task_max_workers",
+        "recycle_finished_workspace",
+        "recycle_grace_seconds",
     }
 )
 
