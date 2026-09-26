@@ -15,9 +15,7 @@ from __future__ import annotations
 import contextvars
 import logging
 
-task_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "patchpilot_task_id", default=""
-)
+task_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("patchpilot_task_id", default="")
 request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
     "patchpilot_request_id", default=""
 )

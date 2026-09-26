@@ -83,9 +83,7 @@ def test_setup_logging_wires_level_and_context_filter() -> None:
         _setup_logging(settings)
         assert root.level == logging.INFO
         assert root.handlers, "basicConfig 未接线"
-        assert all(
-            any(isinstance(f, TaskContextFilter) for f in h.filters) for h in root.handlers
-        )
+        assert all(any(isinstance(f, TaskContextFilter) for f in h.filters) for h in root.handlers)
 
         captured: list[logging.LogRecord] = []
 

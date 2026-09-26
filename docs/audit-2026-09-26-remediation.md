@@ -87,15 +87,23 @@
 - 「new file mode 120000 一律拒」(P3-6,门禁语义变更,等确认);
 - per-event request_id 结构重构(P3-9 附注,另立卡);
 - 多进程共库部署支持(P3-4 附注,守卫语义需重审);
-- 真实 API 花费类证据产出(P3-1/2/5 实验/15 对照批,人工触发清单)。
+- 真实 API 花费类证据产出(P3-1/2/5 实验/15 对照批,人工触发清单);
+- parametrize 展开假阴性(parametrize 用例通过时被逐实例误判为不过,安全侧低危,
+  P3-17 附注:只记录不修)——记录于 tests/test_driver.py 对应用例 docstring
+  与人工触发清单 §6;
+- 《PatchPilot开发计划书》中残留的「六项门禁」字样(P3-7 范围外):该文档是历史
+  任务卡原文本,第 222-223 行已显式披露「2026-09-20 审计后代码实际为七项」,
+  且 docs/README.md 明确其复选框/正文不作为状态依据;按 AGENTS「只修改任务卡
+  声明范围内的文件」不越界改动。
 
 ## 5. 验证
 
 - `PATCHPILOT_LLM_ENABLED=false .venv/Scripts/python.exe -m pytest -q`:
   **324 passed + 2 skipped**(起点 290+2;新增 34 个用例;
   2 个 skip 为本机 6379 无 Redis 的预期跳过),418.75s,全绿;
-- `.venv/Scripts/python.exe -m ruff check .` 与 `ruff format --check`:全绿
-  (demo/ 下未跟踪的用户文件不在本次改动范围);
+- `.venv/Scripts/python.exe -m ruff check .` 与 `ruff format --check .`:全绿
+  (138 files already formatted;唯一 unformatted 是 `demo/run_dirty_ticket.py`
+  ——任务开始前就存在的未跟踪用户文件,不在本任务声明范围内,未改动);
 - 锚点/分类/守卫/回收/日志五个防复发机制全部有测试钉住:
   test_docs_anchors.py(4)、test_driver.py 分类快照(1)、test_model_name_guard.py(6)、
   test_recycle.py(5)、test_logging_setup.py(6)。
