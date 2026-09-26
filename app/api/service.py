@@ -24,6 +24,7 @@ from app.api.cancellation import CancelRegistry
 from app.config import get_settings
 from app.errors import InvalidRequestError, PatchPilotError, TaskCancelled, TaskError
 from app.evals.bugset import BUGS_ROOT, build_custom_bug, load_bug, load_replay_script
+from app.logctx import reset_task_context, set_task_context
 from app.storage.locks import BaseLock, build_lock
 from app.storage.repository import TERMINAL_STATUSES, Repository
 
@@ -209,6 +210,34 @@ class TaskService:
     # ---------- 执行 ----------
 
     def _execute(
+        self,
+        task_id: str,
+        bug,
+        engine: str,
+        model_name: str,
+        run_dir: Path,
+        lock_key: str,
+        cancel_event,
+        replay_script: list[dict[str, Any]] | None = None,
+    ) -> None:
+        # P3-9:工作线程首行设置日志上下文——本任务在此线程内产生的业务日志
+        # 都带 task_id(AGENTS 约定的装配面);线程复用,finally 必须 reset
+        context_tokens = set_task_context(task_id)
+        try:
+            self._execute_inner(
+                task_id,
+                bug,
+                engine,
+                model_name,
+                run_dir,
+                lock_key,
+                cancel_event,
+                replay_script,
+            )
+        finally:
+            reset_task_context(context_tokens)
+
+    def _execute_inner(
         self,
         task_id: str,
         bug,

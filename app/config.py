@@ -40,6 +40,16 @@ class Settings(BaseSettings):
     allowed_repo_roots: str = ""  # repo_path 根白名单(逗号分隔绝对路径);空 = 不限制(个人本地模式)
     price_overrides: str = ""  # 可选 JSON 文件路径(同构 PRICES,优先级高于内置价目)
     execution_backend: str = "local"  # 测试执行后端:local | docker(容器集成留待人工验证)
+    # P3-9:进程级日志级别(此前 25 键无 log_level,判定为"漏"——业务日志零装配)
+    log_level: str = "WARNING"
+
+    @field_validator("log_level")
+    @classmethod
+    def _check_log_level(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if normalized not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+            raise ValueError(f"log_level must be a stdlib level name, got {value!r}")
+        return normalized
 
     @field_validator("execution_backend")
     @classmethod
