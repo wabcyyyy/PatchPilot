@@ -23,10 +23,10 @@
 | 编号 | 结论 | 落地内容 | 证据 |
 |---|---|---|---|
 | P3-1 真实模型批次为零 | **部分(链路就绪)** | 真实跑批需 API 花费,入人工触发清单第 1 项;守卫链已保证 report.json 必带 model_name | 人工触发清单 §1 |
-| P3-2 溯源锚点为脏工作树 | **部分(清单)** | 干净树重跑 + provenance 脏树指纹入人工触发清单第 4 项(属溯源语义小改,随批评审) | 人工触发清单 §4 |
+| P3-2 溯源锚点为脏工作树 | **已修(fake 批;真实批锚点随 P3-1)** | ①provenance/manifest 增记工作树状态(`worktree_dirty`/`dirty_fingerprint`,None=无法判定、tracked-only 语义);②manifest 落盘前 `git ls-tree` 反查输入存在性(缺失留痕+WARNING);③干净树重跑 fake 35 题基线批(35/35 resolved、`worktree_dirty=false`、`input_anchor_missing=[]`);④反向验证:新检查指向历史坏锚 367ae36 精确报出 BUG-029..035(7/7,与审计 R1-Q2-1 一致) | app/evals/provenance.py、app/evals/driver.py、tests/test_provenance_anchor.py(11 例);docs/e3-and-provenance-evidence-2026-09-26.md §B/§C;commits 8fd9e85/ae3db2c |
 | P3-3 守卫复活链 | **已修** | require_model_name 守卫下沉 openai_client 构造(llm_model 非空,先于 openai 包导入)+ run_task_graph 第四入口补同口径守卫;fake 豁免语义保留(夜志 E2 理由);API+graph/API+plain/run_single/直连 graph 四链测试 | app/llm/openai_client.py、app/graph/runner.py、tests/test_model_name_guard.py;commit 9f26649 |
 | P3-4 finalize 弱守卫 | **已修** | 守卫改 NOT IN 全终态(谁先到终态谁赢),NEEDS_REVIEW 复活方向测试;多进程部署附注留档(人工触发清单 §6) | app/storage/repository.py finalize_task、tests/test_storage.py;commit 263d969 |
-| P3-5 E3 零佐证+口径互斥 | **部分(文档已修,实验入清单)** | ①文档:config.py「攻击成本翻倍」废弃,nodes/ADR-0002/threat-model §4/design.md §8 统一降格为「结构性冒烟复核,防非自适应偶发伪绿」(commit bef502e);②补证实验(fake 回放零花费)按卡归入人工触发清单第 3 项 | app/config.py:70-77、docs/design.md §8、人工触发清单 §3 |
+| P3-5 E3 零佐证+口径互斥 | **已修(文档+graph 佐证;真实模型佐证随 P3-1)** | ①文档:config.py「攻击成本翻倍」废弃,nodes/ADR-0002/threat-model §4/design.md §8 统一降格为「结构性冒烟复核,防非自适应偶发伪绿」(commit bef502e);②graph 批次佐证已产出(经用户批准零花费执行):35/35 题触发双跑,`verify_double_run` 轨迹事件 35/35(此前全 runs 树 0 条)、checkpoints 物证 35/35、mismatch 全 null;证明力边界如实声明=证明机制连通不证明检出力 | app/config.py、docs/design.md §8、docs/e3-and-provenance-evidence-2026-09-26.md §A |
 | P3-6 软链残余风险 | **部分(文档已修,门禁待确认)** | threat-model §3 R3a 残余段 + §4 边界补记(commit 184f227);「120000 一律拒」属门禁语义变更(AGENTS 红线),方案要点写入人工触发清单第 5 项 | docs/threat-model.md R3a;人工触发清单 §5 |
 | P3-7 文档互斥 7 处 | **已修 + 防复发机制** | 崩溃恢复 ×3(ADR-0001:24/29、design.md)如实化;「8 个」→9 ×3;「六项」→「七项」×2;ADR-0002:31 compose 冒烟如实化;test_docs_anchors.py 锚点断言(ADR 末尾「验证锚点」节 + file:line 级断言 + 假命题黑名单) | tests/test_docs_anchors.py;commit c666215(锚点随编辑漂移同步 ×4:3f899f7 等) |
 | P3-8 evaluations 三处分裂 | **已修** | 表/迁移/upsert/list/用例全删(P1-5 先例);读口径「tasks=生命周期真相,report.json=引擎取证」写入 design.md §7 | app/storage/db.py、repository.py、service.py;commit 71ac776 |
@@ -41,9 +41,13 @@
 | P3-17 缺测 | **已修** | 容器路径错 id 用例(test_docker,守卫不可用则跳过)+ 判定层集成用例(plain/graph 带错 id → 终态不得 resolved;graph 实测收敛 VERIFY_FAILED,与 R3-Q5 草案的 BUDGET_EXCEEDED 差异如实记录在用例 docstring);parametrize 假阴性方向只记录不修(安全侧) | tests/test_docker.py、tests/test_graph.py、tests/test_driver.py;commit 0ac6520 |
 | P3-18 基线断言 | **已修** | E4 冒烟实测 39.7s + 机器元数据落盘 tests/baselines/e4_smoke.json,断言 基线×3.0(180s 硬闸保留为防死锁);「全绿全 1 轮」真实模型批(≥5 题)触发报告级软集形态警报,fake 批豁免,3 场景钉死 | tests/baselines/e4_smoke.json、tests/test_service_robustness.py、app/evals/report.py;commit f52a822 |
 
-**汇总:已修 13 条(P3-3/4/7/8/9/10/11/12/13/14/16/17/18,其中 P3-14 的外部复核
-部分入清单),部分 5 条(P3-1/2/5/6/15——证据本体或门禁语义变更待人工触发),
-未动 0 条。13 + 5 = 18,与审计清单逐条对齐。**
+**汇总:已修 15 条(P3-2/3/4/5/7/8/9/10/11/12/13/14/16/17/18),部分 3 条
+(P3-1 真实模型证据、P3-6 门禁语义变更待确认、P3-15 真实盲跑对照批——
+三项均需用户付费或拍板,见人工触发清单),未动 0 条。15 + 3 = 18,逐条对齐。**
+
+> 补记(2026-09-26 第二轮收尾):P3-2 与 P3-5 原列「部分」,其补证实验实际
+> 零花费(FakeLLM 回放),经用户批准后执行完毕,升至「已修」;真实模型批次的
+> 佐证仍归 P3-1(付费项)统一产出。
 
 ## 2. 提交清单(d22ea64..HEAD,每卡一 commit)
 
@@ -66,7 +70,12 @@
 | 184f227 | P3-6 | threat-model R3a 残余段 |
 | bef502e | P3-5(文档) | E3 表述降格 |
 | 3f899f7 | P3-7 锚点同步 | ADR-0002 行号漂移 |
-| (本次) | 收尾 | 人工触发清单 + 本报告 + docs/README 索引 |
+| 8d5cb96 | P3-12 表述精度 | 回收挂载点措辞 |
+| 8c8f39f | P3-12 flake | 测试原子性假设的根因修复 |
+| 64ee7f6 | 收尾 | 验证数字 |
+| 8fd9e85 | P3-2 | 脏树指纹 + manifest 锚点反查 |
+| ae3db2c | P3-2 校准 | worktree_dirty 语义校准为 tracked-only |
+| (本次) | 补证收尾 | 零成本实验证据文档 + 本报告 P3-2/P3-5 改判 + 清单/索引同步 |
 
 ## 3. 审计之外的同步修订(文档与代码同 PR 纪律)
 
@@ -87,7 +96,14 @@
   docker-backend-notes 与审计裁断,不是本次实测;
 - docs/adr/0002 E3 表述降格后 compose 冒烟锚点行号漂移——按锚点测试要求同步;
 - design.md 三次编辑(并发语义/读口径/E3 边界)均同步了 test_docs_anchors.py
-  的行号锚点——这正是锚点机制的设计行为:文档改动必须显式过锚点关。
+  的行号锚点——这正是锚点机制的设计行为:文档改动必须显式过锚点关;
+- **零成本补证实验(2026-09-26 第二轮收尾,经用户批准)**:P3-2/P3-5 的补证实验
+  原被表述为"要真实 API 花费",复核发现其实际用 FakeLLM 回放=零花费,遂执行:
+  graph+E3 连通性批 35/35 触发三件套 + 干净树 fake 35 题基线批(锚点反查全过);
+  反向验证新检查在历史坏锚 367ae36 上精确报出 BUG-029..035(7/7)。证据与方法见
+  docs/e3-and-provenance-evidence-2026-09-26.md;找到并修正的自身问题:首版
+  `worktree_dirty` 把未跟踪文件也计入(本仓库长期有 .idea//demo/ → 标志恒真、
+  失去操作性),已校准为 tracked-only 并补边界用例(commit ae3db2c)。
 
 ## 4. 明确不做(记录在案,不做=决策不是遗漏)
 
@@ -95,7 +111,8 @@
 - 「new file mode 120000 一律拒」(P3-6,门禁语义变更,等确认);
 - per-event request_id 结构重构(P3-9 附注,另立卡);
 - 多进程共库部署支持(P3-4 附注,守卫语义需重审);
-- 真实 API 花费类证据产出(P3-1/2/5 实验/15 对照批,人工触发清单);
+- 真实 API 花费类证据产出(P3-1 真模型批 / P3-15 盲跑对照批,人工触发清单 §1/§2;
+  P3-2/P3-5 的补证实验原列此处,复核后确认零花费并已执行,见 §3);
 - parametrize 展开假阴性(parametrize 用例通过时被逐实例误判为不过,安全侧低危,
   P3-17 附注:只记录不修)——记录于 tests/test_driver.py 对应用例 docstring
   与人工触发清单 §6;
@@ -116,4 +133,8 @@
   ——任务开始前就存在的未跟踪用户文件,不在本任务声明范围内,未改动);
 - 锚点/分类/守卫/回收/日志五个防复发机制全部有测试钉住:
   test_docs_anchors.py(4)、test_driver.py 分类快照(1)、test_model_name_guard.py(6)、
-  test_recycle.py(5)、test_logging_setup.py(6)。
+  test_recycle.py(5)、test_logging_setup.py(6);溯源硬化另有
+  test_provenance_anchor.py(11);
+- **零成本补证实验的判据核验(2026-09-26 收尾)**:graph+E3 35/35 触发三件套、
+  干净树基线批 35/35 resolved 且 `worktree_dirty=false`/`input_anchor_missing=[]`、
+  历史坏锚反向验证 7/7 命中——证据与方法见 docs/e3-and-provenance-evidence-2026-09-26.md。
