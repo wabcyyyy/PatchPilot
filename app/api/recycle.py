@@ -8,9 +8,9 @@
 - 可弃集(仅 FINISHED 回收):工作区副本 workspace/ 与 checkpoints.sqlite
   ——补丁已在 diff.patch,成功任务的工作区是纯冗余(实测占单任务足迹 80%);
   失败/取消/NEEDS_REVIEW 任务保留现场(语义是"需要人看",回收让复盘失明);
-- 启动 Grace 扫描:崩溃/重启场景下 _execute finally 没跑到的 FINISHED 任务,
+- 启动 Grace 扫描:崩溃/重启场景下 _execute 收尾没跑到的 FINISHED 任务,
   由服务启动时补收——只动 finished_at 早于 grace 截止的行,刚结束的留给
-  人看;运行期挂 _execute finally,即时回收;
+  人看;运行期在 service._execute 终态回写后即时回收(仅 FINISHED 路径);
 - Windows 占用两类:工作区里的 git objects 是只读文件(WinError 5,删除前
   整树去只读);报告/轮询方短暂持有时 rmtree 抛 sharing violation
   (WinError 32),短退避重试数次后放弃本次(下次启动扫描再收)。

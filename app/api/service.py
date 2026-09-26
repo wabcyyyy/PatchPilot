@@ -301,9 +301,11 @@ class TaskService:
             # 自然完成不得覆盖 CANCELLED(此前先读后写是 check-then-act,双向可打穿)
             self._persist_artifacts(task_id, result, run_dir)
             finalized = self.repo.finalize_task(task_id, result.status, result.verdict)
-            # P3-12:终态回收挂 finally 之前——仅 FINISHED 且赢了终态竞争时
+            # P3-12:终态回收——紧跟终态回写、仅在 FINISHED 且赢了终态竞争时
             # 回收可弃集(workspace/checkpoints);取证文件(report/diff/轨迹/
-            # junit)永久保留,失败/取消现场一律不回收(策略见 app/api/recycle.py)
+            # junit)永久保留,失败/取消现场一律不回收(策略见 app/api/recycle.py)。
+            # 不放进 finally 子句:崩溃/取消路径的现场必须留给复盘,只有终态为
+            # FINISHED 才回收;停机/崩溃漏收的由启动 Grace 扫描补齐。
             if finalized and result.status == "FINISHED" and settings.recycle_finished_workspace:
                 recycle_run_dir(run_dir)
         except TaskError as exc:
