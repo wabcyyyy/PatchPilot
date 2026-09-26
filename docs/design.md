@@ -63,7 +63,11 @@ regression 必须绿)由生成器与测试双重把关——回归集在基线�
   (tests/test_service_robustness.py 并发冒烟);流量 ×10 时先挂执行资源(审计 3-Q12);
 - 多语言适配只有 pytest 一个实现,接口预留;
 - token 统计在回放模式下是字符估算;
-- 越权拦截率在评测批次里体现为 PATCH_REJECTED 计数,
+- 越权拦截率按引擎分口径(P3-13):plain 批门禁拒绝落 PATCH_REJECTED 终态;
+  graph 批门禁拒绝经轮内重试、轮尽回滚后落 BUDGET_EXCEEDED——PATCH_REJECTED
+  对 graph 永不为终态,按 status 计数会把 graph 批的门禁拦截系统性记 0。
+  跨引擎通用口径看 report.json 的 gate_violations/security_blocked 字段
+  (评测报告「门禁拦截」计数即源于此);
   攻击样例(9 个,全部拦截)是独立构造集,不混入 bug 集指标;
 - **单进程架构**:SQLite 单连接 + 进程内任务锁 + 进程内 CancelRegistry——
   多 uvicorn worker 会破坏幂等/取消语义(取消事件跨进程不可达);

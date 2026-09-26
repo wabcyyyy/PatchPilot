@@ -182,7 +182,11 @@ def test_main_accepts_multiple_runs(tmp_path: Path) -> None:
 
 
 def test_distribution_rows_counts_and_percentiles(tmp_path: Path) -> None:
-    """3 份不同耗时/token/轮数/判型的 report → 分布值与计数逐一断言。"""
+    """3 份不同耗时/token/轮数/判型的 report → 分布值与计数逐一断言。
+
+    P3-13:门禁拦截按 gate_violations 计数(跨引擎通用口径),
+    不再按 status == PATCH_REJECTED 计(graph 批永不为该终态)。
+    """
     from app.evals.report import distribution_rows
 
     runs = tmp_path / "runs" / "dist"
@@ -200,6 +204,7 @@ def test_distribution_rows_counts_and_percentiles(tmp_path: Path) -> None:
         rounds=2,
         verdict="failed",
         status="PATCH_REJECTED",
+        gate_violations=["[files] modifying test file is forbidden: tests/test_x.py"],
     )
     _write_report(
         runs / "BUG-003-c",
@@ -216,7 +221,31 @@ def test_distribution_rows_counts_and_percentiles(tmp_path: Path) -> None:
     assert table["耗时 min/p50/p95/max"] == "1000 / 2000 / 9000 / 9000 ms"
     assert table["Token min/max"] == "100 / 300"
     assert table["轮数分布(1 / 2 / 3+)"] == "1 / 1 / 1"
-    assert table["判型计数"] == "resolved 1 · PATCH_REJECTED 1 · NEEDS_REVIEW 1 · 其他 0"
+    assert table["判型计数"] == "resolved 1 · 门禁拦截 1 · needs_review 1 · 其他 0"
+
+
+def test_distribution_counts_gate_rejections_across_engines(tmp_path: Path) -> None:
+    """P3-13 钉死:graph 批门禁拒绝的终态是 BUDGET_EXCEEDED(轮尽回滚),
+    PATCH_REJECTED 对 graph 恒不出现——判型计数按 gate_violations 口径,
+    graph 批的门禁拦截不得被记 0 或误入「其他」。"""
+    from app.evals.report import distribution_rows
+
+    runs = tmp_path / "runs" / "graph-reject"
+    _write_report(
+        runs / "BUG-004-d",
+        bug_id="BUG-004",
+        verdict="failed",
+        status="BUDGET_EXCEEDED",  # graph 引擎轮尽回滚后的真实终态
+        gate_violations=["[paths] path escapes workspace: ../escape.txt"],
+    )
+    _write_report(
+        runs / "BUG-005-e",
+        bug_id="BUG-005",
+        verdict="failed",
+        status="VERIFY_FAILED",  # 无门禁违规的失败:入「其他」
+    )
+    table = dict(distribution_rows(_per_bug(runs)))
+    assert table["判型计数"] == "resolved 0 · 门禁拦截 1 · needs_review 0 · 其他 1"
 
 
 def test_distribution_rows_empty_batch_and_missing_fields(tmp_path: Path) -> None:

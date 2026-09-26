@@ -94,8 +94,13 @@ def _fmt(value: int | None) -> str:
 def distribution_rows(per_bug: list[RunRow]) -> list[tuple[str, str]]:
     """批次分布与判型计数(E7):让"太软的评测集"在报告上自我暴露。
 
-    数据全部来自 report.json 现有字段(duration/tokens/rounds/verdict/status),
+    数据全部来自 report.json 现有字段(duration/tokens/rounds/verdict),
     不重跑任务,metrics.py 判定逻辑零改动;空批次/缺字段记 n/a 不抛异常。
+
+    判型口径(P3-13):resolved/needs_review 统一按 verdict 计;
+    门禁拦截按 gate_violations 计(跨引擎通用)——PATCH_REJECTED 对 graph
+    永不为终态(轮尽回滚后落 BUDGET_EXCEEDED),按 status 计数会把
+    graph 批的门禁拦截系统性记 0。四类互斥,合计恒等于任务数。
     """
     if not per_bug:
         return [
@@ -110,14 +115,16 @@ def distribution_rows(per_bug: list[RunRow]) -> list[tuple[str, str]]:
     for row in per_bug:
         key = "1" if row.rounds <= 1 else "2" if row.rounds == 2 else "3+"
         rounds[key] += 1
-    counts = {
-        "resolved": sum(1 for r in per_bug if r.verdict == "resolved"),
-        "PATCH_REJECTED": sum(1 for r in per_bug if r.status == "PATCH_REJECTED"),
-        "NEEDS_REVIEW": sum(
-            1 for r in per_bug if r.status == "NEEDS_REVIEW" or r.verdict == "needs_review"
-        ),
-    }
-    counts["其他"] = len(per_bug) - sum(counts.values())
+    counts = {"resolved": 0, "门禁拦截": 0, "needs_review": 0, "其他": 0}
+    for row in per_bug:
+        if row.verdict == "resolved":
+            counts["resolved"] += 1
+        elif row.verdict == "needs_review":
+            counts["needs_review"] += 1
+        elif row.gate_violations:
+            counts["门禁拦截"] += 1
+        else:
+            counts["其他"] += 1
     counter_text = " · ".join(f"{key} {value}" for key, value in counts.items())
     return [
         (

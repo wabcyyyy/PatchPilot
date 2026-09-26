@@ -99,8 +99,8 @@ def test_p3_7_corrected_claims_are_pinned() -> None:
     # design.md 第三副本(design.md:51)
     design = _read("docs/design.md")
     assert "仅作轨迹留档" in design[50], design[50]
-    # 攻击样例 9 个 ×3(design.md:67 / threat-model.md:45 / README.md:20)
-    assert "9 个" in design[66], design[66]
+    # 攻击样例 9 个 ×3(design.md:71 / threat-model.md:45 / README.md:20)
+    assert "9 个" in design[70], design[70]
     assert "攻击样例 9 个拦截" in _read("docs/threat-model.md")[44]
     assert "9 个攻击样例" in _read("README.md")[19]
     # 七项门禁 docstring(gates.py:1 / nodes.py:325)
