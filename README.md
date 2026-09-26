@@ -78,7 +78,7 @@ app/
 bugs/           # 自建 Bug 任务集 + 攻击样例 + hard 候选(计数以 bugs/README.md 与 list_bug_ids 为准)
 docker/         # 执行器镜像、API 镜像、Compose
 docs/           # 索引(docs/README.md)、设计笔记、威胁模型、隔离实验、复盘、审计、adr/、archive/
-tests/          # 项目自身测试(全离线,模型交互用 FakeLLM 回放;用例数不手写,以 `pytest -q` 实测与 CI 最新跑批为准)
+tests/          # 项目自身测试(全离线,模型交互用 FakeLLM 回放;用例数不手写,以本地可复现实测为准:PATCHPILOT_LLM_ENABLED=false python -m pytest -q)
 ```
 
 ## 文档
