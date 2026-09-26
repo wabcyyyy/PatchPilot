@@ -1,7 +1,11 @@
-"""质量门禁引擎(企划书第 9 节六项门禁)。
+"""质量门禁引擎(企划书第 9 节七项门禁)。
+
+七项的落点:静态五项(格式/文件/路径/影子/范围)在 run_gates,
+命令门禁在 ensure_command_allowed,资源门禁在 ensure_budget;
+格式门禁的 `git apply --check` 兜底在 patcher 层。
 
 判定规则属于"必须掌握"区:任何一项不满足,补丁不得进入 VERIFY。
-门禁是纯文本/纯参数检查,不碰工作区;真正的 `git apply --check` 在 patcher 层。
+门禁是纯文本/纯参数检查,不碰工作区。
 """
 
 from __future__ import annotations

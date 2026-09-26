@@ -17,7 +17,7 @@
 - **7 个受控 Agent 工具**:list_files / search_code / read_file / apply_patch / run_tests / git_diff / reset_workspace,
   每次调用记录完整轨迹(JSONL + SQLite);
 - **七项质量门禁**:格式 / 禁改测试文件 / 路径越界 / 修改范围 / 影子模块 / 命令白名单 / 资源预算,
-  附 8 个攻击样例(`bugs/attacks/`)验证拦截;
+  附 9 个攻击样例(`bugs/attacks/`)验证拦截;
 - **双执行引擎**:plain(教学用单循环)与 graph(状态机),共享工具与提示;
 - **服务化**:FastAPI 七个端点 + SQLite 持久化 + Redis 任务锁(可退化内存锁)+ 幂等 + 崩溃恢复;
 - **容器隔离**:临时容器执行测试(`--network=none`、内存/CPU 限额、`--rm`),

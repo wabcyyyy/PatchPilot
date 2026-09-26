@@ -322,7 +322,8 @@ class TaskNodes:
     # ---------- APPLY_PATCH ----------
 
     def apply(self, state: TaskState) -> dict[str, Any]:
-        """最终门禁:对整个工作区 diff 复核六项门禁(工具层已逐补丁拦截过)。"""
+        """最终门禁:对整个工作区 diff 复核七项门禁的静态五项
+        (格式/文件/路径/影子/范围;命令与资源门禁分别在工具层与预算检查点拦截)。"""
         assert self.ctx is not None
         diff = working_tree_diff(self.workspace)
         gate = run_gates(

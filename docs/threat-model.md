@@ -42,7 +42,7 @@ API 响应(TaskOut)刻意收敛:不含 idem_key/repo_path/内部主键,但**保�
 平台的本质就是"跑模型产的补丁 + 跑目标仓库的测试"。防线依次是:
 
 1. 静态门禁:禁改测试文件 / 路径越界 / allowed_paths 范围 / 文件数上限 / 影子模块
-   / diff 格式 / `git apply --check`,攻击样例 8 个拦截(`bugs/attacks/`,回归于 `tests/test_attacks.py`);
+   / diff 格式 / `git apply --check`,攻击样例 9 个拦截(`bugs/attacks/`,回归于 `tests/test_attacks.py`);
 2. 命令边界:Agent 只能跑 manifest 预定义测试集,无 shell,参数列表 + 白名单;
 3. 执行隔离:`local` 后端=宿主子进程(信任级别≈开发者自己跑测试),`docker` 后端=
    容器级(`--network=none`、内存/CPU 限额、非 root uid 1000、`--rm` 用后即焚);

@@ -48,7 +48,9 @@ regression 必须绿)由生成器与测试双重把关——回归集在基线�
 - 幂等 = "同键(bug+engine+model)任务在途时直接返回" + 任务锁(Redis NX / 内存兜底),
   终态任务允许重跑——因此 `idem_key` 不设 UNIQUE 约束;
 - 崩溃恢复:服务启动把 RUNNING/QUEUED 僵尸任务标记 NEEDS_REVIEW;
-- LangGraph checkpoint(SqliteSaver)提供节点级恢复,二者互补。
+- LangGraph checkpoint(SqliteSaver)仅作轨迹留档,不提供崩溃恢复
+  (P3-7 如实化,与 app/graph/checkpoint.py:3-5 自述一致)——
+  恢复=recover_stale 收敛 NEEDS_REVIEW,从不按 thread_id 重放。
 
 ## 8. 已知边界(如实记录)
 
@@ -62,7 +64,7 @@ regression 必须绿)由生成器与测试双重把关——回归集在基线�
 - 多语言适配只有 pytest 一个实现,接口预留;
 - token 统计在回放模式下是字符估算;
 - 越权拦截率在评测批次里体现为 PATCH_REJECTED 计数,
-  攻击样例(8 个,全部拦截)是独立构造集,不混入 bug 集指标;
+  攻击样例(9 个,全部拦截)是独立构造集,不混入 bug 集指标;
 - **单进程架构**:SQLite 单连接 + 进程内任务锁 + 进程内 CancelRegistry——
   多 uvicorn worker 会破坏幂等/取消语义(取消事件跨进程不可达);
   横向扩展需任务队列与跨进程取消通道,属"平台化"范畴,暂不做;
