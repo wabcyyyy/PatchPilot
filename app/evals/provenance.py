@@ -39,18 +39,52 @@ def git_commit() -> str:
     return proc.stdout.strip()
 
 
-def config_snapshot() -> dict[str, Any]:
-    """批次取证用的配置白名单快照(E2):只收影响复现与判定的键。"""
-    settings = get_settings()
-    return {
-        "llm_model": settings.llm_model,
-        "llm_enabled": settings.llm_enabled,
-        "execution_backend": settings.execution_backend,
-        "test_timeout_seconds": settings.test_timeout_seconds,
-        "llm_timeout_seconds": settings.llm_timeout_seconds,
-        "token_budget": settings.token_budget,
-        "max_patch_files": settings.max_patch_files,
+# P3-11:Settings 配置键三分类。每个 Settings 键必须归入其一,由
+# tests/test_driver.py 的分类快照测试钉住——新增 Settings 键不三选一即 CI 失败:
+# - SNAPSHOT_KEYS:影响复现与判定,必须进 config_snapshot(E2 遗漏的
+#   verify_double_run 经 git 考古证实是漏,此处补上);
+# - SECRET_KEYS:任何情况下不得进快照(report.json 会被汇编进 docs 随仓库分发);
+# - EXEMPT_KEYS:声明为与复现判定无关/机器相关,缺席是设计使然。
+# 已知结构性缺口(如实记录,不装已修):max_turns 不是 Settings 键,
+# 升格属结构变更,另行评审。
+SNAPSHOT_KEYS: tuple[str, ...] = (
+    "llm_model",
+    "llm_enabled",
+    "execution_backend",
+    "test_timeout_seconds",
+    "llm_timeout_seconds",
+    "token_budget",
+    "max_patch_files",
+    "verify_double_run",
+    "task_timeout_seconds",
+    "default_max_rounds",
+)
+SECRET_KEYS: frozenset[str] = frozenset({"llm_api_key", "api_token"})
+EXEMPT_KEYS: frozenset[str] = frozenset(
+    {
+        "runs_root",
+        "db_path",
+        "llm_base_url",
+        "llm_max_tokens",
+        "llm_max_retries",
+        "llm_thinking",
+        "redis_url",
+        "docker_image",
+        "allowed_repo_roots",
+        "price_overrides",
+        "log_level",
+        "max_read_lines",
+        "max_search_results",
+        "max_output_chars",
+        "task_max_workers",
     }
+)
+
+
+def config_snapshot() -> dict[str, Any]:
+    """批次取证用的配置白名单快照(E2/P3-11):只收影响复现与判定的键。"""
+    settings = get_settings()
+    return {key: getattr(settings, key) for key in SNAPSHOT_KEYS}
 
 
 def require_model_name(model_name: str | None, llm_enabled: bool) -> None:

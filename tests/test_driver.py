@@ -146,7 +146,12 @@ def test_provenance_carries_new_traceability_fields() -> None:
     assert prov["git_commit"] not in ("", "unknown")
     assert len(prov["git_commit"]) == 40
     snapshot = prov["config_snapshot"]
-    assert set(snapshot) == {
+    # P3-11:白名单补 verify_double_run(E3 git 考古证实为遗漏)/
+    # task_timeout_seconds/default_max_rounds,分类口径见 provenance.SNAPSHOT_KEYS
+    from app.evals.provenance import SNAPSHOT_KEYS
+
+    assert set(snapshot) == set(SNAPSHOT_KEYS)
+    assert {
         "llm_model",
         "llm_enabled",
         "execution_backend",
@@ -154,9 +159,38 @@ def test_provenance_carries_new_traceability_fields() -> None:
         "llm_timeout_seconds",
         "token_budget",
         "max_patch_files",
-    }
+        "verify_double_run",
+        "task_timeout_seconds",
+        "default_max_rounds",
+    } == set(SNAPSHOT_KEYS)
     started = datetime.fromisoformat(prov["started_at"])
     assert started.tzinfo is not None
+
+
+def test_settings_keys_fully_classified_for_snapshot() -> None:
+    """P3-11 分类快照测试:每个 Settings 键必须三选一(快照/密钥/豁免),
+    新增 Settings 键不归类即本测试失败——防"新键悄悄漏出白名单或密钥漏进
+    report.json"重演(E2 的 verify_double_run 漏了 11 分钟没人发现)。
+
+    已知结构性缺口如实记录:max_turns 不是 Settings 键,升格另行评审。
+    """
+    from app.config import Settings
+    from app.evals.provenance import EXEMPT_KEYS, SECRET_KEYS, SNAPSHOT_KEYS, config_snapshot
+
+    settings_keys = set(Settings.model_fields)
+    snapshot_keys = set(SNAPSHOT_KEYS)
+    assert not (snapshot_keys & SECRET_KEYS), "密钥键不得进快照白名单"
+    assert not (snapshot_keys & EXEMPT_KEYS) and not (SECRET_KEYS & EXEMPT_KEYS)
+    unclassified = settings_keys - snapshot_keys - set(SECRET_KEYS) - set(EXEMPT_KEYS)
+    assert not unclassified, (
+        f"新 Settings 键未三选一分类(快照/密钥/豁免):{sorted(unclassified)}"
+        " ——请在 app/evals/provenance.py 的 SNAPSHOT/SECRET/EXEMPT_KEYS 中归类"
+    )
+    stale = (snapshot_keys | set(SECRET_KEYS) | set(EXEMPT_KEYS)) - settings_keys
+    assert not stale, f"分类表里存在 Settings 已不存在的键,请清理:{sorted(stale)}"
+    # 密钥永不出现在快照里
+    snapshot = config_snapshot()
+    assert not (set(snapshot) & SECRET_KEYS)
 
 
 def test_require_model_name_guard_three_branches() -> None:
