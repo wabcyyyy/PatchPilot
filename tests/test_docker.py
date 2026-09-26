@@ -14,6 +14,21 @@ pytestmark = pytest.mark.skipif(not docker_available(), reason="docker 守护进
 BUG_ROOT = Path("bugs")
 
 
+def test_container_wrong_test_id_never_passes(tmp_path: Path) -> None:
+    """P3-17/R3-Q5:容器路径错 id → pytest rc=4(usage error)→ all_passed False。
+    与本机路径同口径(junit 无匹配永远不等于通过),空集陷阱在第一环被拦。"""
+    work = tmp_path / "ws"
+    materialize_repo(BUG_ROOT / "BUG-003" / "repo", work, extra_commit=False)
+
+    report, _ = run_tests_in_container(
+        work,
+        ["tests/test_labels.py::test_does_not_exist"],
+        image="patchpilot-executor:latest",
+        report_dir=tmp_path / "reports",
+    )
+    assert not report.all_passed
+
+
 def test_container_pytest_baseline_and_pass(tmp_path: Path) -> None:
     """同一镜像内:基线失败集报 1 failed;修复后全部通过(完整容器内 VERIFY)。"""
     work = tmp_path / "ws"

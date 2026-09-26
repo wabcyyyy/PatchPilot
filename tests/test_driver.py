@@ -327,3 +327,16 @@ def test_batch_cli_rejects_graph_engine() -> None:
     with pytest.raises(SystemExit) as exc_info:
         main(["--bugs", "BUG-001", "--out", "runs/whatever", "--engine", "graph"])
     assert exc_info.value.code == 2  # argparse usage error
+
+
+def test_wrong_failed_test_id_never_resolves_plain(tmp_path: Path) -> None:
+    """P3-17/R3-Q5 空集陷阱·plain 引擎集成用例:bug 带错测试 id →
+    rc=4/无匹配,verify 永不为绿,任何终态都不得是 resolved。
+    (parametrize 展开导致的假阴性方向已由审计记录,安全侧,不在此修。)"""
+    bug = load_bug("BUG-001", BUG_ROOT)
+    bug.failed_tests = ["tests/test_dateparse.py::test_does_not_exist"]  # 错 id
+    result = run_task(bug, FakeLLM(load_replay_script(bug)), runs_root=tmp_path / "runs")
+
+    assert result.verdict != "resolved"
+    assert result.status in {"VERIFY_FAILED", "PATCH_REJECTED", "BUDGET_EXCEEDED"}
+    assert result.verify_failed_ok is False

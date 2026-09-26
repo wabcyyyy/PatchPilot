@@ -500,3 +500,23 @@ def test_verify_double_run_disabled_runs_pytest_four_times(
         ]
     )
     assert not (Path(result.run_dir) / "reports" / "verify-failed-rerun.xml").exists()
+
+
+def test_graph_wrong_failed_test_id_never_resolves(tmp_path: Path) -> None:
+    """P3-17/R3-Q5 空集陷阱·判定层集成用例:bug 带错测试 id → pytest rc=4
+    (usage error),verify 每轮都不绿,终态不得为 FINISHED/resolved——
+    「junit 无匹配」永远不等于「全部通过」。
+
+    实测收敛(R3-Q5 草案预期 BUDGET_EXCEEDED,实际更早):第 1 轮 verify 不绿
+    回滚后,FakeLLM 脚本耗尽 → 模型声明放弃且无补丁 → VERIFY_FAILED。
+    钉死的是「带错 id 的 bug 永远不得 resolved」,具体失败终态是哪一种
+    属引擎路由语义(给了补丁轮尽是 BUDGET_EXCEEDED,放弃是 VERIFY_FAILED)。
+    """
+    bug = load_bug("BUG-001", BUG_ROOT)
+    bug.failed_tests = ["tests/test_dateparse.py::test_does_not_exist"]  # 错 id
+    model = FakeLLM(_localize_script() + _propose_script(_fix_diff()))
+    result = run_task_graph(bug, model, runs_root=tmp_path / "runs")
+
+    assert result.status in {"VERIFY_FAILED", "BUDGET_EXCEEDED"}
+    assert result.verdict != "resolved"
+    assert result.verify_failed_ok is False
