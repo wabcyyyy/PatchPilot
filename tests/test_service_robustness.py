@@ -68,6 +68,80 @@ def test_create_task_wires_max_rounds_into_engine(tmp_path: Path) -> None:
     service.shutdown()
 
 
+def test_queued_task_stays_queued_until_execution_starts(tmp_path: Path) -> None:
+    """P3-10:RUNNING 置位在 _execute 首行——已受理但池内排队的任务如实保持
+    QUEUED(create_task 处不再置 RUNNING,DB 状态 = 真实执行状态)。"""
+    import threading
+
+    service = TaskService(
+        repo=Repository(tmp_path / "db.sqlite3"),
+        runs_root=tmp_path / "runs",
+        bugs_root=Path("bugs"),
+        max_workers=1,
+    )
+    started = threading.Event()
+    release = threading.Event()
+
+    def _block(*args, **kwargs):
+        started.set()
+        release.wait(timeout=10)
+
+    service._execute = _block  # type: ignore[method-assign]
+    try:
+        service.create_task(bug_id="BUG-001", engine="graph", model="fake")
+        assert started.wait(timeout=10)  # 第一个任务占住唯一 worker
+        queued, created = service.create_task(bug_id="BUG-002", engine="graph", model="fake")
+        assert created
+        assert queued["status"] == "QUEUED"  # P3-10:排队可见,不是 RUNNING
+    finally:
+        release.set()
+    service.shutdown()
+
+
+def test_cancelled_before_start_never_executes(tmp_path: Path) -> None:
+    """P3-10:_execute 首行发现任务已到终态(排队窗口内被取消)时必须跳过执行
+    ——不得复活为 RUNNING、不得产生产物,锁释放、状态保持 CANCELLED。"""
+    import threading
+    import time
+
+    service = TaskService(
+        repo=Repository(tmp_path / "db.sqlite3"),
+        runs_root=tmp_path / "runs",
+        bugs_root=Path("bugs"),
+        max_workers=1,
+    )
+    started = threading.Event()
+    release = threading.Event()
+    real_execute = service._execute
+    holder: dict[str, str] = {"first": ""}
+
+    def _controlled(task_id, *args, **kwargs):
+        started.set()
+        release.wait(timeout=10)  # 占住唯一 worker,制造排队窗口
+        if task_id == holder["first"]:
+            return None  # 被占位的第一个任务:不走真实执行
+        return real_execute(task_id, *args, **kwargs)
+
+    service._execute = _controlled  # type: ignore[method-assign]
+    task, _ = service.create_task(bug_id="BUG-001", engine="graph", model="fake")
+    holder["first"] = task["task_id"]
+    assert started.wait(timeout=10)
+    queued, created = service.create_task(bug_id="BUG-002", engine="graph", model="fake")
+    assert created
+    assert service.cancel_task(queued["task_id"])["status"] == "CANCELLED"
+    release.set()
+    # 第一个任务让位后,池轮到被取消的任务:真实 _execute 首行发现已终态,早退
+    idem2 = _idem("BUG-002", "graph", "fake")
+    deadline = time.monotonic() + 10
+    while not service.lock.acquire(f"task:{idem2}", ttl_seconds=5):
+        assert time.monotonic() < deadline, "cancelled-before-start task never released lock"
+        time.sleep(0.05)
+    service.lock.release(f"task:{idem2}")
+    assert service.repo.get_task(queued["task_id"])["status"] == "CANCELLED"
+    assert not (tmp_path / "runs" / queued["task_id"] / "report.json").exists()
+    service.shutdown()
+
+
 def test_recover_stale_releases_stale_locks(tmp_path: Path) -> None:
     """N-20 整改:启动恢复必须同步清掉残留任务锁——否则崩溃重启后
     同键重试会被 409 卡死到 TTL(约 16 分钟),且报错语义错误。"""

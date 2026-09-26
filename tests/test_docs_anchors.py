@@ -96,11 +96,11 @@ def test_p3_7_corrected_claims_are_pinned() -> None:
     adr1 = _read("docs/adr/0001-langgraph-编排.md")
     assert any("仅作轨迹留档" in line for line in adr1[22:26]), adr1[22:26]
     assert any("崩溃恢复由 recover_stale" in line for line in adr1[27:32]), adr1[27:32]
-    # design.md 第三副本(design.md:51)
+    # design.md 第三副本(design.md:62)
     design = _read("docs/design.md")
-    assert "仅作轨迹留档" in design[50], design[50]
-    # 攻击样例 9 个 ×3(design.md:71 / threat-model.md:45 / README.md:20)
-    assert "9 个" in design[70], design[70]
+    assert "仅作轨迹留档" in design[61], design[61]
+    # 攻击样例 9 个 ×3(design.md:82 / threat-model.md:45 / README.md:20)
+    assert "9 个" in design[81], design[81]
     assert "攻击样例 9 个拦截" in _read("docs/threat-model.md")[44]
     assert "9 个攻击样例" in _read("README.md")[19]
     # 七项门禁 docstring(gates.py:1 / nodes.py:325)

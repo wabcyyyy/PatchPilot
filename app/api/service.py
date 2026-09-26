@@ -163,9 +163,9 @@ class TaskService:
                 model_provider=model,
                 run_dir=str(run_dir),
             )
-            # N-7/R2 整改:置 RUNNING 走条件写——QUEUED 与 RUNNING 之间存在
-            # cancel 窗口,无条件写会把并发 cancel 写入的 CANCELLED 复活
-            self.repo.set_status_unless_terminal(task_id, "RUNNING")
+            # N-7/R2 整改保留:RUNNING 置位已挪入 _execute 首行(P3-10)——
+            # 此前在 create_task 置 RUNNING,语义是"已受理进线程池"而非执行中,
+            # 池内排队在 DB 不可见;现在排队中如实保持 QUEUED
             # 提交前先注册取消事件,保证 create 返回后的任何 cancel 都不会丢失
             cancel_event = self._cancels.register(task_id)
             future = self._pool.submit(
@@ -218,6 +218,15 @@ class TaskService:
         cancel_event,
         replay_script: list[dict[str, Any]] | None = None,
     ) -> None:
+        # P3-10 整改:置 RUNNING 挪到执行线程首行——DB 的 RUNNING = 真正开始执行
+        # (受理但排队中保持 QUEUED)。条件写让位于并发取消/回滚:返回 False
+        # 说明任务已到终态(如排队窗口内被取消),不再执行,直接收敛清理。
+        if not self.repo.set_status_unless_terminal(task_id, "RUNNING"):
+            log.info("task %s already terminal before start; skipping execution", task_id)
+            self._futures.pop(task_id, None)
+            self._cancels.unregister(task_id)
+            self.lock.release(lock_key)
+            return
         try:
             settings = get_settings()
             script = None

@@ -47,6 +47,17 @@ regression 必须绿)由生成器与测试双重把关——回归集在基线�
 
 - 幂等 = "同键(bug+engine+model)任务在途时直接返回" + 任务锁(Redis NX / 内存兜底),
   终态任务允许重跑——因此 `idem_key` 不设 UNIQUE 约束;
+- **并发语义如实声明(P3-10)**:
+  - DB 状态的 RUNNING = 执行线程已开始(置位在 `_execute` 首行,提交至线程池
+    但仍在排队的任务如实保持 QUEUED),不是"已受理";
+  - `task_timeout_seconds`(默认 900s)只是工具循环入口与 turn 边界的预算检查,
+    物化仓库/基线/verify/E3 复核不在预算内——合法 graph 任务的墙钟上界
+    ≥ 5 轮 × (3 次双跑 pytest + LLM 调用) ≈ 1620s,可超过 900s;
+  - 任务锁 TTL = task_timeout + 60 = 960s,同样可被合法长任务超过;TTL 过期后
+    持锁方 release 因 token 不匹配变 no-op(不误删他人锁);
+  - 因此**防双执行的第一道防线是幂等行读取**(同键在途任务直接返回原任务),
+    不是锁——锁过期后同键 create_task 命中幂等分支,根本走不到加锁;
+    锁只是"极小窗口内查不到行"时的兜底。多进程共库部署前必须重审本节。
 - 崩溃恢复:服务启动把 RUNNING/QUEUED 僵尸任务标记 NEEDS_REVIEW;
 - LangGraph checkpoint(SqliteSaver)仅作轨迹留档,不提供崩溃恢复
   (P3-7 如实化,与 app/graph/checkpoint.py:3-5 自述一致)——

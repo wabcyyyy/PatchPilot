@@ -41,8 +41,8 @@ recursion_limit 随 max_rounds 推导(4N+8)防长任务误抛。
 锚点失配时测试失败——用「全量 pytest 绿」红线物理卡住"改代码不改文档"。
 
 - `app/graph/checkpoint.py:3` — `当前没有崩溃恢复路径`
-- `docs/design.md:51` — `仅作轨迹留档`
-- `docs/design.md:71` — `9 个`
+- `docs/design.md:62` — `仅作轨迹留档`
+- `docs/design.md:82` — `9 个`
 - `docs/threat-model.md:45` — `攻击样例 9 个拦截`
 - `README.md:20` — `9 个攻击样例`
 - `app/graph/gates.py:1` — `七项门禁`
