@@ -31,6 +31,15 @@ class OpenAICompatModel:
     provider = "openai"
 
     def __init__(self, settings: Settings) -> None:
+        # P3-3 整改(P0-2 复活链收口):llm_enabled=true + 凭据齐 + llm_model=""
+        # 的组合此前全程零拦截,report.json 会落盘 model_name=""——真实评测
+        # 不可追溯。守卫下沉到构造处:任何经 build_model("openai") 的入口
+        # (API 预检/plain/graph/run_single)都被同一道校验拦下。
+        if not settings.llm_model.strip():
+            raise TaskError(
+                "PATCHPILOT_LLM_MODEL is empty; real LLM calls must carry a model name"
+                "(缺模型名的任务/批次拒绝发起,否则 report.json 无模型身份、证据链断裂)"
+            )
         if not settings.llm_api_key or not settings.llm_base_url:
             raise TaskError(
                 "openai provider requires PATCHPILOT_LLM_BASE_URL and PATCHPILOT_LLM_API_KEY"

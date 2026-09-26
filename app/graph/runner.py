@@ -39,6 +39,16 @@ def run_task_graph(
 
     task_id/run_dir 可由调用方(API 服务)指定,保证产物目录与服务记录一致。
     """
+    # P3-3 整改:第四入口(run_task_graph)此前零守卫——与 driver.run_task 同口径,
+    # 真实模型(llm_enabled=True 且非 fake-replay)缺 model_name 时在物化任何
+    # 仓库之前拒绝;fake 回放豁免(零花费路径不受约束,夜志 E2 明文理由)
+    from app.config import get_settings
+    from app.evals.provenance import require_model_name
+
+    require_model_name(
+        model_name,
+        get_settings().llm_enabled and getattr(model, "provider", "") != "fake-replay",
+    )
     from app.evals.driver import TaskResult  # 延迟导入,避免循环依赖
     from app.evals.pricing import estimate_cost
     from app.evals.provenance import build_provenance
