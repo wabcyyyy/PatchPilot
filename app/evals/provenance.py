@@ -51,7 +51,13 @@ def git_commit() -> str:
 
 
 def worktree_dirty() -> bool | None:
-    """工作树是否有未提交改动(P3-2);git 不可用/命令失败返回 None = 无法判定。
+    """工作树是否有**未提交的 tracked 改动**(P3-2);git 不可用/命令失败返回
+    None = 无法判定。
+
+    语义边界(实测校准):只统计 tracked 文件的修改/暂存/重命名/删除;
+    **未跟踪文件不计入**——它们不影响"锚点 commit 能否复现本批"这一判据
+    (本仓库长期存在未跟踪的 .idea//demo/,若计入则本标志永远为真、失去操作性);
+    未跟踪内容若恰是批次输入,由 manifest 的 input_anchor_missing 暴露。
 
     证据链意义:脏工作树跑出的批次,`git_commit` 锚点不能代表实际执行的输入——
     fake36 批即跑在"E5 已迁移文件、ca17ccc 未提交"的脏树上,锚点 commit 上
@@ -61,19 +67,18 @@ def worktree_dirty() -> bool | None:
     out = _run_git(["status", "--porcelain"])
     if out is None:
         return None
-    return bool(out.strip())
+    return any(line.strip() and not line.startswith("??") for line in out.splitlines())
 
 
 def dirty_fingerprint() -> str:
     """脏树指纹(P3-2):sha256(状态条目名单 + tracked 改动全文)前 16 位;
-    工作树干净或无法判定时返回空串。
+    **当且仅当 worktree_dirty 为 True 时非空**(干净/仅未跟踪/无法判定 → 空串)。
 
     指纹相同 ⇒ 状态条目与 tracked 改动相同,足以识别"是哪棵脏树";
-    口径边界如实声明:**未跟踪文件只记名不记内容**(名单进哈希,内容不进),
-    指纹不用于复现未跟踪文件的内容。
+    口径边界如实声明:未跟踪文件只进名单不进内容,指纹不用于复现未跟踪内容。
     """
     porcelain = _run_git(["status", "--porcelain"])
-    if porcelain is None or not porcelain.strip():
+    if porcelain is None or worktree_dirty() is not True:
         return ""
     tracked_diff = _run_git(["diff", "HEAD"]) or ""
     digest = hashlib.sha256((porcelain + "\n" + tracked_diff).encode("utf-8")).hexdigest()

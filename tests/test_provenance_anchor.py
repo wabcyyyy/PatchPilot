@@ -48,6 +48,23 @@ def test_clean_tree_is_false_with_empty_fingerprint(monkeypatch: pytest.MonkeyPa
     assert dirty_fingerprint() == ""
 
 
+def test_untracked_only_is_not_dirty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """只统计 tracked 改动:仅有未跟踪文件(本仓库长期存在 .idea//demo/)时
+    worktree_dirty=False、指纹空——否则本标志在本仓库永远为真、失去操作性。
+    未跟踪内容若恰是批次输入,由 manifest 的 input_anchor_missing 暴露。"""
+    _stub_git(monkeypatch, {("status", "--porcelain"): "?? .idea/\n?? demo/\n"})
+    assert worktree_dirty() is False
+    assert dirty_fingerprint() == ""
+
+
+def test_staged_change_also_counts_as_dirty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """staged(A/M/D 前缀)与未暂存改动同等计入——都属于"锚点之外的状态"。"""
+    for porcelain in ("A  bugs/BUG-099/manifest.yaml\n", "M  app/config.py\n", "D  old.py\n"):
+        _stub_git(monkeypatch, {("status", "--porcelain"): porcelain, ("diff", "HEAD"): "x"})
+        assert worktree_dirty() is True, porcelain
+        assert len(dirty_fingerprint()) == 16, porcelain
+
+
 def test_dirty_tree_flag_and_fingerprint(monkeypatch: pytest.MonkeyPatch) -> None:
     _stub_git(
         monkeypatch,
