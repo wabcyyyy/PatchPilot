@@ -67,6 +67,27 @@ max_tokens/超时/重试、单任务 token 预算门禁(BUDGET_EXCEEDED)。
 能操作守护进程≈能操作宿主。这是把执行隔离从"进程"升级为"容器"的代价,
 仅在信任 API 调用方的前提下使用(见 docs/docker-backend-notes.md)。
 
+### R3a 软链残余风险(2026-09-26 补记,审计 R3-Q4 实证;ATTACK-009 声明范围外)
+
+ATTACK-009 的自述范围是「越界路径」(落点 `../escape.txt`,被静态路径门禁拦下)。
+其之外存在一条**合法路径软链**残余链,两端实测均已钉死:
+
+- **攻击面**:补丁以 `new file mode 120000` 在合法落点新建软链(落点原不存在),
+  指向工作区外模块。逐环节实测:静态门禁不拦(`gates.py` 的 `_NEW_FILE_RE`
+  只识别 new file 段、从不解析 mode 值)、落点校验不拦(`patcher._target_violation`
+  只查「落点已是软链」与「resolve 越界」,新路径两查皆过)、`git apply --check`
+  不拦、verify 阶段被消费——Linux 容器内「先删既有 pkg/util.py → 同路径新建
+  120000 软链指向工作区外 evil_mod.py」两步变体(每步独立过门禁)后,
+  verify 的 pytest `from pkg.util import helper` **import 了工作区外模块,
+  测试通过**;
+- **不放大面**:Windows 宿主(local 默认,`core.symlinks=false`)实测 git apply
+  落普通文件或报错 rc=128,链条在 git 层断掉;软链落点若被 read_file 触碰,
+  `relpath_within` 校验会拦;后续触碰同路径的补丁、测试/控制面命名规则(影子
+  门禁)也会拦;
+- **裁决**:属 ATTACK-009/E1 已声明范围之外的残余风险,如实记录而非宣称已防。
+  「new file mode 120000 一律拒」属门禁语义变更(`gates.py` 边界,AGENTS 红线),
+  须另行评审后再实施(见 docs/人工触发清单-2026-09-26.md)。
+
 ## 4. 明确不防(边界外)
 
 - 多租户隔离、配额、审计(单机工具定位);
@@ -77,7 +98,11 @@ max_tokens/超时/重试、单任务 token 预算门禁(BUDGET_EXCEEDED)。
   Agent 改过的代码,它理论上可伪造 junit/退出码。影子门禁(新增文件不得与
   pytest/stdlib 同名)封掉了最直接的伪造通道,但"恶意仓库作者在基线里预置
   伪造逻辑"(基线仓库本身不可信)不在防线上——自定义任务请确保基线仓库可信,
-  或用 docker 后端 + 可信基线。
+  或用 docker 后端 + 可信基线;
+- **合法路径软链新建**(R3a,2026-09-26 实证补记):new file mode 120000 的
+  合法落点软链在静态门禁/落点校验/git apply 三关都不设防,Linux 容器内
+  verify 阶段可消费工作区外模块——缓解与裁决见 §3 R3a;门禁层修复(120000
+  一律拒)属语义变更,评审前不做。
 
 ## 5. 部署形态与适用边界
 
