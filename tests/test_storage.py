@@ -147,7 +147,27 @@ def test_finalize_and_cancel_are_atomically_guarded(tmp_path: Path) -> None:
     finished = repo.get_task("T2")
     assert finished["status"] == "FINISHED" and finished["verdict"] == "resolved"
 
+    # 方向 c(P3-4):终态之间的改写一律无效,谁先到终态谁赢
+    assert repo.finalize_task("T2", "BUDGET_EXCEEDED", "failed") is False
+    after = repo.get_task("T2")
+    assert after["status"] == "FINISHED" and after["verdict"] == "resolved"
+
     # 非终态流转(RUNNING)仍走无条件写入
     _make_task(repo, "T3", "idem-3")
     repo.set_status_unless_terminal("T3", "RUNNING")
     assert repo.get_task("T3")["status"] == "RUNNING"
+
+
+def test_finalize_cannot_revive_needs_review(tmp_path: Path) -> None:
+    """P3-4:NEEDS_REVIEW(recover_stale 的收敛值)不得被 finalize(FINISHED)
+    复活——多进程共库时 B 进程把 A 的在途任务收敛 NEEDS_REVIEW,A 跑完
+    finalize 不得改写;行保持 NEEDS_REVIEW 等人复核。"""
+    repo = Repository(tmp_path / "t.sqlite3")
+    _make_task(repo, "T1", "idem-1")
+    repo.set_status_unless_terminal("T1", "RUNNING")
+    # 模拟 recover_stale / 另一进程的收敛
+    assert repo.finalize_task("T1", "NEEDS_REVIEW", "needs_review") is True
+    # 原进程跑完后的 finalize 必须输掉竞争
+    assert repo.finalize_task("T1", "FINISHED", "resolved") is False
+    row = repo.get_task("T1")
+    assert row["status"] == "NEEDS_REVIEW" and row["verdict"] == "needs_review"

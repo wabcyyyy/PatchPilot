@@ -114,16 +114,20 @@ class Repository:
         return cur.rowcount > 0
 
     def finalize_task(self, task_id: str, status: str, verdict: str | None = None) -> bool:
-        """终态回写(N-7 整改):任务已被取消时不覆盖,返回 False 表示输掉竞争。
+        """终态回写(N-7/P3-4 整改):任一终态不可覆写,谁先到终态谁赢。
 
-        此前"先 get_task 再判断再 UPDATE"是 check-then-act,取消与自然完成
-        可以互相覆盖;现在把守卫下沉为单条原子语句,以 rowcount 判定。
+        此前守卫仅 `!= 'CANCELLED'`:只防"完成覆盖取消",防不了终态之间的
+        互相覆写——多进程共库时 recover_stale(B 进程)把 A 的在途任务收敛
+        NEEDS_REVIEW 后,A 跑完 finalize(FINISHED) 会把 NEEDS_REVIEW"复活"。
+        现在守卫下沉为 NOT IN 全终态的单条原子语句,以 rowcount 判定输赢。
+        多进程部署前仍需重审(design.md §7)。
         """
+        placeholders = ",".join("?" * len(TERMINAL_STATUSES))
         with self._lock, self._conn:
             cur = self._conn.execute(
-                "UPDATE tasks SET status=?, verdict=?, finished_at=?"
-                " WHERE id=? AND status != 'CANCELLED'",
-                (status, verdict, _now(), task_id),
+                f"UPDATE tasks SET status=?, verdict=?, finished_at=?"
+                f" WHERE id=? AND status NOT IN ({placeholders})",
+                (status, verdict, _now(), task_id, *TERMINAL_STATUSES),
             )
         return cur.rowcount > 0
 

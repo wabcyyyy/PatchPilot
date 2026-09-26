@@ -197,7 +197,8 @@ class TaskService:
         log.exception("task %s failed to schedule; rolling back", task_id)
         try:
             if self.repo.get_task(task_id) is not None:
-                # finalize_task 自带 != CANCELLED 守卫:回滚不得覆盖并发取消
+                # finalize_task 守卫任一终态不可覆写(P3-4):回滚不得覆盖
+                # 已到终态的任务(含并发取消与并发回滚)
                 self.repo.finalize_task(task_id, "NEEDS_REVIEW", "needs_review")
         except Exception:
             log.exception("task %s rollback failed", task_id)
