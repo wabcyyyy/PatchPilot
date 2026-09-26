@@ -10,7 +10,9 @@
   失败/取消/NEEDS_REVIEW 任务保留现场(语义是"需要人看",回收让复盘失明);
 - 启动 Grace 扫描:崩溃/重启场景下 _execute 收尾没跑到的 FINISHED 任务,
   由服务启动时补收——只动 finished_at 早于 grace 截止的行,刚结束的留给
-  人看;运行期在 service._execute 终态回写后即时回收(仅 FINISHED 路径);
+  人看;运行期在 service._execute 终态回写后即时回收(仅 FINISHED 路径)。
+  **语义是最终一致,不是瞬时**(实测窗口:终态回写先于回收完成,观察者可能
+  在极短窗口内读到 FINISHED 而可弃集尚在;轮询方不可假设两者原子);
 - Windows 占用两类:工作区里的 git objects 是只读文件(WinError 5,删除前
   整树去只读);报告/轮询方短暂持有时 rmtree 抛 sharing violation
   (WinError 32),短退避重试数次后放弃本次(下次启动扫描再收)。

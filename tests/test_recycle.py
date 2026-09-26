@@ -119,11 +119,21 @@ def test_grace_scan_recycles_only_old_finished_tasks(tmp_path: Path) -> None:
     assert (cancelled / "workspace").exists()  # 取消现场不回收
 
 
-def test_service_recycles_workspace_on_finished(tmp_path: Path) -> None:
-    """端到端:service 跑完 FINISHED 任务 → _execute finally 回收可弃集,
-    取证文件与 DB 终态完整。"""
+def test_service_recycles_workspace_on_finished(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """端到端:service 跑完 FINISHED 任务 → 终态回写后回收可弃集,取证文件与
+    DB 终态完整。
+
+    P3-12 语义钉死(本测试同时证明两件事):
+    ① 回收是**最终一致而非瞬时**——注入 1s 慢回收后,观察到 FINISHED 时
+       workspace 仍在(终态回写先于回收完成,观察窗口真实存在;全量 pytest
+       曾因此出现 1 次 flake,已按此根因修复测试的瞬时假设);
+    ② 有界等待内**必须被回收**——断言强度不变,只去掉原子性假设。
+    """
     import time
 
+    import app.api.service as service_mod
     from app.api.service import TaskService
     from app.storage.repository import TERMINAL_STATUSES
 
@@ -135,6 +145,17 @@ def test_service_recycles_workspace_on_finished(tmp_path: Path) -> None:
         _TINY_FIX_DIFF,
         _materialize_tiny_repo,
     )
+
+    real_recycle = service_mod.recycle_run_dir
+    observed: dict[str, bool] = {}
+
+    def slow_recycle(run_dir: Path) -> int:
+        # 先取证再拖时:记录"进入回收时 workspace 仍在"(此刻 DB 已是 FINISHED)
+        observed["workspace_during_window"] = (Path(run_dir) / "workspace").exists()
+        time.sleep(1.0)
+        return real_recycle(run_dir)
+
+    monkeypatch.setattr(service_mod, "recycle_run_dir", slow_recycle)
 
     repo_root = tmp_path / "tiny-repo"
     _materialize_tiny_repo(repo_root)
@@ -175,6 +196,18 @@ def test_service_recycles_workspace_on_finished(tmp_path: Path) -> None:
     final = service.repo.get_task(task["task_id"])
     assert final["status"] == "FINISHED", final
     run_dir = Path(final["run_dir"])
+    # ① 窗口确实存在(有界等待取证,去计时巧合):DB 已 FINISHED 时,进入回收的
+    #    那一刻 workspace 仍在——终态回写先于回收完成,观察者不得假设原子性
+    window_deadline = time.monotonic() + 10
+    while "workspace_during_window" not in observed and time.monotonic() < window_deadline:
+        time.sleep(0.05)
+    assert observed.get("workspace_during_window") is True, (
+        "预期回收窗口内 workspace 仍在(证明终态回写先于回收完成)"
+    )
+    # ② 有界等待内必须回收:断言强度不变,只不假设原子性
+    deadline = time.monotonic() + 30
+    while (run_dir / "workspace").exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
     assert not (run_dir / "workspace").exists(), "FINISHED 任务的可弃集必须已回收"
     assert not (run_dir / "checkpoints.sqlite").exists()
     assert (run_dir / "report.json").exists()
