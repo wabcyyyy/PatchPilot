@@ -76,6 +76,27 @@ def test_repro_falls_back_to_row_fields_for_legacy_batches(tmp_path: Path) -> No
     assert f"--model fake --engine graph --out {runs.as_posix()}" in text
 
 
+def test_repro_engine_fallback_is_unknown_not_graph(tmp_path: Path) -> None:
+    """P3-16 钉死:engine 与 provenance 全缺的历史行,复现命令兜底 --engine unknown
+    (不可执行的诚实),绝不编造可执行的 --engine graph 假命令。"""
+    runs = tmp_path / "runs" / "legacy"
+    _write_report(runs / "BUG-001-x", engine="")
+    text = render(runs, BUG_ROOT)
+
+    assert f"--engine unknown --out {runs.as_posix()}" in text
+    assert "--engine graph" not in text
+
+
+def test_repro_empty_batch_example_uses_plain(tmp_path: Path) -> None:
+    """P3-16 钉死:空批次的示例命令用 plain(驱动器真实支持的引擎),
+    不再硬编码 graph。"""
+    from app.evals.report import repro_commands
+
+    cmds = repro_commands(tmp_path / "empty", [], "docs/eval-report.md")
+    assert any("--engine plain" in c and "--bug BUG-001" in c for c in cmds)
+    assert not any("--engine graph" in c for c in cmds)
+
+
 def test_driver_records_provenance(tmp_path: Path) -> None:
     bug = load_bug("BUG-001", BUG_ROOT)
     result = run_task(bug, FakeLLM(load_replay_script(bug)), runs_root=tmp_path / "runs")

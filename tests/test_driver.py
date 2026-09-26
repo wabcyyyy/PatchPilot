@@ -316,3 +316,14 @@ def test_batch_cli_blind_end_to_end(tmp_path: Path) -> None:
     )
     assert manifest["blind"] is True and manifest["bug_ids"] == ["BUG-001"]
     assert manifest["verdict_counts"] == {"resolved": 1}
+
+
+def test_batch_cli_rejects_graph_engine() -> None:
+    """P3-16 钉死:driver 批次 CLI 只支持 plain——--engine graph 是
+    「graph 脚本喂 plain 循环」的假引擎,必须在 argparse 层拒绝。
+    「unknown 命令不可执行」是故意的口径,graph 引擎走 run_single --engine graph。"""
+    from app.evals.driver import main
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(["--bugs", "BUG-001", "--out", "runs/whatever", "--engine", "graph"])
+    assert exc_info.value.code == 2  # argparse usage error

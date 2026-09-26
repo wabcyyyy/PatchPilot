@@ -352,7 +352,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="PatchPilot 批次驱动器")
     parser.add_argument("--bugs", default="all", help='"all" 或逗号分隔的 BUG-xxx 列表')
     parser.add_argument("--model", default="fake", choices=["fake", "openai"])
-    parser.add_argument("--engine", default="plain", choices=["plain", "graph"])
+    # P3-16:本 CLI 只支持 plain——graph 回放脚本喂 plain 循环是假 engine
+    # (R3-Q6);graph 引擎走 python -m app.evals.run_single --engine graph
+    parser.add_argument("--engine", default="plain", choices=["plain"])
     parser.add_argument("--out", required=True, help="批次 runs 目录")
     parser.add_argument("--blind", action="store_true", help="盲跑对照:issue 置占位")
     parser.add_argument("--max-turns", type=int, default=20)

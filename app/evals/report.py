@@ -35,12 +35,15 @@ def repro_commands(runs_root: Path, per_bug: list[RunRow], report_out: str) -> l
     combos: dict[tuple[str, str], str] = {}
     for row in sorted(per_bug, key=lambda r: r.bug_id):
         provider = str(row.provenance.get("model_provider") or row.model_provider)
-        engine = str(row.provenance.get("engine") or row.engine or "graph")
+        # P3-16:兜底 "unknown" 而非 "graph"——146 份历史 report 无一同时缺
+        # engine 与 provenance(实测),但真缺时编造可执行的假命令比承认
+        # "引擎不明"更糟:「不可执行的诚实」优于「可执行的错误」
+        engine = str(row.provenance.get("engine") or row.engine or "unknown")
         combos.setdefault((_model_flag(provider), engine), row.bug_id)
 
     lines = []
-    if not combos:  # 空批次:退化为通用示例
-        combos = {("fake", "graph"): "BUG-001"}
+    if not combos:  # 空批次:退化为通用示例(plain 引擎,驱动器真实支持)
+        combos = {("fake", "plain"): "BUG-001"}
     for (model_flag, engine), bug_id in sorted(combos.items()):
         lines.append(
             f"python -m app.evals.run_single --bug {bug_id}"
