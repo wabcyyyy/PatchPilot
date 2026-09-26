@@ -17,7 +17,8 @@ docs/docker-isolation-notes.md 五项实验(2026-09-16 实测)
 
 `execution_backend: str = "local"`。理由:本项目是单机工具(threat-model §4,
 不做多租户);工作区已是源仓库副本(snapshot.py),"改坏源仓库"风险在 gitops 层
-已被隔离;判定完整性靠门禁(七项)+ verify 双跑复核(E3)这类结构防线,
+已被隔离;判定完整性靠门禁(七项)与 verify 双跑复核(E3;P3-5 如实化:
+E3 是结构性冒烟复核,防非自适应偶发伪绿,不是防线),
 而非容器边界;CI 与离线评测不能依赖守护进程状态(本轮 SPEC 红线亦明示
 "不需要 Docker")。
 
