@@ -1,0 +1,101 @@
+# 第二轮对抗审计整改报告(2026-09-26)
+
+> 工作方式:对照 docs/interview-audit-2026-09-26.md 的 18 条真问题(P3-1..P3-18),
+> 按「第一批文档止血 → 第二批小代码高价值 → 第三批人工触发」三批落地,每卡一个
+> Conventional Commits commit,提交前跑绿 `PATCHPILOT_LLM_ENABLED=false pytest -q`
+> 与 `ruff check .`。标注口径:**已修** = 修复落地且带测试(或纯文档已如实化);
+> **部分** = 文档/链路已就绪但证据本体待人工触发;**未动** = 属门禁/部署语义变更或
+> 结构变更,等人工确认(见 docs/人工触发清单-2026-09-26.md)。
+> 不把「给了方案」记成「已落地」。
+
+## 0. 基线与结果
+
+- 起点:d22ea64(审计报告入库),290 passed + 2 skipped(本机无 Redis),ruff 全绿;
+- 终点:HEAD 见 §2 提交清单,全量 pytest 绿(数字见文末「验证」节),ruff 全绿;
+- 新增测试:test_docs_anchors.py(4)、test_model_name_guard.py(6)、
+  test_logging_setup.py(6)、test_recycle.py(5)、test_validate_candidate.py(3)
+  及既有文件内新增用例(test_storage 方向 c、test_report 判型/软集警报、
+  test_driver 分类快照/graph 拒绝、test_graph 错 id、test_docker 错 id、
+  test_service_robustness 排队语义 ×2)。
+
+## 1. 逐条对照(P3-1..P3-18)
+
+| 编号 | 结论 | 落地内容 | 证据 |
+|---|---|---|---|
+| P3-1 真实模型批次为零 | **部分(链路就绪)** | 真实跑批需 API 花费,入人工触发清单第 1 项;守卫链已保证 report.json 必带 model_name | 人工触发清单 §1 |
+| P3-2 溯源锚点为脏工作树 | **部分(清单)** | 干净树重跑 + provenance 脏树指纹入人工触发清单第 4 项(属溯源语义小改,随批评审) | 人工触发清单 §4 |
+| P3-3 守卫复活链 | **已修** | require_model_name 守卫下沉 openai_client 构造(llm_model 非空,先于 openai 包导入)+ run_task_graph 第四入口补同口径守卫;fake 豁免语义保留(夜志 E2 理由);API+graph/API+plain/run_single/直连 graph 四链测试 | app/llm/openai_client.py、app/graph/runner.py、tests/test_model_name_guard.py;commit 9f26649 |
+| P3-4 finalize 弱守卫 | **已修** | 守卫改 NOT IN 全终态(谁先到终态谁赢),NEEDS_REVIEW 复活方向测试;多进程部署附注留档(人工触发清单 §6) | app/storage/repository.py finalize_task、tests/test_storage.py;commit 263d969 |
+| P3-5 E3 零佐证+口径互斥 | **部分(文档已修,实验入清单)** | ①文档:config.py「攻击成本翻倍」废弃,nodes/ADR-0002/threat-model §4/design.md §8 统一降格为「结构性冒烟复核,防非自适应偶发伪绿」(commit bef502e);②补证实验(fake 回放零花费)按卡归入人工触发清单第 3 项 | app/config.py:70-77、docs/design.md §8、人工触发清单 §3 |
+| P3-6 软链残余风险 | **部分(文档已修,门禁待确认)** | threat-model §3 R3a 残余段 + §4 边界补记(commit 184f227);「120000 一律拒」属门禁语义变更(AGENTS 红线),方案要点写入人工触发清单第 5 项 | docs/threat-model.md R3a;人工触发清单 §5 |
+| P3-7 文档互斥 7 处 | **已修 + 防复发机制** | 崩溃恢复 ×3(ADR-0001:24/29、design.md)如实化;「8 个」→9 ×3;「六项」→「七项」×2;ADR-0002:31 compose 冒烟如实化;test_docs_anchors.py 锚点断言(ADR 末尾「验证锚点」节 + file:line 级断言 + 假命题黑名单) | tests/test_docs_anchors.py;commit c666215(锚点随编辑漂移同步 ×4:3f899f7 等) |
+| P3-8 evaluations 三处分裂 | **已修** | 表/迁移/upsert/list/用例全删(P1-5 先例);读口径「tasks=生命周期真相,report.json=引擎取证」写入 design.md §7 | app/storage/db.py、repository.py、service.py;commit 71ac776 |
+| P3-9 日志零接线 | **已修(装配)/另立卡(per-event)** | Settings.log_level(带校验)+ app.py _setup_logging(root 无 handler 才接线)+ TaskContextFilter(contextvar)+ _execute 线程首行设上下文 + lifespan 空 token 启动告警(诚实声明:检测不了实际绑定地址);per-event request_id 重构如实记录为另一张卡 | app/logctx.py、app/api/app.py、tests/test_logging_setup.py;commit d0f3a5d |
+| P3-10 并发语义 | **已修** | 置 RUNNING 挪入 _execute 首行(排队如实保持 QUEUED,取消早退不复活不产产物);design.md §7 显式声明:900s 只盖 turn 边界、合法 graph 任务 ≥1620s 超锁 TTL 960s、防双执行靠幂等行非锁 | app/api/service.py、docs/design.md §7;commit 319bc26 |
+| P3-11 snapshot 白名单 | **已修** | 补 verify_double_run(git 考古证实为遗漏)/task_timeout_seconds/default_max_rounds;Settings 键三分类(快照/密钥/豁免)快照测试——新键不三选一即 CI 失败;max_turns 升格记录为结构变更不实施 | app/evals/provenance.py SNAPSHOT/SECRET/EXEMPT_KEYS、tests/test_driver.py;commit f35628d |
+| P3-12 「永久保留」不可持续 | **已修** | tracker.py 与企划书承诺改两档(取证集永久/可弃集回收);app/api/recycle.py 终态回收器挂 _execute finally(仅 FINISHED 且赢终态竞争)+ 启动 Grace 扫描;Windows 实测两类占用分治:git objects 只读(WinError 5)整树去只读、sharing violation(WinError 32)退避重试 | app/api/recycle.py、tests/test_recycle.py;commit f8d9c65 |
+| P3-13 判型口径 | **已修** | design.md 分引擎口径(graph 批 PATCH_REJECTED 恒不为终态);report.py 判型四类互斥(resolved/needs_review 按 verdict,门禁拦截按 gate_violations),graph 批门禁拒绝不再被记 0 | app/evals/report.py、docs/design.md;commit 920964a |
+| P3-14 评测治理 | **已修(文档与机制)/清单(外部复核)** | checklist「修法唯一」改操作化标准「无误杀」(review-2026-09-25.md 加整改注记,不改历史表);preflight --log-dir 逐题原始输出落盘 + 3 用例;外部复核/双盲 checklist 入人工触发清单 §6(人力) | scripts/validate_candidate.py、bugs/candidates/README.md;commit 752cb32 |
+| P3-15 证据源不可达 | **部分(README 已修,对照批入清单)** | README「以 CI 最新跑批为准」(origin/master 落后 38 commit)改本地可复现命令(commit f55e3ae);真实盲跑对照批入人工触发清单第 2 项 | README.md 目录结构节、人工触发清单 §2 |
+| P3-16 假 graph | **已修** | driver --engine choices=["plain"]、report.py 引擎兜底 "graph"→"unknown"、「unknown 命令不可执行」口径保留、空批示例改 plain;三个钉死测试同 PR | app/evals/driver.py、report.py、tests/test_driver.py::test_batch_cli_rejects_graph_engine、tests/test_report.py;commit 0c2591c |
+| P3-17 缺测 | **已修** | 容器路径错 id 用例(test_docker,守卫不可用则跳过)+ 判定层集成用例(plain/graph 带错 id → 终态不得 resolved;graph 实测收敛 VERIFY_FAILED,与 R3-Q5 草案的 BUDGET_EXCEEDED 差异如实记录在用例 docstring);parametrize 假阴性方向只记录不修(安全侧) | tests/test_docker.py、tests/test_graph.py、tests/test_driver.py;commit 0ac6520 |
+| P3-18 基线断言 | **已修** | E4 冒烟实测 39.7s + 机器元数据落盘 tests/baselines/e4_smoke.json,断言 基线×3.0(180s 硬闸保留为防死锁);「全绿全 1 轮」真实模型批(≥5 题)触发报告级软集形态警报,fake 批豁免,3 场景钉死 | tests/baselines/e4_smoke.json、tests/test_service_robustness.py、app/evals/report.py;commit f52a822 |
+
+**汇总:已修 13 条(P3-3/4/7/8/9/10/11/12/13/14/16/17/18,其中 P3-14 的外部复核
+部分入清单),部分 5 条(P3-1/2/5/6/15——证据本体或门禁语义变更待人工触发),
+未动 0 条。13 + 5 = 18,与审计清单逐条对齐。**
+
+## 2. 提交清单(d22ea64..HEAD,每卡一 commit)
+
+| commit | 卡 | 内容 |
+|---|---|---|
+| c666215 | P3-7 | 文档止血 + 锚点测试 |
+| 920964a | P3-13 | 判型口径分引擎 |
+| 319bc26 | P3-10 | RUNNING 挪入 _execute + 并发语义声明 |
+| f55e3ae | P3-15 | README 指向本地可复现命令 |
+| 752cb32 | P3-14 | checklist 无误杀 + preflight 落盘 |
+| 9f26649 | P3-3 | 守卫下沉 + 四链测试 |
+| 263d969 | P3-4 | 终态守卫 NOT IN 全终态 |
+| 71ac776 | P3-8 | 裁删 evaluations 表 |
+| d0f3a5d | P3-9 | 日志装配 |
+| f35628d | P3-11 | snapshot 白名单 + 三分类测试 |
+| 0c2591c | P3-16 | 假 graph 收口 |
+| 0ac6520 | P3-17 | 缺测补齐 |
+| f52a822 | P3-18 | E4 基线断言 + 软集警报 |
+| f8d9c65 | P3-12 | 终态产物回收 |
+| 184f227 | P3-6 | threat-model R3a 残余段 |
+| bef502e | P3-5(文档) | E3 表述降格 |
+| 3f899f7 | P3-7 锚点同步 | ADR-0002 行号漂移 |
+| (本次) | 收尾 | 人工触发清单 + 本报告 + docs/README 索引 |
+
+## 3. 审计之外的同步修订(文档与代码同 PR 纪律)
+
+- **第 8 处文档互斥(复核中新增发现)**:审计 R3-Q3 裁定的「config 注释是唯一与
+  事实矛盾处」在逐卡复核中被落实——`app/config.py` 原注释「容器集成留待人工验证」
+  与 docker 后端已接线(09-18 端到端产物 runs/docker-e2e/、docker-backend-notes.md
+  「已接线并真机验证」)矛盾;`docs/README.md` 索引同句(「接线仍未完成,见 audit P2-1」)
+  一并如实化,ADR-0002 锚点随之更新并加 pin。**诚实边界**:docker-e2e 产物早于 E2,
+  其 report.json 无 provenance 字段,AI 无法从产物独立复核容器执行——如实化依据是
+  docker-backend-notes 与审计裁断,不是本次实测;
+- docs/adr/0002 E3 表述降格后 compose 冒烟锚点行号漂移——按锚点测试要求同步;
+- design.md 三次编辑(并发语义/读口径/E3 边界)均同步了 test_docs_anchors.py
+  的行号锚点——这正是锚点机制的设计行为:文档改动必须显式过锚点关。
+
+## 4. 明确不做(记录在案,不做=决策不是遗漏)
+
+- max_turns 升格 Settings(P3-11 附注,结构变更);
+- 「new file mode 120000 一律拒」(P3-6,门禁语义变更,等确认);
+- per-event request_id 结构重构(P3-9 附注,另立卡);
+- 多进程共库部署支持(P3-4 附注,守卫语义需重审);
+- 真实 API 花费类证据产出(P3-1/2/5 实验/15 对照批,人工触发清单)。
+
+## 5. 验证
+
+- `PATCHPILOT_LLM_ENABLED=false .venv/Scripts/python.exe -m pytest -q`:
+  **324 passed + 2 skipped**(起点 290+2;新增 34 个用例;
+  2 个 skip 为本机 6379 无 Redis 的预期跳过),418.75s,全绿;
+- `.venv/Scripts/python.exe -m ruff check .` 与 `ruff format --check`:全绿
+  (demo/ 下未跟踪的用户文件不在本次改动范围);
+- 锚点/分类/守卫/回收/日志五个防复发机制全部有测试钉住:
+  test_docs_anchors.py(4)、test_driver.py 分类快照(1)、test_model_name_guard.py(6)、
+  test_recycle.py(5)、test_logging_setup.py(6)。

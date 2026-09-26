@@ -39,7 +39,11 @@ class Settings(BaseSettings):
     api_token: str = ""  # API Bearer Token;空 = 不鉴权(本地与现有测试不受影响)
     allowed_repo_roots: str = ""  # repo_path 根白名单(逗号分隔绝对路径);空 = 不限制(个人本地模式)
     price_overrides: str = ""  # 可选 JSON 文件路径(同构 PRICES,优先级高于内置价目)
-    execution_backend: str = "local"  # 测试执行后端:local | docker(容器集成留待人工验证)
+    execution_backend: str = "local"  # 测试执行后端:local | docker
+    # P3-7 如实化(2026-09-26):原注释「容器集成留待人工验证」与事实矛盾——
+    # docker 后端已接线并有 09-18 端到端产物(runs/docker-e2e/、docker-backend-notes.md
+    # 记「已接线并真机验证」,隔离边界见 docker-isolation-notes.md 五实验);
+    # 默认 local 的理由见 ADR-0002(单机工具;CI/离线评测不依赖守护进程状态)。
     # P3-9:进程级日志级别(此前 25 键无 log_level,判定为"漏"——业务日志零装配)
     log_level: str = "WARNING"
     # P3-12:终态产物回收——取证集(report/diff/trajectory/junit)永久保留,
