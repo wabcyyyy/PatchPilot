@@ -251,6 +251,11 @@ def test_fake_batch_writes_manifest(tmp_path: Path) -> None:
         "bug_ids",
         "verdict_counts",
         "blind",
+        # P3-2:工作树状态 + 输入锚点反查(细测见 tests/test_provenance_anchor.py)
+        "worktree_dirty",
+        "dirty_fingerprint",
+        "input_anchor_checked",
+        "input_anchor_missing",
     }
     assert manifest["bug_ids"] == ["BUG-001", "BUG-005"]
     assert manifest["verdict_counts"] == {"resolved": 2}

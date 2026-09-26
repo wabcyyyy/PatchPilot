@@ -23,7 +23,15 @@ from app.adapters.pytest_adapter import run_pytest
 from app.config import get_settings
 from app.errors import BudgetError, TaskCancelled, TaskError
 from app.evals.pricing import estimate_cost
-from app.evals.provenance import build_provenance, config_snapshot, git_commit, require_model_name
+from app.evals.provenance import (
+    build_provenance,
+    config_snapshot,
+    dirty_fingerprint,
+    git_commit,
+    missing_inputs_at_commit,
+    require_model_name,
+    worktree_dirty,
+)
 from app.gitops.differ import working_tree_diff
 from app.gitops.testing import materialize_repo
 from app.graph.gates import run_gates
@@ -316,8 +324,22 @@ def run_batch(
     verdict_counts: dict[str, int] = {}
     for res in results:
         verdict_counts[res.verdict] = verdict_counts.get(res.verdict, 0) + 1
+    commit = git_commit()
+    # P3-2:manifest 落盘前反查输入存在性(每批 1 次 subprocess)——fake36 批的
+    # 教训是"锚点 commit 上不存在所跑的题",反查不通过必须在 manifest 里留痕
+    # 并告警,而不是让报告读者把坏锚当复现口径
+    missing = missing_inputs_at_commit(commit, [res.bug_id for res in results])
+    if missing:
+        log.warning(
+            "batch %s: %d input(s) missing at anchor commit %s: %s"
+            " — 该批不可按 git_commit 复现,请检查工作树状态",
+            batch_dir.name,
+            len(missing),
+            commit[:12],
+            missing,
+        )
     manifest = {
-        "git_commit": git_commit(),
+        "git_commit": commit,
         "started_at": started_at,
         "ended_at": datetime.now(UTC).isoformat(timespec="milliseconds"),
         "config_snapshot": config_snapshot(),
@@ -325,6 +347,11 @@ def run_batch(
         "bug_ids": [res.bug_id for res in results],
         "verdict_counts": verdict_counts,
         "blind": blind,
+        # P3-2:工作树状态与输入锚点反查——None=无法判定/未检查,与 false/空 区分
+        "worktree_dirty": worktree_dirty(),
+        "dirty_fingerprint": dirty_fingerprint(),
+        "input_anchor_checked": missing is not None,
+        "input_anchor_missing": missing or [],
     }
     (batch_dir / "batch_manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n"
