@@ -187,6 +187,23 @@ def render(runs_root: Path, bugs_root: Path, report_out: str = "docs/eval-report
         "> **数据来源声明**:本报告由 `python -m app.evals.report` 从运行产物自动生成;",
         f"> 每个指标都有判定脚本(metrics.py),无人工标注。{batch_note}",
         "",
+    ]
+    # P3-18:软集形态警报——真实模型批全绿且全部 1 轮时,该形态本身就是
+    # "评测集可能太软"的证据(fake 回放全 1 轮是脚本构造使然,不触发)。
+    # 历史 28 题真实模型记录即为此形态,却曾被夜报当通过证据引用,无任何警报。
+    real_rows = [r for r in per_bug if r.model_provider not in ("fake-replay", "unknown", "")]
+    if (
+        len(real_rows) >= 5
+        and all(r.verdict == "resolved" for r in real_rows)
+        and all(r.rounds <= 1 for r in real_rows)
+    ):
+        lines.append(
+            f"> ⚠️ **软集形态警报(P3-18)**:本批次 {len(real_rows)} 个真实模型任务"
+            "全部 resolved 且全部 1 轮通过——评测集区分度存疑,"
+            "请勿把该形态单独当效果证据引用;建议引入 hard 题或盲跑对照批复核。"
+        )
+        lines.append("")
+    lines += [
         "## 汇总指标",
         "",
         "| 指标 | 值 |",

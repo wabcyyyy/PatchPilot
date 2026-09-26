@@ -1,0 +1,17 @@
+{
+  "what": "E4 并发冒烟基线:10 个 CUSTOM 任务(默认并发 2、池内 8 个排队)全部 FINISHED 的墙钟耗时",
+  "recorded_at": "2026-09-26",
+  "recorded_in": "P3-18 整改(审计 interview-audit-2026-09-26.md R1-Q2-6:35.6s 无出处→实测值+元数据落盘)",
+  "ten_task_elapsed_seconds": 39.7,
+  "multiplier": 3.0,
+  "hard_cap_seconds": 180,
+  "tasks": 10,
+  "max_workers": 2,
+  "metadata": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.14.2",
+    "cpu_count": 18,
+    "machine": "AMD64"
+  },
+  "update_procedure": "基线漂移时:删除本文件断言依据?不——在测试机器重跑 tests/test_service_robustness.py::test_ten_custom_tasks_concurrent_smoke,用新的实测值覆盖 ten_task_elapsed_seconds 并更新 metadata/recorded_at;multiplier(3.0)与 hard_cap(180s 防死锁)不动,除非有容量评审结论。"
+}

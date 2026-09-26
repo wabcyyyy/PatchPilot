@@ -267,12 +267,20 @@ def _materialize_tiny_repo(root: Path) -> None:
 
 def test_ten_custom_tasks_concurrent_smoke(tmp_path: Path) -> None:
     """E4 并发冒烟基线:10 个 CUSTOM 任务(默认并发 2,池内 8 个真实排队)全部
-    到达终态且 FINISHED/resolved,不丢任务、无 RUNNING 残留;180s 总上限防死锁。
-    实测耗时记录于 runs/night-log-2026-09-25.md。"""
+    到达终态且 FINISHED/resolved,不丢任务、无 RUNNING 残留。
+
+    P3-18 整改:实测耗时不再只 print——与 tests/baselines/e4_smoke.json 的
+    落盘基线(带机器元数据)比对,超过 基线×multiplier 即失败(机器变慢/
+    回归都有闸);180s 总上限保留为防死锁硬闸。基线更新流程见该 JSON 的
+    update_procedure 字段。"""
+    import json
     import time
 
     from app.storage.repository import TERMINAL_STATUSES
 
+    baseline = json.loads(
+        (Path(__file__).parent / "baselines" / "e4_smoke.json").read_text(encoding="utf-8")
+    )
     repo_root = tmp_path / "tiny-repo"
     _materialize_tiny_repo(repo_root)
     service = _service(tmp_path)  # 不传 max_workers:读 Settings.task_max_workers(默认 2)
@@ -314,10 +322,19 @@ def test_ten_custom_tasks_concurrent_smoke(tmp_path: Path) -> None:
                 pending.discard(tid)
         time.sleep(0.2)
     elapsed = time.monotonic() - started
-    print(f"[E4 smoke] 10 tasks elapsed {elapsed:.1f}s (budget 180s)")
+    print(
+        f"[E4 smoke] 10 tasks elapsed {elapsed:.1f}s (baseline {baseline['ten_task_elapsed_seconds']}s ×{baseline['multiplier']})"
+    )
     service.shutdown()
 
     assert elapsed < 180, f"total time budget blown: {elapsed:.1f}s"
+    # P3-18:基线断言——超过实测基线 ×multiplier(默认 3.0)即容量回归
+    budget = baseline["ten_task_elapsed_seconds"] * baseline["multiplier"]
+    assert elapsed < budget, (
+        f"E4 smoke {elapsed:.1f}s exceeds baseline {baseline['ten_task_elapsed_seconds']}s"
+        f" ×{baseline['multiplier']} = {budget:.0f}s(机器变慢或并发回归;"
+        "基线更新流程见 tests/baselines/e4_smoke.json)"
+    )
     assert not pending, f"10 tasks did not reach terminal state within 180s: {sorted(pending)}"
     statuses = [service.repo.get_task(tid)["status"] for tid in task_ids]
     assert statuses == ["FINISHED"] * 10, statuses  # 无 RUNNING 残留、无丢任务

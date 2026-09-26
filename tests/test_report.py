@@ -286,3 +286,41 @@ def test_distribution_rows_empty_batch_and_missing_fields(tmp_path: Path) -> Non
     _write_report(runs / "BUG-001-x")  # 默认字段即可渲染
     text = render(runs, BUG_ROOT)
     assert "耗时 min/p50/p95/max" in text and "判型计数" in text
+
+
+def test_all_green_single_round_real_batch_warns(tmp_path: Path) -> None:
+    """P3-18 钉死:真实模型批 ≥5 题全绿且全部 1 轮 → 报告级软集形态警报;
+    fake 回放批同形态不触发(脚本构造使然)。"""
+    real_runs = tmp_path / "runs" / "real-soft"
+    for i in range(1, 6):
+        _write_report(
+            real_runs / f"BUG-00{i}-x",
+            bug_id=f"BUG-00{i}",
+            model_provider="openai",
+            provenance={"model_provider": "openai", "engine": "plain"},
+        )
+    text = render(real_runs, BUG_ROOT)
+    assert "软集形态警报" in text
+
+    fake_runs = tmp_path / "runs" / "fake-soft"
+    for i in range(1, 6):
+        _write_report(fake_runs / f"BUG-00{i}-y", bug_id=f"BUG-00{i}")
+    assert "软集形态警报" not in render(fake_runs, BUG_ROOT)
+
+    # 分散形态(有 2 轮题)不触发:警报只对"全 1 轮"的软集形态负责
+    mixed_runs = tmp_path / "runs" / "real-mixed"
+    for i in range(1, 5):
+        _write_report(
+            mixed_runs / f"BUG-00{i}-z",
+            bug_id=f"BUG-00{i}",
+            model_provider="openai",
+            provenance={"model_provider": "openai", "engine": "plain"},
+        )
+    _write_report(
+        mixed_runs / "BUG-005-w",
+        bug_id="BUG-005",
+        model_provider="openai",
+        rounds=2,
+        provenance={"model_provider": "openai", "engine": "plain"},
+    )
+    assert "软集形态警报" not in render(mixed_runs, BUG_ROOT)
