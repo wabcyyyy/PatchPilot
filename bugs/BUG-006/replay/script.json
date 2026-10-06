@@ -14,7 +14,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/math_ops.py\n+++ b/src/math_ops.py\n@@ -1,3 +1,5 @@\n def safe_divide(a, b):\n     \"\"\"安全除法:除数为 0 返回 None,其余返回 a/b。\"\"\"\n+    if b == 0:\n+        return None\n     return a / b\n"
+      "patch_text": "*** Begin Patch\n*** Update File: src/math_ops.py\n def safe_divide(a, b):\n     \"\"\"安全除法:除数为 0 返回 None,其余返回 a/b。\"\"\"\n+    if b == 0:\n+        return None\n     return a / b\n*** End Patch\n"
     }
   },
   {

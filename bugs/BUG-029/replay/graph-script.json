@@ -21,7 +21,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/aggregator.py\n+++ b/src/aggregator.py\n@@ -5,5 +5,5 @@\n     \"\"\"把 (name, count) 序列按 name 聚合;同名条目计数求和。\"\"\"\n     totals = {}\n     for name, count in pairs:\n-        totals[name] = count\n+        totals[name] = totals.get(name, 0) + count\n     return totals\n"
+      "patch_text": "*** Begin Patch\n*** Update File: src/aggregator.py\n     \"\"\"把 (name, count) 序列按 name 聚合;同名条目计数求和。\"\"\"\n     totals = {}\n     for name, count in pairs:\n-        totals[name] = count\n+        totals[name] = totals.get(name, 0) + count\n     return totals\n*** End Patch\n"
     }
   },
   {

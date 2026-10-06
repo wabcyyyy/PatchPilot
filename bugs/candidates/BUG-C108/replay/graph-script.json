@@ -21,7 +21,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/checksum.py\n+++ b/src/checksum.py\n@@ -3,4 +3,4 @@\n \n def fast_checksum(data):\n     \"\"\"Σ(UTF-8 字节) mod 65536 的快速实现。\"\"\"\n-    return sum(data.encode(\"ascii\", errors=\"ignore\")) % 65536\n+    return sum(data.encode(\"utf-8\")) % 65536\n"
+      "patch_text": "*** Begin Patch\n*** Update File: src/checksum.py\n \n def fast_checksum(data):\n     \"\"\"Σ(UTF-8 字节) mod 65536 的快速实现。\"\"\"\n-    return sum(data.encode(\"ascii\", errors=\"ignore\")) % 65536\n+    return sum(data.encode(\"utf-8\")) % 65536\n*** End Patch\n"
     }
   },
   {

@@ -20,7 +20,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/rules.py\n+++ b/src/rules.py\n@@ -5,4 +5,4 @@\n \n def is_low(qty):\n     \"\"\"库存量是否达到低库存预警线(qty <= LOW_STOCK_THRESHOLD,含恰好等于)。\"\"\"\n-    return qty < LOW_STOCK_THRESHOLD\n+    return qty <= LOW_STOCK_THRESHOLD\n--- a/src/notify.py\n+++ b/src/notify.py\n@@ -9,6 +9,6 @@\n     result = []\n     for sku in catalog:\n         qty = quantity(sku)\n-        if qty and is_low(qty):\n+        if qty is not None and is_low(qty):\n             result.append(sku)\n     return result\n"
+      "patch_text": "*** Begin Patch\n*** Update File: src/rules.py\n \n def is_low(qty):\n     \"\"\"库存量是否达到低库存预警线(qty <= LOW_STOCK_THRESHOLD,含恰好等于)。\"\"\"\n-    return qty < LOW_STOCK_THRESHOLD\n+    return qty <= LOW_STOCK_THRESHOLD\n*** Update File: src/notify.py\n     result = []\n     for sku in catalog:\n         qty = quantity(sku)\n-        if qty and is_low(qty):\n+        if qty is not None and is_low(qty):\n             result.append(sku)\n     return result\n*** End Patch\n"
     }
   },
   {

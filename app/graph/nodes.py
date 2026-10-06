@@ -345,6 +345,7 @@ class TaskNodes:
             diff.diff_text,
             allowed_paths=self.bug.allowed_paths,
             max_files=get_settings().max_patch_files,
+            forbid_test_files=self.ctx.forbid_test_files,
         )
         if gate.ok and not diff.is_empty:
             self.tracker.record(

@@ -16,6 +16,7 @@ from app.llm.base import AssistantTurn
 from app.llm.fake import FakeLLM
 from app.tools.base import ToolContext
 from app.tools.tracker import Tracker
+from tests.conftest import block
 
 sys_path = Path(__file__).parent
 FAILED_ID = "tests/test_dateparse.py::test_empty_string_returns_none"
@@ -70,7 +71,7 @@ def _repair_script() -> list[dict]:
     return [
         {"tool": "search_code", "args": {"keyword": "parse_date"}},
         {"tool": "read_file", "args": {"path": "src/dateparse.py"}},
-        {"tool": "apply_patch", "args": {"diff_text": _fix_diff()}},
+        {"tool": "apply_patch", "args": {"patch_text": block(_fix_diff())}},
         {"tool": "run_tests", "args": {"test_set": "failed"}},
         {"tool": "run_tests", "args": {"test_set": "regression"}},
         {"tool": "finish", "args": {"success": True, "summary": "空字符串未防御,已补早退分支"}},

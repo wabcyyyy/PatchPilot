@@ -14,7 +14,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/dispatch.py\n+++ b/src/dispatch.py\n@@ -3,4 +3,4 @@\n \n def build_handlers(names):\n     \"\"\"为每个任务名构造一个回调;调用回调返回它对应的任务名。\"\"\"\n-    return [lambda: name for name in names]  # noqa: B023 (标记的正是本题缺陷)\n+    return [lambda name=name: name for name in names]\n"
+      "patch_text": "*** Begin Patch\n*** Update File: src/dispatch.py\n \n def build_handlers(names):\n     \"\"\"为每个任务名构造一个回调;调用回调返回它对应的任务名。\"\"\"\n-    return [lambda: name for name in names]  # noqa: B023 (标记的正是本题缺陷)\n+    return [lambda name=name: name for name in names]\n*** End Patch\n"
     }
   },
   {

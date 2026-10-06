@@ -11,6 +11,7 @@ import pytest
 from app.evals.bugset import load_bug, load_replay_script
 from app.evals.driver import run_task
 from app.llm.fake import FakeLLM
+from tests.conftest import block
 
 BUG_ROOT = Path("bugs")
 
@@ -76,7 +77,7 @@ def test_test_file_patch_gets_rejected(tmp_path: Path) -> None:
         {
             "tool": "apply_patch",
             "args": {
-                "diff_text": (
+                "patch_text": block(
                     "diff --git a/tests/test_labels.py b/tests/test_labels.py\n"
                     "--- a/tests/test_labels.py\n"
                     "+++ b/tests/test_labels.py\n"

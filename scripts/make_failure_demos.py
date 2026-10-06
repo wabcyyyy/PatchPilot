@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from app.evals.bugset import load_bug  # noqa: E402  (需先注入 sys.path)
+from app.gitops.blockpatch import unified_to_block  # noqa: E402
 from app.graph.runner import run_task_graph  # noqa: E402
 from app.llm.fake import FakeLLM  # noqa: E402
 
@@ -64,13 +65,15 @@ def main() -> int:
                     {
                         "tool": "apply_patch",
                         "args": {
-                            "diff_text": "diff --git a/tests/test_dateparse.py b/tests/test_dateparse.py\n"
-                            "--- a/tests/test_dateparse.py\n"
-                            "+++ b/tests/test_dateparse.py\n"
-                            "@@ -1,3 +1,4 @@\n"
-                            " import pytest\n"
-                            "+\n"
-                            " from src.dateparse import parse_date\n"
+                            "patch_text": unified_to_block(
+                                "diff --git a/tests/test_dateparse.py b/tests/test_dateparse.py\n"
+                                "--- a/tests/test_dateparse.py\n"
+                                "+++ b/tests/test_dateparse.py\n"
+                                "@@ -1,3 +1,4 @@\n"
+                                " import pytest\n"
+                                "+\n"
+                                " from src.dateparse import parse_date\n"
+                            )
                         },
                     },
                     {"tool": "finish", "args": {"success": True, "summary": "试图改测试作弊"}},
@@ -84,7 +87,10 @@ def main() -> int:
             FakeLLM(
                 [
                     *_localize_ok(),
-                    {"tool": "apply_patch", "args": {"diff_text": _comment_diff()}},
+                    {
+                        "tool": "apply_patch",
+                        "args": {"patch_text": unified_to_block(_comment_diff())},
+                    },
                     {"tool": "run_tests", "args": {"test_set": "failed"}},
                     {"tool": "finish", "args": {"success": True, "summary": "以为修好了"}},
                 ]

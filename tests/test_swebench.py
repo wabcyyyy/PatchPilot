@@ -12,6 +12,7 @@ from app.errors import TaskError
 from app.evals.driver import run_task
 from app.evals.swebench import load_instances, parse_instance, to_bug_task
 from app.llm.fake import FakeLLM
+from tests.conftest import block
 
 FIXTURE = Path("tests/fixtures/swebench_sample.jsonl")
 
@@ -121,7 +122,7 @@ def test_swebench_task_resolves_via_replay(tmp_path: Path) -> None:
     script = [
         {"tool": "search_code", "args": {"keyword": "safe_divide"}},
         {"tool": "read_file", "args": {"path": "src/arith.py"}},
-        {"tool": "apply_patch", "args": {"diff_text": diff}},
+        {"tool": "apply_patch", "args": {"patch_text": block(diff)}},
         {"tool": "run_tests", "args": {"test_set": "failed"}},
         {"tool": "run_tests", "args": {"test_set": "regression"}},
         {"tool": "finish", "args": {"success": True, "summary": "fixed"}},

@@ -21,7 +21,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/dedup.py\n+++ b/src/dedup.py\n@@ -3,4 +3,10 @@\n \n def unique(items):\n     \"\"\"去重;保持首次出现的顺序。\"\"\"\n-    return list(set(items))\n+    seen: set = set()\n+    result = []\n+    for item in items:\n+        if item not in seen:\n+            seen.add(item)\n+            result.append(item)\n+    return result\n"
+      "patch_text": "*** Begin Patch\n*** Update File: src/dedup.py\n \n def unique(items):\n     \"\"\"去重;保持首次出现的顺序。\"\"\"\n-    return list(set(items))\n+    seen: set = set()\n+    result = []\n+    for item in items:\n+        if item not in seen:\n+            seen.add(item)\n+            result.append(item)\n+    return result\n*** End Patch\n"
     }
   },
   {

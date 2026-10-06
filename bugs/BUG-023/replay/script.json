@@ -14,7 +14,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/schedule.py\n+++ b/src/schedule.py\n@@ -3,7 +3,14 @@\n from datetime import UTC, datetime\n \n \n+def _ensure_utc(value):\n+    \"\"\"naive 时间按 UTC 解释;aware 原样返回。\"\"\"\n+    if value.tzinfo is None:\n+        return value.replace(tzinfo=UTC)\n+    return value\n+\n+\n def is_due(deadline, now=None):\n     \"\"\"deadline 已过期返回 True;now 缺省取当前 UTC 时间。\"\"\"\n-    now = now or datetime.now(UTC)\n-    return now > deadline\n+    now = _ensure_utc(now or datetime.now(UTC))\n+    return now > _ensure_utc(deadline)\n"
+      "patch_text": "*** Begin Patch\n*** Update File: src/schedule.py\n from datetime import UTC, datetime\n \n \n+def _ensure_utc(value):\n+    \"\"\"naive 时间按 UTC 解释;aware 原样返回。\"\"\"\n+    if value.tzinfo is None:\n+        return value.replace(tzinfo=UTC)\n+    return value\n+\n+\n def is_due(deadline, now=None):\n     \"\"\"deadline 已过期返回 True;now 缺省取当前 UTC 时间。\"\"\"\n-    now = now or datetime.now(UTC)\n-    return now > deadline\n+    now = _ensure_utc(now or datetime.now(UTC))\n+    return now > _ensure_utc(deadline)\n*** End Patch\n"
     }
   },
   {

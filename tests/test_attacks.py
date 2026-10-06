@@ -12,6 +12,7 @@ from app.graph.gates import run_gates
 from app.tools.base import ToolContext
 from app.tools.patching import apply_patch
 from app.tools.tracker import Tracker
+from tests.conftest import block
 
 BUG_ROOT = Path("bugs")
 ATTACK_ROOT = BUG_ROOT / "attacks"
@@ -25,16 +26,19 @@ def _attack_dirs() -> list[Path]:
 def _diff_attack_dirs() -> list[Path]:
     """补丁形态的样例(带 attack.diff);引擎级样例(如 budget)由专项测试驱动。
 
-    ATTACK-009(expected_layer: patcher)攻击的是 apply 前落点校验:其越界路径
-    会先被静态门禁的 paths 规则拦截,经工具层永远到不了 patcher——故与
-    ATTACK-008 同列为引擎级样例,由专项测试直接驱动 gitops 层。
+    凡 meta 里声明了 `expected_layer` 的都不走工具层:
+    ATTACK-009(patcher)攻击 apply 前落点校验,其越界路径会先被静态门禁的 paths
+    规则拦截,经工具层永远到不了 patcher——由专项测试直接驱动 gitops 层;
+    ATTACK-010(gate)是 `new file mode 120000` 新建软链,而块协议结构上产不出
+    120000(Add 段永远编译成 100644),工具层无从表达该形态——由门禁层专项测试驱动,
+    另由 tests/test_blockpatch.py 钉住"编译产物永不含 120000"这一不变量。
     """
     result: list[Path] = []
     for d in _attack_dirs():
         if not (d / "attack.diff").exists():
             continue
         meta = yaml.safe_load((d / "meta.yaml").read_text(encoding="utf-8"))
-        if meta.get("expected_layer") == "patcher":
+        if meta.get("expected_layer"):
             continue
         result.append(d)
     return result
@@ -56,6 +60,20 @@ def _make_ctx(target_bug: str, workspace: Path, tmp: Path) -> ToolContext:
     )
 
 
+def _attack_payload(meta: dict, diff_text: str) -> str:
+    """把攻击样例按工具层的唯一入口协议提交。
+
+    块协议是唯一入口,所以攻击样例也要以块文本进来,否则"被拒"只证明了解析器、
+    不再证明它要攻击的那道门禁。两个例外:
+    ATTACK-006 的样例本身就是"不是补丁的散文",要证明的正是格式门禁 → 原样提交;
+    ATTACK-010(120000 软链)在协议层不可表示 → 由 _diff_attack_dirs 排除,
+    改由上面的门禁层专项用例断言。
+    """
+    if meta["id"] == "ATTACK-006-format":
+        return diff_text
+    return block(diff_text)
+
+
 @pytest.mark.parametrize("attack_dir", _diff_attack_dirs())
 def test_attack_is_blocked_by_expected_gate(attack_dir: Path, tmp_path: Path) -> None:
     meta = yaml.safe_load((attack_dir / "meta.yaml").read_text(encoding="utf-8"))
@@ -63,14 +81,14 @@ def test_attack_is_blocked_by_expected_gate(attack_dir: Path, tmp_path: Path) ->
 
     ws = tmp_path / "ws"
     ctx = _make_ctx(meta["target_bug"], ws, tmp_path)
-    result = apply_patch(ctx, diff_text)
+    result = apply_patch(ctx, _attack_payload(meta, diff_text))
 
     assert not result.ok, f"{meta['id']} 应被拦截"
     assert f"[{meta['expected_gate']}]" in result.error, (
         f"{meta['id']} 期望 {meta['expected_gate']} 门禁拦截,实际:{result.error}"
     )
 
-    # 静态门禁单跑一遍也应同样判定
+    # 静态门禁单跑一遍也应同样判定(原始 unified 形态,与协议层无关)
     gate = run_gates(diff_text, allowed_paths=ctx.allowed_paths, max_files=ctx.max_patch_files)
     assert not gate.ok
 
@@ -82,9 +100,26 @@ def test_attacked_workspace_stays_clean(tmp_path: Path) -> None:
 
     ctx = _make_ctx("BUG-003", tmp_path / "ws", tmp_path)
     for attack_dir in _diff_attack_dirs():
-        apply_patch(ctx, (attack_dir / "attack.diff").read_text(encoding="utf-8"))
+        meta = yaml.safe_load((attack_dir / "meta.yaml").read_text(encoding="utf-8"))
+        payload = _attack_payload(meta, (attack_dir / "attack.diff").read_text(encoding="utf-8"))
+        apply_patch(ctx, payload)
     assert working_tree_is_clean(ctx.workspace)
     assert working_tree_diff(ctx.workspace).is_empty
+
+
+def test_new_symlink_attack_blocked_at_gate() -> None:
+    """ATTACK-010(new file mode 120000)在门禁层一律拒。
+
+    工具层用例覆盖不到它:块协议编译期只产 100644,软链形态在协议层就不可表示
+    (见 tests/test_blockpatch.py 的不变量用例)。这里钉住"门禁仍然拦得住"——
+    无论补丁从哪一层进来。
+    """
+    attack_dir = ATTACK_ROOT / "ATTACK-010-new-symlink"
+    meta = yaml.safe_load((attack_dir / "meta.yaml").read_text(encoding="utf-8"))
+    assert meta["expected_layer"] == "gate"
+    gate = run_gates((attack_dir / "attack.diff").read_text(encoding="utf-8"), max_files=5)
+    assert not gate.ok
+    assert any(v.gate == "files" and "120000" in v.detail for v in gate.violations), gate.violations
 
 
 def test_symlink_escape_attack_blocked_at_patcher(tmp_path: Path) -> None:

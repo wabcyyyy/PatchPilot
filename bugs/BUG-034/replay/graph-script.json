@@ -27,7 +27,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/escaping.py\n+++ b/src/escaping.py\n@@ -1,6 +1,6 @@\n \"\"\"CSV 单元格转义。\"\"\"\n \n-SPECIAL_CHARS = (\",\", '\"')\n+SPECIAL_CHARS = (\",\", '\"', \"\\n\")\n \n \n def escape_cell(value):\n--- a/src/exporter.py\n+++ b/src/exporter.py\n@@ -1,6 +1,8 @@\n \"\"\"CSV 导出。\"\"\"\n+\n+from src.escaping import escape_cell\n \n \n def to_csv(rows):\n     \"\"\"把二维行集导出为 CSV 文本;需要转义的单元格必须先过 escaping.escape_cell。\"\"\"\n-    return \"\\n\".join(\",\".join(str(cell) for cell in row) for row in rows)\n+    return \"\\n\".join(\",\".join(escape_cell(cell) for cell in row) for row in rows)\n"
+      "patch_text": "*** Begin Patch\n*** Update File: src/escaping.py\n \"\"\"CSV 单元格转义。\"\"\"\n \n-SPECIAL_CHARS = (\",\", '\"')\n+SPECIAL_CHARS = (\",\", '\"', \"\\n\")\n \n \n def escape_cell(value):\n*** Update File: src/exporter.py\n \"\"\"CSV 导出。\"\"\"\n+\n+from src.escaping import escape_cell\n \n \n def to_csv(rows):\n     \"\"\"把二维行集导出为 CSV 文本;需要转义的单元格必须先过 escaping.escape_cell。\"\"\"\n-    return \"\\n\".join(\",\".join(str(cell) for cell in row) for row in rows)\n+    return \"\\n\".join(\",\".join(escape_cell(cell) for cell in row) for row in rows)\n*** End Patch\n"
     }
   },
   {

@@ -21,7 +21,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/notes.py\n+++ b/src/notes.py\n@@ -1,7 +1,9 @@\n \"\"\"笔记收藏工具。\"\"\"\n \n \n-def add_note(note, notes=[]):  # noqa: B006 (标记的正是本题缺陷)\n-    \"\"\"把一条笔记加入收藏;未提供列表时使用默认收藏夹。\"\"\"\n+def add_note(note, notes=None):\n+    \"\"\"把一条笔记加入收藏;未提供列表时使用全新列表。\"\"\"\n+    if notes is None:\n+        notes = []\n     notes.append(note)\n     return notes\n"
+      "patch_text": "*** Begin Patch\n*** Update File: src/notes.py\n \"\"\"笔记收藏工具。\"\"\"\n \n \n-def add_note(note, notes=[]):  # noqa: B006 (标记的正是本题缺陷)\n-    \"\"\"把一条笔记加入收藏;未提供列表时使用默认收藏夹。\"\"\"\n+def add_note(note, notes=None):\n+    \"\"\"把一条笔记加入收藏;未提供列表时使用全新列表。\"\"\"\n+    if notes is None:\n+        notes = []\n     notes.append(note)\n     return notes\n*** End Patch\n"
     }
   },
   {

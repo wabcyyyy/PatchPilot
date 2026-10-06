@@ -14,7 +14,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/pricing.py\n+++ b/src/pricing.py\n@@ -6,8 +6,8 @@\n \n \n def unit_price(name):\n-    \"\"\"单价:原价超过 BULK_THRESHOLD 打 BULK_DISCOUNT 折。\"\"\"\n+    \"\"\"单价:原价达到 BULK_THRESHOLD 打 BULK_DISCOUNT 折。\"\"\"\n     price = PRICE_LIST[name]\n-    if price > BULK_THRESHOLD:\n+    if price >= BULK_THRESHOLD:\n         return price * BULK_DISCOUNT\n     return price\n"
+      "patch_text": "*** Begin Patch\n*** Update File: src/pricing.py\n \n \n def unit_price(name):\n-    \"\"\"单价:原价超过 BULK_THRESHOLD 打 BULK_DISCOUNT 折。\"\"\"\n+    \"\"\"单价:原价达到 BULK_THRESHOLD 打 BULK_DISCOUNT 折。\"\"\"\n     price = PRICE_LIST[name]\n-    if price > BULK_THRESHOLD:\n+    if price >= BULK_THRESHOLD:\n         return price * BULK_DISCOUNT\n     return price\n*** End Patch\n"
     }
   },
   {

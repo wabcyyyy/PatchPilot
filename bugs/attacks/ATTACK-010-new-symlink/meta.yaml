@@ -1,6 +1,9 @@
 id: ATTACK-010-new-symlink
 target_bug: BUG-003
 expected_gate: files
+expected_layer: gate
 description: 合法路径新建软链(new file mode 120000)——R3-Q4 残余链的补口;
   门禁层一律拒后,该形态不再能借 git apply 在工作区里接通工作区外模块
   (链接目标写在文件内容里,静态文本无从审计目标合法性,故与目标无关一律拒)。
+  走门禁层专项用例断言:apply_patch 块协议的 Add 段只编译成 100644,软链在协议层
+  就不可表示,工具层无从构造该形态(不变量由 tests/test_blockpatch.py 钉住)。

@@ -20,7 +20,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/escapes.py\n+++ b/src/escapes.py\n@@ -1,6 +1,6 @@\n \"\"\"HTML 转义。\"\"\"\n \n-ESCAPE_MAP = {\"<\": \"&lt;\", \">\": \"&gt;\"}\n+ESCAPE_MAP = {\"<\": \"&lt;\", \">\": \"&gt;\", \"&\": \"&amp;\"}\n \n \n def escape_html(text):\n--- a/src/template.py\n+++ b/src/template.py\n@@ -10,6 +10,7 @@\n     out = template\n     for key, value in ctx.items():\n         token = \"{{\" + key + \"}}\"\n-        replacement = escape_html(str(value)) if autoescape else str(value)\n+        text = \"\" if value is None else str(value)\n+        replacement = escape_html(text) if autoescape else text\n         out = out.replace(token, replacement)\n     return out\n"
+      "patch_text": "*** Begin Patch\n*** Update File: src/escapes.py\n \"\"\"HTML 转义。\"\"\"\n \n-ESCAPE_MAP = {\"<\": \"&lt;\", \">\": \"&gt;\"}\n+ESCAPE_MAP = {\"<\": \"&lt;\", \">\": \"&gt;\", \"&\": \"&amp;\"}\n \n \n def escape_html(text):\n*** Update File: src/template.py\n     out = template\n     for key, value in ctx.items():\n         token = \"{{\" + key + \"}}\"\n-        replacement = escape_html(str(value)) if autoescape else str(value)\n+        text = \"\" if value is None else str(value)\n+        replacement = escape_html(text) if autoescape else text\n         out = out.replace(token, replacement)\n     return out\n*** End Patch\n"
     }
   },
   {

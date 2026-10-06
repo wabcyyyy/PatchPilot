@@ -21,7 +21,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/strconv.py\n+++ b/src/strconv.py\n@@ -1,3 +1,6 @@\n def parse_int(text, default=None):\n     \"\"\"把字符串解析为 int;失败返回 default。\"\"\"\n-    return int(text)\n+    try:\n+        return int(text)\n+    except (TypeError, ValueError):\n+        return default\n"
+      "patch_text": "*** Begin Patch\n*** Update File: src/strconv.py\n def parse_int(text, default=None):\n     \"\"\"把字符串解析为 int;失败返回 default。\"\"\"\n-    return int(text)\n+    try:\n+        return int(text)\n+    except (TypeError, ValueError):\n+        return default\n*** End Patch\n"
     }
   },
   {

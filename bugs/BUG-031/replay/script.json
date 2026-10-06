@@ -14,7 +14,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/dec.py\n+++ b/src/dec.py\n@@ -4,16 +4,22 @@\n def decode_segment(text):\n     \"\"\"解码 %XX 序列;'+' 按字面处理,多字节 UTF-8 序列合并为单字符。\"\"\"\n     out = []\n+    pending = bytearray()\n     i = 0\n+\n+    def flush():\n+        if pending:\n+            out.append(pending.decode(\"utf-8\"))\n+            pending.clear()\n+\n     while i < len(text):\n         ch = text[i]\n-        if ch == \"+\":\n-            out.append(\" \")\n-            i += 1\n-        elif ch == \"%\" and i + 3 <= len(text):\n-            out.append(chr(int(text[i + 1 : i + 3], 16)))\n+        if ch == \"%\" and i + 3 <= len(text):\n+            pending.append(int(text[i + 1 : i + 3], 16))\n             i += 3\n         else:\n+            flush()\n             out.append(ch)\n             i += 1\n+    flush()\n     return \"\".join(out)\n"
+      "patch_text": "*** Begin Patch\n*** Update File: src/dec.py\n def decode_segment(text):\n     \"\"\"解码 %XX 序列;'+' 按字面处理,多字节 UTF-8 序列合并为单字符。\"\"\"\n     out = []\n+    pending = bytearray()\n     i = 0\n+\n+    def flush():\n+        if pending:\n+            out.append(pending.decode(\"utf-8\"))\n+            pending.clear()\n+\n     while i < len(text):\n         ch = text[i]\n-        if ch == \"+\":\n-            out.append(\" \")\n-            i += 1\n-        elif ch == \"%\" and i + 3 <= len(text):\n-            out.append(chr(int(text[i + 1 : i + 3], 16)))\n+        if ch == \"%\" and i + 3 <= len(text):\n+            pending.append(int(text[i + 1 : i + 3], 16))\n             i += 3\n         else:\n+            flush()\n             out.append(ch)\n             i += 1\n+    flush()\n     return \"\".join(out)\n*** End Patch\n"
     }
   },
   {

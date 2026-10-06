@@ -14,7 +14,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/text_stats.py\n+++ b/src/text_stats.py\n@@ -3,4 +3,6 @@\n \n def count_vowels(text):\n     \"\"\"统计元音字母个数;None 视为 0。\"\"\"\n+    if text is None:\n+        return 0\n     return sum(1 for ch in text if ch in VOWELS)\n"
+      "patch_text": "*** Begin Patch\n*** Update File: src/text_stats.py\n \n def count_vowels(text):\n     \"\"\"统计元音字母个数;None 视为 0。\"\"\"\n+    if text is None:\n+        return 0\n     return sum(1 for ch in text if ch in VOWELS)\n*** End Patch\n"
     }
   },
   {

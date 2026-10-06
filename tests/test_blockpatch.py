@@ -21,7 +21,7 @@ from app.gitops.blockpatch import (
 )
 from app.gitops.patcher import apply_patch as git_apply_patch
 from app.gitops.testing import materialize_repo
-from app.graph.gates import run_gates
+from app.graph.gates import parse_diff_files, run_gates
 
 BUGS_ROOT = Path("bugs")
 
@@ -339,10 +339,14 @@ def test_unified_to_block_maps_symlink_diff_to_plain_add(tmp_path: Path) -> None
 
 
 def _corpus() -> list[tuple[str, str, str]]:
-    """现存回放语料里每一个 unified diff(去重),返回 (bug 目录相对名, 标签, diff)。
+    """现存回放语料里每一个 apply_patch 补丁(去重),返回 (bug 目录相对名, 标签, 块文本)。
 
-    卡2 之后 replay 里的 `diff_text` 会被换成 `patch_text`;届时原 diff 取
-    `expected/reference.diff`,本表继续作为迁移正确性的证据。
+    迁移前这里跑的是"原 unified ↔ 块编译产物"双应用等价(卡1 已实测 36/36 通过,
+    即机械迁移未改语义的证据);迁移后语料只剩块文本,而 `expected/reference.diff`
+    不能当基准——BUG-014 的 reference.diff 存量就已与 repo 源码不符(删除行写成
+    `items[i:i + n + 1]`,实际是 `items[i : i + n + 1]`),拿它对比会把存量数据缺陷
+    伪装成协议缺陷。故本表钉的是回放补丁在新协议下的持久不变量:能解析、能编译、
+    能通过 `git apply --check` 并真实应用,且改动文件集合与题面 gold 范围一致。
     """
     cases: list[tuple[str, str, str]] = []
     seen: set[tuple[str, str]] = set()
@@ -355,17 +359,112 @@ def _corpus() -> list[tuple[str, str, str]]:
             if step.get("tool") != "apply_patch":
                 continue
             args = step.get("args", {})
-            original = args.get("diff_text", "")
-            if not original:
-                reference = bug_dir / "expected" / "reference.diff"
-                if args.get("patch_text") and reference.exists():
-                    original = reference.read_text(encoding="utf-8")
-            if not original.strip() or (bug_key, original) in seen:
+            if "patch_text" in args:
+                block_text = str(args["patch_text"])
+            elif "diff_text" in args:
+                block_text = unified_to_block(str(args["diff_text"]))
+            else:
                 continue
-            seen.add((bug_key, original))
-            cases.append((bug_key, f"{bug_key}/{path.stem}", original))
+            if not block_text.strip() or (bug_key, block_text) in seen:
+                continue
+            seen.add((bug_key, block_text))
+            cases.append((bug_key, f"{bug_key}/{path.stem}", block_text))
     assert cases, "回放语料为空:round-trip 表失去意义"
     return cases
+
+
+@pytest.mark.parametrize(
+    "bug_key,label,block_text",
+    _corpus(),
+    ids=[b.replace("/", "-") for b, _, _ in _corpus()],
+)
+def test_corpus_replays_still_apply_through_block_protocol(
+    bug_key: str, label: str, block_text: str, baseline_repo, tmp_path: Path
+) -> None:
+    sections = parse_block_patch(block_text)
+    ws = shutil.copytree(baseline_repo(bug_key), tmp_path / "ws")
+    compiled = compile_block_patch(ws, sections)
+
+    assert "120000" not in compiled and "rename to" not in compiled and "copy to" not in compiled
+    applied = git_apply_patch(ws, compiled)
+    assert applied.applied, f"{label} 回放补丁被拒:{applied.rejected_reason} {applied.detail}"
+
+    touched = _touched_files(ws)
+    reference = BUGS_ROOT / bug_key / "expected" / "reference.diff"
+    if reference.exists():
+        # 只比"改了哪些文件":reference.diff 的 hunk 内容可能过期(BUG-014 即如此),
+        # 但文件集合是 metrics 的定位口径,回放补丁改动它就该与之一致。
+        expected = sorted(set(parse_diff_files(reference.read_text(encoding="utf-8"))))
+        assert touched == expected, f"{label} 改动范围与题面 gold 不一致:{touched} != {expected}"
+    assert _tree_map(ws) != _tree_map(baseline_repo(bug_key)), f"{label} 补丁没有改变任何文件"
+
+
+def _touched_files(ws: Path) -> list[str]:
+    from app.gitops.differ import working_tree_diff
+
+    return sorted(working_tree_diff(ws).changed_files)
+
+
+def _repo_with(tmp: Path, files: dict[str, str]) -> Path:
+    """物化一个行尾确定的小仓库。
+
+    本机 git 默认 `core.autocrlf=true`,checkout 会把 LF 变 CRLF,手写 LF 补丁就
+    "patch does not apply"——那是环境而不是协议问题。模板里放 `.gitattributes`
+    (`* text eol=lf`)把行尾钉成 LF,两侧副本才可比。
+    """
+    tpl = tmp / "tpl"
+    _write(tpl, ".gitattributes", "* text eol=lf\n")
+    for rel, body in files.items():
+        _write(tpl, rel, body)
+    ws = tmp / "ws"
+    materialize_repo(tpl, ws, extra_commit=False)
+    return ws
+
+
+@pytest.mark.parametrize(
+    "diff_text",
+    [
+        # 单 hunk 修改
+        "--- a/src/a.py\n+++ b/src/a.py\n@@ -1,2 +1,3 @@\n x\n+z\n y\n",
+        # 同文件双 hunk(未变动区足够宽,编译后仍是两个 hunk)。
+        # hunk 必须带上下文行:git apply 默认拒绝零上下文补丁(全链没用 --unidiff-zero),
+        # 而编译器恒发 n=3 上下文,所以真实路径不受影响。
+        "--- a/src/a.py\n+++ b/src/a.py\n@@ -1,3 +1,3 @@\n 1\n-2\n+B2\n 3\n"
+        "@@ -27,3 +27,3 @@\n 27\n-28\n+B28\n 29\n",
+        # 新增文件
+        "diff --git a/src/n.py b/src/n.py\nnew file mode 100644\n--- /dev/null\n"
+        "+++ b/src/n.py\n@@ -0,0 +1,2 @@\n+p = 1\n+q = 2\n",
+        # 删除整文件
+        "diff --git a/src/d.py b/src/d.py\ndeleted file mode 100644\n--- a/src/d.py\n"
+        "+++ /dev/null\n@@ -1,2 +0,0 @@\n-x\n-y\n",
+        # 多文件混合(改一个 + 新增一个);git apply 认多段要靠 diff --git 头
+        "diff --git a/src/a.py b/src/a.py\n--- a/src/a.py\n+++ b/src/a.py\n@@ -1,2 +1,2 @@\n-x\n+z\n y\n"
+        "diff --git a/src/b.py b/src/b.py\nnew file mode 100644\n--- /dev/null\n"
+        "+++ b/src/b.py\n@@ -0,0 +1 @@\n+made\n",
+    ],
+)
+def test_compiled_block_diff_is_equivalent_to_original_diff(diff_text: str, tmp_path: Path) -> None:
+    """双向等价:原 diff 与"块→编译"产物应用后,工作树逐字节相同。
+
+    这是块协议的核心正确性承诺——协议只是外语法,不改补丁语义。语料迁移前
+    同一性质覆盖过全部 36 个回放 diff(卡1 实测),这里保留可手写的最小形态。
+    """
+    if "deleted file mode" in diff_text:
+        files = {"src/d.py": "x\ny\n"}
+    elif "@@ -1,3 +1,3 @@" in diff_text:
+        files = {"src/a.py": "".join(f"{i}\n" for i in range(1, 31))}
+    else:
+        files = {"src/a.py": "x\ny\n"}
+    original_ws = _repo_with(tmp_path / "a", files)
+    applied_original = git_apply_patch(original_ws, diff_text)
+    assert applied_original.applied, applied_original.detail
+
+    compiled_ws = _repo_with(tmp_path / "b", files)
+    compiled = compile_block_patch(compiled_ws, parse_block_patch(unified_to_block(diff_text)))
+    applied_compiled = git_apply_patch(compiled_ws, compiled)
+    assert applied_compiled.applied, f"{applied_compiled.rejected_reason} {applied_compiled.detail}"
+
+    assert _tree_map(compiled_ws) == _tree_map(original_ws)
 
 
 @pytest.fixture(scope="session")
@@ -392,25 +491,3 @@ def _tree_map(root: Path) -> dict[str, bytes]:
             continue
         out[path.relative_to(root).as_posix()] = path.read_bytes()
     return out
-
-
-@pytest.mark.parametrize(
-    "bug_key,label,diff_text",
-    _corpus(),
-    ids=[b.replace("/", "-") for b, _, _ in _corpus()],
-)
-def test_corpus_diff_round_trips_through_block_protocol(
-    bug_key: str, label: str, diff_text: str, baseline_repo, tmp_path: Path
-) -> None:
-    base = baseline_repo(bug_key)
-    original_ws = shutil.copytree(base, tmp_path / "original")
-    block_ws = shutil.copytree(base, tmp_path / "block")
-
-    reference = git_apply_patch(original_ws, diff_text)
-    assert reference.applied, f"{label} 原 diff 基准应用失败:{reference.detail}"
-
-    compiled = compile_block_patch(block_ws, parse_block_patch(unified_to_block(diff_text)))
-    applied = git_apply_patch(block_ws, compiled)
-    assert applied.applied, f"{label} 编译产物被拒:{applied.rejected_reason} {applied.detail}"
-
-    assert _tree_map(block_ws) == _tree_map(original_ws), f"{label} 应用结果与原 diff 不等价"

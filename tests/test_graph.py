@@ -18,6 +18,7 @@ from app.graph.runner import run_task_graph
 from app.llm.fake import FakeLLM
 from app.tools.base import ToolContext
 from app.tools.tracker import Tracker
+from tests.conftest import block
 
 BUG_ROOT = Path("bugs")
 FAILED_ID = "tests/test_dateparse.py::test_empty_string_returns_none"
@@ -88,7 +89,7 @@ def _localize_script() -> list[dict]:
 
 def _propose_script(diff_text: str) -> list[dict]:
     return [
-        {"tool": "apply_patch", "args": {"diff_text": diff_text}},
+        {"tool": "apply_patch", "args": {"patch_text": block(diff_text)}},
         {"tool": "run_tests", "args": {"test_set": "failed"}},
         {"tool": "run_tests", "args": {"test_set": "regression"}},
         {"tool": "finish", "args": {"success": True, "summary": "补丁已应用且测试通过"}},
@@ -132,7 +133,7 @@ def test_graph_patch_rejected_then_retry_resolves(tmp_path: Path) -> None:
         {
             "tool": "apply_patch",
             "args": {
-                "diff_text": (
+                "patch_text": block(
                     "diff --git a/tests/test_dateparse.py b/tests/test_dateparse.py\n"
                     "--- a/tests/test_dateparse.py\n"
                     "+++ b/tests/test_dateparse.py\n"
@@ -193,7 +194,7 @@ def test_phase_tool_restriction(tmp_path: Path) -> None:
     model = FakeLLM(
         [
             *_localize_script()[:1],
-            {"tool": "apply_patch", "args": {"diff_text": "junk"}},
+            {"tool": "apply_patch", "args": {"patch_text": "junk"}},
             {"tool": "finish", "args": {"success": True, "summary": "x"}},
         ]
     )
@@ -327,7 +328,7 @@ def test_graph_budget_exceeded_in_propose_does_not_reach_verify(tmp_path: Path) 
     inner = FakeLLM(
         [
             *_localize_script(),
-            {"tool": "apply_patch", "args": {"diff_text": _fix_diff()}},
+            {"tool": "apply_patch", "args": {"patch_text": block(_fix_diff())}},
             {"tool": "finish", "args": {"success": True, "summary": "补丁已应用"}},
         ]
     )
@@ -375,8 +376,8 @@ def test_graph_last_round_gate_rejection_preserves_evidence(tmp_path: Path) -> N
     model = FakeLLM(
         [
             *_localize_script(),
-            {"tool": "apply_patch", "args": {"diff_text": _padding_diff(1)}},
-            {"tool": "apply_patch", "args": {"diff_text": _padding_diff(4)}},
+            {"tool": "apply_patch", "args": {"patch_text": block(_padding_diff(1))}},
+            {"tool": "apply_patch", "args": {"patch_text": block(_padding_diff(4))}},
             {"tool": "finish", "args": {"success": True, "summary": "done"}},
         ]
     )
@@ -593,7 +594,7 @@ def test_repeat_gate_rejection_streak_prompts_new_direction(
         {
             "tool": "apply_patch",
             "args": {
-                "diff_text": (
+                "patch_text": block(
                     "diff --git a/tests/test_dateparse.py b/tests/test_dateparse.py\n"
                     "--- a/tests/test_dateparse.py\n"
                     "+++ b/tests/test_dateparse.py\n"

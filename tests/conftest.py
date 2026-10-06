@@ -6,9 +6,20 @@ from pathlib import Path
 
 import pytest
 
+from app.gitops.blockpatch import unified_to_block
 from app.gitops.testing import materialize_repo
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def block(diff_text: str) -> str:
+    """把测试里手写的 unified diff 外包成 apply_patch 块协议文本。
+
+    工具层只认块格式(单入口),但测试想表达的仍是"一个普通补丁"——
+    原 diff 文本一字不动,只转换;这样用例的可读性与可核对性都保留。
+    """
+    return unified_to_block(diff_text)
+
 
 # fixtures/ 下的模板仓库自带"基线故意失败"的测试,不属于主测试套件
 collect_ignore = ["fixtures"]

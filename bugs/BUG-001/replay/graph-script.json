@@ -21,7 +21,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/dateparse.py\n+++ b/src/dateparse.py\n@@ -9,6 +9,8 @@\n     \"\"\"解析日期字符串;空输入返回 None,非法格式抛 ValueError。\"\"\"\n     if value is None:\n         return None\n+    if not value.strip():\n+        return None\n     for fmt in DATE_FORMATS:\n         try:\n             return datetime.strptime(value, fmt).date()\n"
+      "patch_text": "*** Begin Patch\n*** Update File: src/dateparse.py\n     \"\"\"解析日期字符串;空输入返回 None,非法格式抛 ValueError。\"\"\"\n     if value is None:\n         return None\n+    if not value.strip():\n+        return None\n     for fmt in DATE_FORMATS:\n         try:\n             return datetime.strptime(value, fmt).date()\n*** End Patch\n"
     }
   },
   {

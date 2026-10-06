@@ -21,7 +21,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/stats.py\n+++ b/src/stats.py\n@@ -2,4 +2,4 @@\n     \"\"\"算术平均;空序列抛 ValueError。\"\"\"\n     if not numbers:\n         raise ValueError(\"empty sequence\")\n-    return sum(numbers) // len(numbers)\n+    return sum(numbers) / len(numbers)\n"
+      "patch_text": "*** Begin Patch\n*** Update File: src/stats.py\n     \"\"\"算术平均;空序列抛 ValueError。\"\"\"\n     if not numbers:\n         raise ValueError(\"empty sequence\")\n-    return sum(numbers) // len(numbers)\n+    return sum(numbers) / len(numbers)\n*** End Patch\n"
     }
   },
   {

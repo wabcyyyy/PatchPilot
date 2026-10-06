@@ -21,7 +21,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/pagination.py\n+++ b/src/pagination.py\n@@ -6,5 +6,5 @@\n     if page < 1 or size < 1:\n         raise ValueError(\"page and size must be >= 1\")\n     start = (page - 1) * size\n-    end = start + size - 1\n+    end = start + size\n     return list(items[start:end])\n"
+      "patch_text": "*** Begin Patch\n*** Update File: src/pagination.py\n     if page < 1 or size < 1:\n         raise ValueError(\"page and size must be >= 1\")\n     start = (page - 1) * size\n-    end = start + size - 1\n+    end = start + size\n     return list(items[start:end])\n*** End Patch\n"
     }
   },
   {

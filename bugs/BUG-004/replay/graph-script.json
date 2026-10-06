@@ -21,7 +21,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/config.py\n+++ b/src/config.py\n@@ -5,4 +5,6 @@\n \n def lookup_setting(store, key):\n     \"\"\"读取配置项:store 优先,未设置回退 DEFAULTS,未知键返回 None。\"\"\"\n-    return store[key]\n+    if key in store:\n+        return store[key]\n+    return DEFAULTS.get(key)\n"
+      "patch_text": "*** Begin Patch\n*** Update File: src/config.py\n \n def lookup_setting(store, key):\n     \"\"\"读取配置项:store 优先,未设置回退 DEFAULTS,未知键返回 None。\"\"\"\n-    return store[key]\n+    if key in store:\n+        return store[key]\n+    return DEFAULTS.get(key)\n*** End Patch\n"
     }
   },
   {

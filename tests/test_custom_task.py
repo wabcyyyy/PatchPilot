@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.api.app import create_app
 from app.gitops.testing import materialize_repo
+from tests.conftest import block
 
 TERMINAL = {
     "FINISHED",
@@ -242,7 +243,7 @@ def _repair_script() -> list[dict]:
         )
         diff = working_tree_diff(tmp / "ws").diff_text
         return [
-            {"tool": "apply_patch", "args": {"diff_text": diff}},
+            {"tool": "apply_patch", "args": {"patch_text": block(diff)}},
             {"tool": "run_tests", "args": {"test_set": "failed"}},
             {"tool": "run_tests", "args": {"test_set": "regression"}},
             {"tool": "finish", "args": {"success": True, "summary": "空字符串早退分支已补"}},
@@ -298,7 +299,7 @@ def test_custom_task_malicious_patch_rejected(
 ) -> None:
     """恶意脚本被门禁拦截:补丁落不了盘 → 判定 PATCH_REJECTED,现场保留。"""
     malicious = [
-        {"tool": "apply_patch", "args": {"diff_text": _evil_diff(target)}},
+        {"tool": "apply_patch", "args": {"patch_text": block(_evil_diff(target))}},
         {"tool": "finish", "args": {"success": True, "summary": f"试图改 {target}"}},
     ]
     resp = client.post("/api/tasks", json=_custom_payload(custom_repo, replay_script=malicious))

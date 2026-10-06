@@ -21,7 +21,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/helpers.py\n+++ b/src/helpers.py\n@@ -3,4 +3,4 @@\n \n def clean_text(text):\n     \"\"\"压缩文本:去掉首尾的全部空白字符。\"\"\"\n-    return text.strip(\" \")\n+    return text.strip()\n"
+      "patch_text": "*** Begin Patch\n*** Update File: src/helpers.py\n \n def clean_text(text):\n     \"\"\"压缩文本:去掉首尾的全部空白字符。\"\"\"\n-    return text.strip(\" \")\n+    return text.strip()\n*** End Patch\n"
     }
   },
   {

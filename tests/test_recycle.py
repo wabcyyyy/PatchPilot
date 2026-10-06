@@ -11,6 +11,7 @@ import pytest
 from app.api.recycle import recycle_finished_tasks, recycle_run_dir
 from app.config import get_settings
 from app.storage.repository import Repository
+from tests.conftest import block
 
 
 def _make_run_dir(root: Path, task_id: str) -> Path:
@@ -167,7 +168,7 @@ def test_service_recycles_workspace_on_finished(
     replay = [
         {"tool": "search_code", "args": {"keyword": "parse_date"}},
         {"tool": "read_file", "args": {"path": "src/dateparse.py"}},
-        {"tool": "apply_patch", "args": {"diff_text": _TINY_FIX_DIFF}},
+        {"tool": "apply_patch", "args": {"patch_text": block(_TINY_FIX_DIFF)}},
         {"tool": "run_tests", "args": {"test_set": "failed"}},
         {"tool": "run_tests", "args": {"test_set": "regression"}},
         {"tool": "finish", "args": {"success": True, "summary": "fixed empty input"}},

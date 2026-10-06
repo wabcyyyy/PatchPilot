@@ -21,7 +21,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/units.py\n+++ b/src/units.py\n@@ -1,3 +1,3 @@\n def to_percent(fraction):\n     \"\"\"比例转百分比(保留 1 位小数),并夹在 [0, 100]。\"\"\"\n-    return round(fraction * 100, 1)\n+    return round(min(100.0, max(0.0, fraction * 100)), 1)\n"
+      "patch_text": "*** Begin Patch\n*** Update File: src/units.py\n def to_percent(fraction):\n     \"\"\"比例转百分比(保留 1 位小数),并夹在 [0, 100]。\"\"\"\n-    return round(fraction * 100, 1)\n+    return round(min(100.0, max(0.0, fraction * 100)), 1)\n*** End Patch\n"
     }
   },
   {

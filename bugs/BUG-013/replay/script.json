@@ -14,7 +14,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/caching.py\n+++ b/src/caching.py\n@@ -1,5 +1,5 @@\n def get_or_set(cache, key, fn):\n     \"\"\"key 不存在时用 fn() 计算并缓存;返回缓存值。\"\"\"\n     if key not in cache:\n-        cache[key] = fn\n+        cache[key] = fn()\n     return cache[key]\n"
+      "patch_text": "*** Begin Patch\n*** Update File: src/caching.py\n def get_or_set(cache, key, fn):\n     \"\"\"key 不存在时用 fn() 计算并缓存;返回缓存值。\"\"\"\n     if key not in cache:\n-        cache[key] = fn\n+        cache[key] = fn()\n     return cache[key]\n*** End Patch\n"
     }
   },
   {

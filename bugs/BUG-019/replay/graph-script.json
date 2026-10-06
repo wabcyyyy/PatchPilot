@@ -21,7 +21,7 @@
   {
     "tool": "apply_patch",
     "args": {
-      "diff_text": "--- a/src/seq.py\n+++ b/src/seq.py\n@@ -1,3 +1,5 @@\n def first_or(items, default=None):\n     \"\"\"返回第一个元素;空序列返回 default。\"\"\"\n+    if not items:\n+        return default\n     return items[0]\n"
+      "patch_text": "*** Begin Patch\n*** Update File: src/seq.py\n def first_or(items, default=None):\n     \"\"\"返回第一个元素;空序列返回 default。\"\"\"\n+    if not items:\n+        return default\n     return items[0]\n*** End Patch\n"
     }
   },
   {

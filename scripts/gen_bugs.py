@@ -21,6 +21,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BUGS = ROOT / "bugs"
 
+sys.path.insert(0, str(ROOT))
+
+from app.gitops.blockpatch import unified_to_block  # noqa: E402
+
 
 def _conftest() -> str:
     return '"""题目仓库根 conftest:让 `from src...` 导入生效(由生成器写入)。"""\n'
@@ -1078,7 +1082,7 @@ def replay_script(spec: dict, diff_text: str) -> list[dict]:
     steps = [{"tool": "search_code", "args": {"keyword": spec["search_hint"]}}]
     steps += [{"tool": "read_file", "args": {"path": module}} for module in modules]
     steps += [
-        {"tool": "apply_patch", "args": {"diff_text": diff_text}},
+        {"tool": "apply_patch", "args": {"patch_text": unified_to_block(diff_text)}},
         {"tool": "run_tests", "args": {"test_set": "failed"}},
         {"tool": "run_tests", "args": {"test_set": "regression"}},
         {
@@ -1102,7 +1106,7 @@ def graph_replay_script(spec: dict, diff_text: str) -> list[dict]:
         {"tool": "finish", "args": {"success": True, "summary": f"根因定位:{', '.join(modules)}"}}
     ]
     propose = [
-        {"tool": "apply_patch", "args": {"diff_text": diff_text}},
+        {"tool": "apply_patch", "args": {"patch_text": unified_to_block(diff_text)}},
         {"tool": "run_tests", "args": {"test_set": "failed"}},
         {"tool": "run_tests", "args": {"test_set": "regression"}},
         {

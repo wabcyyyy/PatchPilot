@@ -10,6 +10,7 @@ import pytest
 from app.api.service import TaskService
 from app.errors import PatchPilotError
 from app.storage.repository import Repository
+from tests.conftest import block
 
 
 def _service(tmp_path: Path) -> TaskService:
@@ -287,7 +288,7 @@ def test_ten_custom_tasks_concurrent_smoke(tmp_path: Path) -> None:
     replay = [
         {"tool": "search_code", "args": {"keyword": "parse_date"}},
         {"tool": "read_file", "args": {"path": "src/dateparse.py"}},
-        {"tool": "apply_patch", "args": {"diff_text": _TINY_FIX_DIFF}},
+        {"tool": "apply_patch", "args": {"patch_text": block(_TINY_FIX_DIFF)}},
         {"tool": "run_tests", "args": {"test_set": "failed"}},
         {"tool": "run_tests", "args": {"test_set": "regression"}},
         {"tool": "finish", "args": {"success": True, "summary": "fixed empty input"}},

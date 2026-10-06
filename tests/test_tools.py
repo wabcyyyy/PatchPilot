@@ -15,6 +15,7 @@ from app.tools.files import list_files, read_file, search_code
 from app.tools.patching import apply_patch, git_diff, reset_to_baseline
 from app.tools.registry import execute
 from app.tools.tracker import Tracker
+from tests.conftest import block
 
 FAILED_ID = "tests/test_dateparse.py::test_empty_string_returns_none"
 REGRESSION_IDS = [
@@ -118,21 +119,21 @@ def test_apply_patch_rejects_test_file_modification(task_ctx: ToolContext) -> No
         " def test_x():\n"
         "     assert True\n"
     )
-    result = apply_patch(task_ctx, diff)
+    result = apply_patch(task_ctx, block(diff))
     assert not result.ok
     assert "test file" in result.error
 
 
 def test_apply_patch_rejects_outside_allowed_paths(task_ctx: ToolContext) -> None:
     task_ctx.allowed_paths = ["othersrc/**"]
-    result = apply_patch(task_ctx, _guard_diff())
+    result = apply_patch(task_ctx, block(_guard_diff()))
     assert not result.ok
     assert "allowed scope" in result.error
 
 
 def test_apply_git_diff_reset_roundtrip(task_ctx: ToolContext) -> None:
     diff_text = _guard_diff()
-    result = apply_patch(task_ctx, diff_text)
+    result = apply_patch(task_ctx, block(diff_text))
     assert result.ok, result.error
     assert "src/dateparse.py" in result.output["changed_files"]
 
@@ -160,8 +161,25 @@ def test_run_tests_tool_reports_failure_and_pass(task_ctx: ToolContext) -> None:
 
 
 def test_run_tests_tool_reports_success_after_fix(task_ctx: ToolContext) -> None:
-    assert apply_patch(task_ctx, _guard_diff()).ok
+    assert apply_patch(task_ctx, block(_guard_diff())).ok
     assert run_tests_tool(task_ctx, "all").output["all_passed"]
+
+
+def test_apply_patch_single_entry_rejects_unified_diff_and_old_arg_name(
+    task_ctx: ToolContext,
+) -> None:
+    """单入口证明:unified diff 既过不了协议,也绑不进签名。
+
+    工具层只声明 `patch_text`;旧键名 `diff_text` 由 registry 的签名绑定
+    (`inspect.signature(handler).bind`)直接拒,不存在"看首行猜格式"的双格式分派。
+    """
+    unified = "--- a/src/dateparse.py\n+++ b/src/dateparse.py\n@@ -1 +1 @@\n-x\n+y\n"
+    assert not apply_patch(task_ctx, unified).ok
+    assert "bad_header" in apply_patch(task_ctx, unified).error
+
+    via_registry = execute(task_ctx, "apply_patch", {"diff_text": block(_guard_diff())})
+    assert not via_registry.ok
+    assert "bad arguments for apply_patch" in via_registry.error
 
 
 # ---------- registry 与轨迹 ----------
