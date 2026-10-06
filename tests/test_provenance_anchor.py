@@ -175,3 +175,30 @@ def test_manifest_records_anchor_check_and_dirty_state(tmp_path: Path) -> None:
         assert len(manifest["dirty_fingerprint"]) == 16
     else:
         assert manifest["dirty_fingerprint"] == ""
+
+
+# ---------- 取证命令解码(Windows 区域编码回归) ----------
+
+
+def test_run_git_decodes_utf8_not_locale(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """取证 git 输出含中文(脏树 diff)时不得因区域编码(GBK)截断/崩读。
+
+    修复前实测:Windows 下 `diff HEAD` 的中文内容使读取线程抛 UnicodeDecodeError,
+    stdout 静默变空,脏树指纹退化成"只哈希文件名名单"——识别脏树的效力失真。
+    """
+    from app.gitops.cmd import run_git
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    run_git(repo, "init", "-q")
+    run_git(repo, "config", "user.email", "t@patchpilot.local")
+    run_git(repo, "config", "user.name", "T")
+    (repo / "note.txt").write_text("原始内容\n", encoding="utf-8", newline="\n")
+    run_git(repo, "add", "-A")
+    run_git(repo, "commit", "-q", "-m", "中文提交信息")
+    (repo / "note.txt").write_text("中文改动\n", encoding="utf-8", newline="\n")
+
+    monkeypatch.setattr(provenance, "_REPO_ROOT", repo)
+    out = provenance._run_git(["diff", "HEAD"])
+    assert out is not None
+    assert "中文改动" in out

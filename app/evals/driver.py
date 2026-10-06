@@ -301,7 +301,12 @@ def run_batch(
     测试,度量 localize 的真实贡献;测试集原样保留,graph 层零感知。
     """
     settings = get_settings()
-    require_model_name(model_name, settings.llm_enabled)
+    # 豁免同口径:run_task/run_task_graph 都对 fake-replay 豁免(零花费回放传空
+    # model_name),批次级守卫此前漏了豁免——本地 .env 开 llm_enabled 时,一跑
+    # fake 批(含 CLI)就炸断。provider 由首个模型实例判定,与任务级守卫同源。
+    models = [model_for(bug) for bug in bugs]
+    provider = getattr(models[0], "provider", "") if models else ""
+    require_model_name(model_name, settings.llm_enabled and provider != "fake-replay")
     if blind:
         for bug in bugs:
             apply_blind(bug)
@@ -312,13 +317,13 @@ def run_batch(
     results = [
         run_task(
             bug,
-            model_for(bug),
+            models[index],
             runs_root=batch_dir,
             max_turns=max_turns,
             engine=engine,
             model_name=model_name,
         )
-        for bug in bugs
+        for index, bug in enumerate(bugs)
     ]
 
     verdict_counts: dict[str, int] = {}

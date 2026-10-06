@@ -24,11 +24,20 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 def _run_git(args: list[str], timeout: float = 10) -> str | None:
     """在仓库根执行一条只读 git 命令:成功返回 stdout,失败/超时/git 缺失返回 None。
 
+    text 输出锁定 UTF-8(errors="replace"):Windows 区域编码(GBK)下解码含中文的
+    diff 输出会在读取线程里抛 UnicodeDecodeError,stdout 静默变空——脏树指纹会
+    因此少算"改动全文",失去识别脏树的效力(实测:修复前指纹只含状态条目名单)。
     降级口径由调用方决定(现状:git_commit 返 "unknown",脏树取证返 None=无法判定)。
     """
     try:
         proc = subprocess.run(
-            ["git", *args], cwd=_REPO_ROOT, capture_output=True, text=True, timeout=timeout
+            ["git", *args],
+            cwd=_REPO_ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None

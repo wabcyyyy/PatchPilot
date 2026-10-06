@@ -137,3 +137,32 @@ def test_run_task_graph_empty_model_name_rejected(
     result = run_task_graph(bug, fake_stub, runs_root=tmp_path / "runs2", model_name="")
     assert (tmp_path / "runs2").exists()  # 守卫放行:目录已物化
     assert result.status == "NEEDS_REVIEW"  # 执行期收敛,不是发起期拒绝
+
+
+# ---------- 链 5(直连):run_batch 批次级守卫的 fake 豁免 ----------
+
+
+def test_run_batch_guard_matches_task_level_exemption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """批次级守卫与任务级同口径:真实 provider 缺 model_name → 拒(零产物);
+    fake-replay 豁免——本地 .env llm_enabled=true 时 fake 批必须照跑。"""
+    from types import SimpleNamespace
+
+    from app.evals.bugset import load_bug
+    from app.evals.driver import run_batch
+    from app.llm.fake import FakeLLM
+
+    patched = get_settings().model_copy(update={"llm_enabled": True})
+    monkeypatch.setattr("app.evals.driver.get_settings", lambda: patched)
+
+    bug = load_bug("BUG-001", Path("bugs"))
+    real_stub = SimpleNamespace(provider="openai")
+    with pytest.raises(ValueError, match="model_name"):
+        run_batch([bug], lambda _bug: real_stub, runs_root=tmp_path / "real")
+    assert not (tmp_path / "real").exists()
+
+    give_up = [{"tool": "finish", "args": {"success": False, "summary": "放弃"}}]
+    results = run_batch([bug], lambda _bug: FakeLLM(list(give_up)), runs_root=tmp_path / "fake")
+    assert len(results) == 1
+    assert (tmp_path / "fake" / "batch_manifest.json").exists()
