@@ -10,6 +10,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -18,9 +19,10 @@ from app.adapters.pytest_adapter import run_pytest
 from app.config import get_settings
 from app.errors import BudgetError, TaskCancelled, TaskError
 from app.gitops.differ import working_tree_diff
+from app.gitops.patcher import apply_patch as git_apply_patch
 from app.gitops.testing import materialize_repo
 from app.graph.gates import ensure_budget, run_gates
-from app.graph.plain_loop import run_plain_loop
+from app.graph.plain_loop import LoopOutcome, run_plain_loop
 from app.graph.state import TaskState
 from app.llm.base import Model
 from app.prompts import LOCALIZE_PROMPT, PROPOSE_PROMPT, build_feedback
@@ -80,6 +82,40 @@ def _feedback_streak(state: TaskState, current: list[str]) -> tuple[list[str], i
     previous = sorted(state.get("last_feedback_signatures", []))
     streak = state.get("repeat_streak", 0) + 1 if normalized == previous else 1
     return normalized, streak
+
+
+@dataclass
+class BranchCandidate:
+    """一个候选分支的隔离验证结果(择优的唯一依据)。"""
+
+    index: int
+    workspace: Path
+    diff_text: str
+    failed_ok: bool
+    regression_ok: bool
+    failed_remaining: int
+    failed_cases: list[dict[str, str]]
+    turns: int
+    tokens_used: int
+    tokens_prompt: int
+    tokens_completion: int
+    error: str = ""
+
+
+VARIANT_HINTS: dict[int, str] = {
+    0: (
+        "## 本轮要求:换思路(方向 A)\n"
+        "上一轮的同一种改法没有修好。请重新核对根因与前置条件:"
+        "先确认失败断言到底约束了哪个契约(而不是先去改看起来可疑的那行),"
+        "再确认修复点是不是应该在调用方/被调方边界处收口。不要重复上一轮的改动。"
+    ),
+    1: (
+        "## 本轮要求:换思路(方向 B)\n"
+        "上一轮的同一种改法没有修好。请从失败路径入手:列举这条断言还可能被哪些"
+        "分支/边界输入影响(空值、越界、类型、顺序、异常),并把补丁做在缺少的"
+        "那个边界处理上。不要重复上一轮的改动。"
+    ),
+}
 
 
 @dataclass
@@ -260,6 +296,18 @@ class TaskNodes:
 
     # ---------- PROPOSE_PATCH ----------
 
+    def _propose_prompt(self, state: TaskState, round_no: int) -> str:
+        """PROPOSE 阶段的完整提示(P1-1:全新会话必须带全 Bug 描述与定位结论)。
+
+        分支候选与主线共用这一份构造——候选不比主线多看任何东西,只是换了思路提示。
+        """
+        return PROPOSE_PROMPT.format(
+            round_no=round_no,
+            issue_text=state["issue_text"],
+            findings=state.get("findings") or "(定位阶段未给出结论;请先用只读工具确认根因)",
+            feedback=state.get("feedback", ""),
+        )
+
     def propose(self, state: TaskState) -> dict[str, Any]:
         assert self.ctx is not None
         # started_monotonic 未接线时(直接构造 TaskNodes 的测试场景)以"当前"为
@@ -279,14 +327,7 @@ class TaskNodes:
             # 不得伪装成"预算超限"污染终态语义(N-5 同源)
             return {"status": "BUDGET_EXCEEDED", "outcome": "failed", "error": str(exc)}
 
-        prompt = PROPOSE_PROMPT.format(
-            round_no=state["round_no"],
-            issue_text=state["issue_text"],
-            # P1-1 整改:PROPOSE 是全新会话,必须带全 Bug 描述与定位结论,
-            # 否则真实模型在 PROPOSE 阶段"盲改"(FakeLLM 回放照不出)
-            findings=state.get("findings") or "(定位阶段未给出结论;请先用只读工具确认根因)",
-            feedback=state.get("feedback", ""),
-        )
+        prompt = self._propose_prompt(state, state["round_no"])
         try:
             outcome = run_plain_loop(
                 self.ctx,
@@ -531,6 +572,245 @@ class TaskNodes:
         # 预算前置:不靠事后 BudgetError 兜底(remaining is None = 任务级不限制)
         return remaining is None or remaining >= settings.branching_min_token_reserve
 
+    def _run_candidate(self, state: TaskState, index: int, reserve: int | None) -> BranchCandidate:
+        """一个候选:隔离工作区 → 换思路跑一轮 propose → 双测试集自验 → 取工作区 diff。
+
+        隔离用 `materialize_repo`(与主工作区同源、各自独立 git),不用 git worktree:
+        worktree 共享 object 库且要清理注册项,题目仓库本就是"复制一份"的模型,
+        复制更简单也没有跨工作区耦合。
+        """
+        assert self.ctx is not None
+        settings = get_settings()
+        cand_ws = self.report_dir / f"workspace-cand{index}"
+        cand_reports = self.report_dir / f"cand{index}"
+        cand_reports.mkdir(parents=True, exist_ok=True)
+        sha = materialize_repo(self.bug.repo_dir, cand_ws, extra_commit=False)
+        cand_ctx = ToolContext(
+            task_id=f"{self.ctx.task_id}-cand{index}",
+            workspace=cand_ws,
+            baseline_commit=sha,
+            tracker=Tracker(cand_reports / "trajectory.jsonl", task_id=f"cand{index}"),
+            report_dir=cand_reports,
+            python_exe=self.ctx.python_exe,
+            test_sets=self.ctx.test_sets,
+            allowed_paths=self.ctx.allowed_paths,
+            whitelist=self.ctx.whitelist,
+            max_read_lines=self.ctx.max_read_lines,
+            max_search_results=self.ctx.max_search_results,
+            max_patch_files=self.ctx.max_patch_files,
+            test_timeout_seconds=self.ctx.test_timeout_seconds,
+            forbid_test_files=self.ctx.forbid_test_files,
+        )
+        rounds = state["round_no"] + 1
+        note = ""
+        outcome = LoopOutcome(
+            success=False,
+            summary="",
+            turns=0,
+            tokens_used=0,
+            patch_applied=False,
+            finish_declared=False,
+        )
+        try:
+            outcome = run_plain_loop(
+                cand_ctx,
+                self.branch_model_factory(index),  # type: ignore[misc]
+                self._propose_prompt(state, rounds),
+                max_turns=self.max_turns,
+                round_no=rounds,
+                state_label=f"BRANCH-{index}",
+                extra_system=VARIANT_HINTS.get(index, ""),
+                allowed_tools=WRITE_TOOLS,
+                # 候选各拿任务级余量的一半:两个候选合计不超一轮双倍开销
+                token_budget=reserve // 2 if reserve else reserve,
+                started_monotonic=self.started_monotonic,
+                time_budget_seconds=settings.task_timeout_seconds,
+                cancel_event=self.cancel_event,
+            )
+        except TaskCancelled:
+            raise  # 取消语义不得被候选吞掉
+        except BudgetError as exc:
+            note = f"预算超限:{exc}"
+            # 超预算的候选也要记账:已花的 token/turn 是真实成本,不能因失败而抹掉
+            outcome = LoopOutcome(
+                success=False,
+                summary=note,
+                turns=getattr(exc, "turns", 0),
+                tokens_used=getattr(exc, "tokens_spent", 0),
+                patch_applied=False,
+                finish_declared=False,
+                tokens_prompt=getattr(exc, "tokens_prompt", 0),
+                tokens_completion=getattr(exc, "tokens_completion", 0),
+            )
+        except Exception as exc:  # 候选失败不拖垮主流程:按"未修好"计分
+            note = f"{type(exc).__name__}: {exc}"
+
+        diff = working_tree_diff(cand_ws)
+        failed_report, _ = run_pytest(
+            cand_ctx.python_exe,
+            cand_ws,
+            self.bug.failed_tests,
+            cand_reports / "branch-failed.xml",
+            timeout_seconds=settings.test_timeout_seconds,
+        )
+        regression_report, _ = run_pytest(
+            cand_ctx.python_exe,
+            cand_ws,
+            self.bug.regression_tests,
+            cand_reports / "branch-regression.xml",
+            timeout_seconds=settings.test_timeout_seconds,
+        )
+        # 候选阶段不做 E3 双跑:双跑复核属于主流程的 resolved 判定,择优阶段
+        # 多一倍 pytest 开销换来的只是"同一伪绿再验一次",与择优目的无关
+        return BranchCandidate(
+            index=index,
+            workspace=cand_ws,
+            diff_text=diff.diff_text,
+            failed_ok=failed_report.all_passed,
+            regression_ok=regression_report.all_passed,
+            failed_remaining=failed_report.failed + failed_report.errors,
+            failed_cases=[
+                {"name": c.test_name, "signature": c.signature}
+                for c in [*failed_report.failed_cases, *regression_report.failed_cases]
+            ],
+            turns=outcome.turns,
+            tokens_used=outcome.tokens_used,
+            tokens_prompt=outcome.tokens_prompt,
+            tokens_completion=outcome.tokens_completion,
+            error=note,
+        )
+
+    @staticmethod
+    def _select_candidate(cands: list[BranchCandidate]) -> BranchCandidate:
+        """择优:先要"双集通过",再要剩余失败少、报告失败少、花得省。"""
+        return max(
+            cands,
+            key=lambda c: (
+                c.failed_ok,
+                c.regression_ok,
+                -c.failed_remaining,
+                -len(c.failed_cases),
+                -c.tokens_used,
+            ),
+        )
+
+    def _run_fallback_branches(self, state: TaskState) -> dict[str, Any]:
+        """触发一次 Best-of-N:并行候选 → 择优 → 胜者补丁合流回主工作区。
+
+        合流后走 **既有 apply 节点**做图级门禁复核(apply 会重读工作区 diff 跑
+        run_gates),门禁链对分支产物照常全量执行;verify 再判一次,判定规则未变。
+        本任务至多分支一次(branching_used)。
+        """
+        assert self.ctx is not None and self.branch_model_factory is not None
+        settings = get_settings()
+        round_no = state["round_no"]
+        reason = (
+            f"repeat_streak={state.get('repeat_streak', 0)},"
+            f" patch_fail_streak={self.ctx.patch_fail_streak}"
+        )
+        self.tracker.record(
+            tool="adaptive_branch_trigger",
+            round_no=round_no,
+            state="PROPOSE_PATCH",
+            input_payload={"round": round_no, "reason": reason},
+        )
+        reserve = self._token_budget_for(state) or 0
+        count = max(2, settings.branch_candidates)
+        with ThreadPoolExecutor(max_workers=count) as pool:
+            futures = [pool.submit(self._run_candidate, state, i, reserve) for i in range(count)]
+            cands = [f.result() for f in futures]  # TaskCancelled 在此向上抛出
+
+        winner = self._select_candidate(cands)
+        self.tracker.record(
+            tool="adaptive_branch_selected",
+            round_no=round_no,
+            state="PROPOSE_PATCH",
+            output_summary={
+                "winner": winner.index,
+                "candidates": [
+                    {
+                        "index": c.index,
+                        "failed_ok": c.failed_ok,
+                        "regression_ok": c.regression_ok,
+                        "remaining": c.failed_remaining,
+                        "error": c.error,
+                    }
+                    for c in cands
+                ],
+            },
+        )
+        spent_turns = sum(c.turns for c in cands)
+        spent_tokens = sum(c.tokens_used for c in cands)
+        account = {
+            "turns": state.get("turns", 0) + spent_turns,
+            "tokens_used": state.get("tokens_used", 0) + spent_tokens,
+            "tokens_prompt": state.get("tokens_prompt", 0) + sum(c.tokens_prompt for c in cands),
+            "tokens_completion": state.get("tokens_completion", 0)
+            + sum(c.tokens_completion for c in cands),
+        }
+        if not winner.diff_text.strip():
+            # 候选都没产出可应用的改动:回到单线下一轮,不烧门禁与 pytest
+            self.tracker.record(
+                tool="adaptive_branch_no_patch",
+                round_no=round_no,
+                state="PROPOSE_PATCH",
+                error="所有候选都没有产生工作区改动",
+            )
+            return {
+                **account,
+                "status": "PROPOSE_PATCH",
+                "round_no": round_no + 1,
+                "branching_used": True,
+                "verify_failed_ok": False,
+                "verify_regression_ok": False,
+                "feedback": build_feedback(
+                    winner.failed_cases,
+                    extra_note="自适应分支:两个候选都没有产出可应用的补丁。",
+                ),
+            }
+
+        applied = git_apply_patch(self.workspace, winner.diff_text)
+        if not applied.applied:
+            # 主工作区已 reset 在与候选同源的位置,理论上可干净应用;真失败就退回单线
+            return {
+                **account,
+                "status": "PROPOSE_PATCH",
+                "round_no": round_no + 1,
+                "branching_used": True,
+                "verify_failed_ok": False,
+                "verify_regression_ok": False,
+                "feedback": (
+                    f"自适应分支胜者(候选 {winner.index})的补丁合流失败"
+                    f"({applied.rejected_reason}):{applied.detail}——请自行重写补丁"
+                ),
+            }
+
+        if winner.failed_ok and winner.regression_ok:
+            feedback = (
+                f"自适应分支已择优:候选 {winner.index} 在其隔离工作区内双测试集通过,"
+                "补丁已合流到主工作区,下面按正常流程做图级门禁复核与验证。"
+            )
+        else:
+            # 候选全败也合流"最不差"的那个:让下一轮基于真实失败反馈继续,而不是空转
+            feedback = build_feedback(
+                winner.failed_cases,
+                extra_note=(
+                    f"自适应分支的 {count} 个候选都未完全修好;"
+                    f"取剩余失败最少的候选 {winner.index} 合流,请据此换方向。"
+                ),
+            )
+        return {
+            **account,
+            "status": "APPLY_PATCH",
+            "round_no": round_no + 1,
+            "branching_used": True,
+            "branch_selected": winner.index,
+            "patch_fail_streak": self.ctx.patch_fail_streak,
+            "feedback": feedback,
+            "verify_failed_ok": False,
+            "verify_regression_ok": False,
+        }
+
     def rollback(self, state: TaskState) -> dict[str, Any]:
         # N-12 整改:回滚会 reset 掉工作区,末轮(验证失败/门禁拒绝)的直接证据
         # 必须先取下——否则 runner 落盘的 diff.patch 是回滚后的空 diff,取证现场被毁
@@ -552,6 +832,9 @@ class TaskNodes:
                 "error": "rounds exhausted after failed verify",
                 "preserved_diff": preserved,
             }
+        # 卡5b:轮数耗尽优先终止(上面已 return),之后才考虑分支一次
+        if self._should_branch(state):
+            return self._run_fallback_branches(state)
         return {
             "status": "PROPOSE_PATCH",
             "round_no": state["round_no"] + 1,
@@ -560,4 +843,10 @@ class TaskNodes:
         }
 
     def route_rollback(self, state: TaskState) -> str:
-        return "end" if state["status"] == "BUDGET_EXCEEDED" else "propose"
+        """BUDGET_EXCEEDED → 终点;APPLY_PATCH(分支合流)→ apply 节点做图级门禁复核;
+        其余 → 下一轮 propose。"""
+        if state["status"] == "BUDGET_EXCEEDED":
+            return "end"
+        if state["status"] == "APPLY_PATCH":
+            return "apply"
+        return "propose"

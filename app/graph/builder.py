@@ -47,7 +47,11 @@ def build_graph(nodes: TaskNodes, checkpointer: Any | None = None) -> Any:
     )
     graph.add_edge("finish", END)
     graph.add_conditional_edges(
-        "rollback", nodes.route_rollback, {"propose": "propose", "end": END}
+        "rollback",
+        nodes.route_rollback,
+        # "apply":卡5b 自适应分支的胜者补丁合流后,交回既有 apply 节点做图级门禁复核
+        # (门禁链照常全量执行,不为分支开旁路)
+        {"propose": "propose", "end": END, "apply": "apply"},
     )
 
     if checkpointer is not None:

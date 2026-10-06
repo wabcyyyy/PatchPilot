@@ -6,6 +6,7 @@ import logging
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -34,10 +35,13 @@ def run_task_graph(
     run_dir: Path | None = None,
     model_name: str = "",
     cancel_event: threading.Event | None = None,
+    branch_model_factory: Callable[[int], Model] | None = None,
 ) -> Any:
     """执行一个任务(状态机引擎);返回与 plain 引擎一致的 TaskResult。
 
     task_id/run_dir 可由调用方(API 服务)指定,保证产物目录与服务记录一致。
+    branch_model_factory(卡5b):第 i 个候选用哪个模型。由调用方注入——graph 层
+    不 import 测试替身,fake 回放的分支脚本读取留在 eval 入口;不传即恒不分支。
     """
     # P3-3 整改:第四入口(run_task_graph)此前零守卫——与 driver.run_task 同口径,
     # 真实模型(llm_enabled=True 且非 fake-replay)缺 model_name 时在物化任何
@@ -85,6 +89,7 @@ def run_task_graph(
             max_turns=max_turns,
             started_monotonic=started,
             cancel_event=cancel_event,
+            branch_model_factory=branch_model_factory,
         )
         checkpointer = (
             make_sqlite_checkpointer(run_dir / "checkpoints.sqlite") if use_checkpoint else None

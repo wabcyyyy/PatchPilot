@@ -17,7 +17,31 @@ from app.config import get_settings
 from app.evals.bugset import load_bug, load_replay_script
 from app.evals.driver import run_task
 from app.evals.provenance import require_model_name
+from app.llm.base import Model
+from app.llm.fake import FakeLLM
 from app.llm.openai_client import build_model
+
+
+def _branch_model_factory(bug, model_kind: str, settings) -> object | None:
+    """卡5b 的候选模型工厂(在 eval 入口接线,graph 层不 import 测试替身)。
+
+    - 题目录入时带了 `replay/graph-branches.json`(形态 `{"0": [steps...], "1": [...]}`)
+      → 每个候选一个 FakeLLM,分支路径可离线确定性复现;缺某序号的脚本就给空脚本
+      (FakeLLM 立刻声明失败 → 该候选"未修好",而不是崩在循环里)。
+    - 真实模型 → 每候选一个独立客户端(候选之间不共享会话)。
+    - 其余(真实模型未开 / 无分支脚本)→ None:`_should_branch` 短路,单线与 V1 一致。
+    """
+    branches_path = bug.root / "replay" / "graph-branches.json"
+    if branches_path.exists():
+        branches = json.loads(branches_path.read_text(encoding="utf-8"))
+
+        def _fake(index: int) -> Model:
+            return FakeLLM(list(branches.get(str(index)) or []))
+
+        return _fake
+    if model_kind == "openai" and settings.llm_enabled:
+        return lambda index: build_model("openai", settings)
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -49,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
             runs_root=Path(args.out),
             max_turns=args.max_turns,
             model_name=real_model_name,
+            branch_model_factory=_branch_model_factory(bug, args.model, settings),
         )
     else:
         result = run_task(
