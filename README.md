@@ -17,13 +17,13 @@
 - **7 个受控 Agent 工具**:list_files / search_code / read_file / apply_patch / run_tests / git_diff / reset_workspace,
   每次调用记录完整轨迹(JSONL + SQLite);
 - **七项质量门禁**:格式 / 禁改测试文件 / 路径越界 / 修改范围 / 影子模块 / 命令白名单 / 资源预算,
-  附 9 个攻击样例(`bugs/attacks/`)验证拦截;
+  附 10 个攻击样例(`bugs/attacks/`)验证拦截;
 - **双执行引擎**:plain(教学用单循环)与 graph(状态机),共享工具与提示;
 - **服务化**:FastAPI 七个端点 + SQLite 持久化 + Redis 任务锁(可退化内存锁)+ 幂等 + 崩溃恢复;
 - **容器隔离**:临时容器执行测试(`--network=none`、内存/CPU 限额、`--rm`),
   5 项隔离实验见 `docs/docker-isolation-notes.md`;
-- **自建评测集**:28 道 Python Bug(异常处理/边界条件/类型错误/数据访问/跨文件定位 × 简单/中等),
-  另有 8 道 hard 候选题(`bugs/candidates/`,待人工审题),
+- **自建评测集**:正式集 35 题(28 题简单/中等 + 7 题 hard,BUG-029..035),
+  另有候选 1 道待审(`bugs/candidates/`),
   七项指标自动判定;T10.1 起报告自带批次 provenance 与自动归并的复现命令
   (已入库的两份报告快照早于该特性,读数前先看 `docs/README.md` 的口径补注);
 - **外部基准接入(v1)**:SWE-bench jsonl 数据格式适配(`app/evals/swebench.py`),

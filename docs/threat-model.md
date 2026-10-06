@@ -42,7 +42,7 @@ API 响应(TaskOut)刻意收敛:不含 idem_key/repo_path/内部主键,但**保�
 平台的本质就是"跑模型产的补丁 + 跑目标仓库的测试"。防线依次是:
 
 1. 静态门禁:禁改测试文件 / 路径越界 / allowed_paths 范围 / 文件数上限 / 影子模块
-   / diff 格式 / `git apply --check`,攻击样例 9 个拦截(`bugs/attacks/`,回归于 `tests/test_attacks.py`);
+   / diff 格式 / `git apply --check`,攻击样例 10 个拦截(`bugs/attacks/`,回归于 `tests/test_attacks.py`);
 2. 命令边界:Agent 只能跑 manifest 预定义测试集,无 shell,参数列表 + 白名单;
 3. 执行隔离:`local` 后端=宿主子进程(信任级别≈开发者自己跑测试),`docker` 后端=
    容器级(`--network=none`、内存/CPU 限额、非 root uid 1000、`--rm` 用后即焚);
@@ -67,26 +67,26 @@ max_tokens/超时/重试、单任务 token 预算门禁(BUDGET_EXCEEDED)。
 能操作守护进程≈能操作宿主。这是把执行隔离从"进程"升级为"容器"的代价,
 仅在信任 API 调用方的前提下使用(见 docs/docker-backend-notes.md)。
 
-### R3a 软链残余风险(2026-09-26 补记,审计 R3-Q4 实证;ATTACK-009 声明范围外)
+### R3a 软链残余风险(2026-09-26 实证补记;2026-10-06 门禁层收口)
 
 ATTACK-009 的自述范围是「越界路径」(落点 `../escape.txt`,被静态路径门禁拦下)。
-其之外存在一条**合法路径软链**残余链,两端实测均已钉死:
+其之外曾存在一条**合法路径软链**残余链,两端实证后已在门禁层收口:
 
-- **攻击面**:补丁以 `new file mode 120000` 在合法落点新建软链(落点原不存在),
-  指向工作区外模块。逐环节实测:静态门禁不拦(`gates.py` 的 `_NEW_FILE_RE`
+- **原攻击面**:补丁以 `new file mode 120000` 在合法落点新建软链(落点原不存在),
+  指向工作区外模块。当时逐环节实测:静态门禁不拦(`gates.py` 的 `_NEW_FILE_RE`
   只识别 new file 段、从不解析 mode 值)、落点校验不拦(`patcher._target_violation`
   只查「落点已是软链」与「resolve 越界」,新路径两查皆过)、`git apply --check`
   不拦、verify 阶段被消费——Linux 容器内「先删既有 pkg/util.py → 同路径新建
   120000 软链指向工作区外 evil_mod.py」两步变体(每步独立过门禁)后,
   verify 的 pytest `from pkg.util import helper` **import 了工作区外模块,
   测试通过**;
-- **不放大面**:Windows 宿主(local 默认,`core.symlinks=false`)实测 git apply
-  落普通文件或报错 rc=128,链条在 git 层断掉;软链落点若被 read_file 触碰,
-  `relpath_within` 校验会拦;后续触碰同路径的补丁、测试/控制面命名规则(影子
-  门禁)也会拦;
-- **裁决**:属 ATTACK-009/E1 已声明范围之外的残余风险,如实记录而非宣称已防。
-  「new file mode 120000 一律拒」属门禁语义变更(`gates.py` 边界,AGENTS 红线),
-  须另行评审后再实施(见 docs/人工触发清单-2026-09-26.md)。
+- **收口(2026-10-06)**:静态门禁解析 `new file mode` 的 mode 值,**120000
+  一律拒**(归 files 门禁;与链接目标无关——目标写在文件内容里,纯文本门禁
+  无从审计其合法性)。两步变体第②步在门禁层即被拦;样例 ATTACK-010 与
+  正向对照(普通新文件不受影响)入库 `tests/test_attacks.py`;
+- **平台差异**:门禁判定是纯文本的,跨平台行为一致;Windows 宿主(local 默认,
+  `core.symlinks=false`)下 git apply 本就落普通文件或报错 rc=128,收口后
+  两端不再依赖 git 对 120000 的平台差异行为。
 
 ## 4. 明确不防(边界外)
 
@@ -102,11 +102,7 @@ ATTACK-009 的自述范围是「越界路径」(落点 `../escape.txt`,被静态
   verify 双跑复核(E3)的价值边界如实声明(P3-5/R3-Q7):防的是**非自适应偶发
   伪绿**(收集集漂移/flaky/偶发伪造);对基线预置伪造的自适应对手无实质检出力
   ——同一伪造逻辑在同进程对两次运行同样生效,两次产出完全一致。E3 是结构性
-  冒烟复核,不是防线;
-- **合法路径软链新建**(R3a,2026-09-26 实证补记):new file mode 120000 的
-  合法落点软链在静态门禁/落点校验/git apply 三关都不设防,Linux 容器内
-  verify 阶段可消费工作区外模块——缓解与裁决见 §3 R3a;门禁层修复(120000
-  一律拒)属语义变更,评审前不做。
+  冒烟复核,不是防线。
 
 ## 5. 部署形态与适用边界
 

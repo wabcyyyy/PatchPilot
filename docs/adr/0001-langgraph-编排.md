@@ -42,9 +42,9 @@ recursion_limit 随 max_rounds 推导(4N+8)防长任务误抛。
 
 - `app/graph/checkpoint.py:3` — `当前没有崩溃恢复路径`
 - `docs/design.md:62` — `仅作轨迹留档`
-- `docs/design.md:91` — `9 个`
-- `docs/threat-model.md:45` — `攻击样例 9 个拦截`
-- `README.md:20` — `9 个攻击样例`
+- `docs/design.md:91` — `10 个`
+- `docs/threat-model.md:45` — `攻击样例 10 个拦截`
+- `README.md:20` — `10 个攻击样例`
 - `app/graph/gates.py:1` — `七项门禁`
 - `docs/adr/0002-execution-backend-local-默认.md:32` — `无留档的实测运行`
 

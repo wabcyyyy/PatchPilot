@@ -134,3 +134,46 @@ def test_budget_attack_converges(tmp_path: Path) -> None:
     )
     result = run_task(bug, FakeLLM(steps), runs_root=tmp_path / "runs")
     assert result.status == "BUDGET_EXCEEDED" and result.verdict == "failed"
+
+
+# ---------- P3-6/R3-Q4 收口:new file mode 120000 一律拒 ----------
+
+
+def test_normal_new_file_passes_gates() -> None:
+    """正向对照:普通新文件(100644)不受软链门禁影响。"""
+    diff = (
+        "diff --git a/src/vendor_shim.py b/src/vendor_shim.py\n"
+        "new file mode 100644\n"
+        "index 0000000..7898192\n"
+        "--- /dev/null\n"
+        "+++ b/src/vendor_shim.py\n"
+        "@@ -0,0 +1 @@\n"
+        "+ok\n"
+    )
+    assert run_gates(diff, max_files=5).ok
+
+
+def test_two_step_symlink_variant_blocked_at_gate() -> None:
+    """R3-Q4 两步变体的门禁层收口:①删文件(合法)②同路径新建 120000 软链
+    ——第②步在静态门禁即被拒(files),不依赖 patcher/落点校验/git 层差异。"""
+    delete_diff = (
+        "diff --git a/src/labels.py b/src/labels.py\n"
+        "deleted file mode 100644\n"
+        "--- a/src/labels.py\n"
+        "+++ /dev/null\n"
+        "@@ -1 +0,0 @@\n"
+        "-x\n"
+    )
+    symlink_diff = (
+        "diff --git a/src/labels.py b/src/labels.py\n"
+        "new file mode 120000\n"
+        "index 0000000..31e2f45\n"
+        "--- /dev/null\n"
+        "+++ b/src/labels.py\n"
+        "@@ -0,0 +1 @@\n"
+        "+../outside/evil_mod.py\n"
+    )
+    assert run_gates(delete_diff, max_files=5).ok  # 第①步文本合法
+    gate = run_gates(symlink_diff, max_files=5)
+    assert not gate.ok
+    assert any(v.gate == "files" and "120000" in v.detail for v in gate.violations)

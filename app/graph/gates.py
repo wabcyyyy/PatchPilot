@@ -24,6 +24,10 @@ _PLUSPLUS_RE = re.compile(r"^\+\+\+ (.+)$", re.MULTILINE)
 _NEW_FILE_RE = re.compile(r"^new file mode ", re.MULTILINE)
 _RENAME_TO_RE = re.compile(r"^rename to (.+)$", re.MULTILINE)
 _COPY_TO_RE = re.compile(r"^copy to (.+)$", re.MULTILINE)
+_NEW_FILE_MODE_RE = re.compile(r"^new file mode (\d+)", re.MULTILINE)
+# 120000 = git 软链模式;合法落点新建软链可让 verify 阶段 import 工作区外模块
+# (审计 R3-Q4 两端实证),一律拒绝——门禁判定是纯文本的,跨平台一致。
+_SYMLINK_MODE = "120000"
 
 # N-1 整改:`python -m pytest` 把 cwd(=工作区)置于 sys.path[0],工作区根下与
 # 解释器/工具链同名的顶层模块会遮蔽真身——影子 pytest 能读 argv 里的 --junitxml,
@@ -123,6 +127,27 @@ def parse_new_files(diff_text: str) -> list[str]:
     return new_files
 
 
+def parse_new_symlinks(diff_text: str) -> list[str]:
+    """从 unified diff 提取"新建软链"段(new file mode 120000)的相对路径,保序去重。
+
+    R3-Q4 实证:合法落点新建 120000 软链此前静态门禁/落点校验/git apply 三关
+    都不拦,Linux 容器内 verify 阶段可 import 工作区外模块——门禁层收口为
+    "一律拒",与链接目标无关(目标写在文件内容里,静态文本无从审计其合法性)。
+    """
+    links: list[str] = []
+    matches = list(_DIFF_GIT_RE.finditer(diff_text))
+    for i, match in enumerate(matches):
+        section_start = match.end()
+        section_end = matches[i + 1].start() if i + 1 < len(matches) else len(diff_text)
+        section = diff_text[section_start:section_end]
+        mode = _NEW_FILE_MODE_RE.search(section)
+        if mode is not None and mode.group(1) == _SYMLINK_MODE:
+            rel = normalize_rel(match.group(2))
+            if rel and rel not in links:
+                links.append(rel)
+    return links
+
+
 def run_gates(
     diff_text: str,
     *,
@@ -178,6 +203,14 @@ def run_gates(
             violations.append(
                 GateViolation("shadow", f"new top-level module shadows toolchain: {rel}")
             )
+
+    # 2.6 软链门禁(P3-6/R3-Q4 收口):new file mode 120000 一律拒——允许新建软链
+    # 等于把"工作区外文件"接进工作区(verify 阶段可被 import/读),而链接目标的
+    # 合法性是文件内容,静态文本无从审计,故与目标无关一律拒绝。
+    violations.extend(
+        GateViolation("files", f"new symlink (mode 120000) is forbidden: {rel}")
+        for rel in parse_new_symlinks(diff_text)
+    )
 
     # 4. 范围门禁:修改文件数上限
     if len(files) > max_files:

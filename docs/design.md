@@ -88,7 +88,7 @@ regression 必须绿)由生成器与测试双重把关——回归集在基线�
   对 graph 永不为终态,按 status 计数会把 graph 批的门禁拦截系统性记 0。
   跨引擎通用口径看 report.json 的 gate_violations/security_blocked 字段
   (评测报告「门禁拦截」计数即源于此);
-  攻击样例(9 个,全部拦截)是独立构造集,不混入 bug 集指标;
+  攻击样例(10 个,全部拦截)是独立构造集,不混入 bug 集指标;
 - **单进程架构**:SQLite 单连接 + 进程内任务锁 + 进程内 CancelRegistry——
   多 uvicorn worker 会破坏幂等/取消语义(取消事件跨进程不可达);
   横向扩展需任务队列与跨进程取消通道,属"平台化"范畴,暂不做;
