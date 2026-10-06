@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -98,6 +99,9 @@ class TaskNodes:
     ctx: ToolContext | None = None
     baseline_commit: str = ""
     cancel_event: threading.Event | None = None
+    # 卡5 自适应分支:第 i 个候选用哪个模型。None = 不分支(单线,与 V1 同行为)。
+    # 带默认值,runner/service 的关键字构造不受影响;由调用方注入,graph 层不 import 测试替身。
+    branch_model_factory: Callable[[int], Model] | None = None
 
     # ---------- CREATED ----------
 
@@ -496,6 +500,36 @@ class TaskNodes:
         return {"status": "FINISHED", "outcome": "resolved"}
 
     # ---------- 回滚与预算 ----------
+
+    def _should_branch(self, state: TaskState) -> bool:
+        """自适应分支触发判定:默认单线,只在"原地打转"证据出现时开一轮候选。
+
+        两类触发信号(任一满足即计):
+        ①同一组失败连续 2 轮完全一致(`repeat_streak`,verify 失败与门禁拒绝共用
+          该计数但特征串永不互认);
+        ②补丁连续 2 次**应用**失败(`ctx.patch_fail_streak`;门禁/协议拒绝是
+          "可修正的单线反馈",不计数,否则一次打字错误就会烧双倍预算)。
+
+        其余条件全是"值不值得分支"的前置:开关、本任务尚未分支过、候选模型可用、
+        剩余轮数 ≥ 2、token 余量够付一次双倍 propose。任一不满足就继续单线——
+        特别是 `branch_model_factory is None`:调用方不注入即整体降级为 V1 行为。
+        """
+        settings = get_settings()
+        if not settings.adaptive_branching_enabled:
+            return False
+        if state.get("branching_used", False):
+            return False
+        if self.branch_model_factory is None:
+            return False
+        if state["round_no"] > self.max_rounds - 2:
+            return False  # 分支后至少要留一轮验证
+        repeat_streak = state.get("repeat_streak", 0)
+        patch_fail_streak = self.ctx.patch_fail_streak if self.ctx else 0
+        if repeat_streak < 2 and patch_fail_streak < 2:
+            return False
+        remaining = self._token_budget_for(state)
+        # 预算前置:不靠事后 BudgetError 兜底(remaining is None = 任务级不限制)
+        return remaining is None or remaining >= settings.branching_min_token_reserve
 
     def rollback(self, state: TaskState) -> dict[str, Any]:
         # N-12 整改:回滚会 reset 掉工作区,末轮(验证失败/门禁拒绝)的直接证据

@@ -133,6 +133,11 @@ SNAPSHOT_KEYS: tuple[str, ...] = (
     "verify_double_run",
     "task_timeout_seconds",
     "default_max_rounds",
+    # 卡5 自适应分支:这三项直接决定轨迹形状与成本(同一题开不开分支不可比),
+    # 故进快照而非豁免
+    "adaptive_branching_enabled",
+    "branch_candidates",
+    "branching_min_token_reserve",
 )
 SECRET_KEYS: frozenset[str] = frozenset({"llm_api_key", "api_token"})
 EXEMPT_KEYS: frozenset[str] = frozenset(

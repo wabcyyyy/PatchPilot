@@ -99,7 +99,10 @@ def apply_patch(ctx: ToolContext, patch_text: str) -> ToolResult:
 
     result = git_apply_patch(ctx.workspace, diff_text)
     if not result.applied:
+        # 只有"真应用失败"计入分支信号;门禁/协议拒绝在上面已返回,不计数
+        ctx.patch_fail_streak += 1
         return ToolResult.fail(f"patch rejected ({result.rejected_reason}): {result.detail}")
+    ctx.patch_fail_streak = 0
 
     diff = working_tree_diff(ctx.workspace)
     return ToolResult(

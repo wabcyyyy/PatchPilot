@@ -92,6 +92,12 @@ class Settings(BaseSettings):
     # 模型可见层输出折叠的工具消息保留头尾行数(原始 junit/stderr 证据不受影响)
     refine_head_lines: int = 40
     refine_tail_lines: int = 15
+    # 自适应 Best-of-N(卡5):默认单线,仅在"同一断言连续 2 轮失败"或"补丁连续 2 次
+    # 应用失败"时开一轮 2 候选并行择优,且每任务至多一次。置 false 即回到 V1 单线行为。
+    adaptive_branching_enabled: bool = True
+    branch_candidates: int = 2
+    # 分支一次的开销约等于两轮 propose;余量低于此值就不分支(预算前置,不绕资源门禁)
+    branching_min_token_reserve: int = 30_000
 
 
 @lru_cache

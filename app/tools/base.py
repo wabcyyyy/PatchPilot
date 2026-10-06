@@ -35,6 +35,9 @@ class ToolContext:
     max_patch_files: int = 5
     test_timeout_seconds: int = 120
     forbid_test_files: bool = True
+    # 自适应分支触发信号(卡5):连续"补丁应用失败"的次数(门禁/协议拒绝不计——
+    # 那是可修正的单线反馈,只有真应用失败才说明当前思路在原地打转)
+    patch_fail_streak: int = 0
 
 
 @dataclass

@@ -163,6 +163,9 @@ def test_provenance_carries_new_traceability_fields() -> None:
         "verify_double_run",
         "task_timeout_seconds",
         "default_max_rounds",
+        "adaptive_branching_enabled",
+        "branch_candidates",
+        "branching_min_token_reserve",
     } == set(SNAPSHOT_KEYS)
     started = datetime.fromisoformat(prov["started_at"])
     assert started.tzinfo is not None
