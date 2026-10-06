@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .pytest-tmp/
+.pytest-tmp*/
 .ruff_cache/
 .mypy_cache/
 
@@ -14,6 +15,10 @@ runs/
 *.sqlite
 *.sqlite3
 *.db
+
+# SWE-bench 导入产物(纯数据、可删;题目身份在 eval_suite/tasks.json 里)
+.swe_cache/
+bugs/SWE-*/
 
 # 密钥与本地配置
 .env

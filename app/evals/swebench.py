@@ -1,14 +1,14 @@
-"""SWE-bench 数据格式适配器 v1(T10.3):外部基准 → 内部 BugTask。
+"""SWE-bench 数据格式适配器:外部基准 → 内部 BugTask。
 
-v1 边界(如实声明):
-- 只做**数据接入**:从本地 jsonl(SWE-bench 标准 jsonl 字段)加载实例,映射为
-  BugTask,复用平台的基线/验证/门禁判定;
-- 不做官方 docker 评估架构建、不自动克隆仓库、不应用 test_patch——
-  使用者需自行准备各实例 base_commit 的本地 checkout(见 scripts/import_swebench.py);
-- 联网下载与真实模型运行都是人工触发,不进 CI。
+边界(如实声明):
+- 本模块只做**数据接入**:解析标准 jsonl 字段并映射为 BugTask,复用平台的
+  基线/验证/门禁判定;
+- 仓库克隆、base_commit 检出、test_patch 应用与题目目录落盘都在
+  `scripts/import_swebench.py`(一次性运维脚本,允许联网、人工触发,不进 CI);
+- 真实模型运行同样是人工触发。
 
 字段映射:problem_statement→issue_text,FAIL_TO_PASS→failed_tests,
-PASS_TO_PASS→regression_tests,本地 checkout 目录→repo_dir。
+PASS_TO_PASS→regression_tests,导入后的纯工作树目录→repo_dir。
 FAIL_TO_PASS / PASS_TO_PASS 在数据集里是 JSON 字符串(如 '["test_x"]'),这里做归一。
 """
 
@@ -32,6 +32,10 @@ class SweInstance:
     problem_statement: str
     fail_to_pass: list[str] = field(default_factory=list)
     pass_to_pass: list[str] = field(default_factory=list)
+    # gold 补丁与测试补丁(jsonl 原生键,字符串,可缺失):
+    # test_patch 缺失 → 基线不成立,整题不可用;patch 缺失 → 只出不回放条目。
+    patch: str = ""
+    test_patch: str = ""
 
 
 def _parse_test_list(raw: object, field_name: str, instance_id: str) -> list[str]:
@@ -65,6 +69,8 @@ def parse_instance(record: dict) -> SweInstance:
         problem_statement=str(record.get("problem_statement", "")),
         fail_to_pass=fail_to_pass,
         pass_to_pass=_parse_test_list(record.get("PASS_TO_PASS"), "PASS_TO_PASS", instance_id),
+        patch=str(record.get("patch", "") or ""),
+        test_patch=str(record.get("test_patch", "") or ""),
     )
 
 
