@@ -87,7 +87,12 @@ def build_feedback(
     if not failed_cases and not extra_note:
         return "上一轮补丁已应用。请继续验证。"
     lines = ["上一轮补丁应用后仍有失败:"]
-    lines.extend(f"- {case.get('name')}: {case.get('signature')}" for case in failed_cases)
+    for case in failed_cases:
+        lines.append(f"- {case.get('name')}: {case.get('signature')}")
+        # 提纯后的堆栈(只含项目帧与最终异常块):签名首行往往不足以定位根因
+        trace = str(case.get("traceback", "")).strip()
+        if trace:
+            lines.extend(f"  {entry}" for entry in trace.split("\n"))
     if extra_note:
         lines.append(extra_note)
     if repeat_streak >= 2:

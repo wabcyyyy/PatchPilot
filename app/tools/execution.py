@@ -8,6 +8,7 @@ import uuid
 from app.adapters.pytest_adapter import build_pytest_cmd, run_pytest
 from app.graph.gates import ensure_command_allowed
 from app.tools.base import ToolContext, ToolResult
+from app.tools.output_filter import refine_traceback
 
 log = logging.getLogger(__name__)
 
@@ -54,7 +55,13 @@ def run_tests(ctx: ToolContext, test_set: str = "all") -> ToolResult:
             "timed_out": report.timed_out,
             "all_passed": report.all_passed,
             "failed_cases": [
-                {"name": c.test_name, "test_id": c.test_id, "signature": c.signature}
+                {
+                    "name": c.test_name,
+                    "test_id": c.test_id,
+                    "signature": c.signature,
+                    # 提纯后的堆栈:只留项目帧与最终异常块(原始 junit 报告不动)
+                    "traceback": refine_traceback(c.traceback, ctx.workspace),
+                }
                 for c in report.failed_cases
             ],
         },

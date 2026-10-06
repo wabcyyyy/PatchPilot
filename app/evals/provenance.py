@@ -151,6 +151,10 @@ EXEMPT_KEYS: frozenset[str] = frozenset(
         "max_read_lines",
         "max_search_results",
         "max_output_chars",
+        # 模型可见层的输出折叠头尾行数:与 max_output_chars 同族(只影响喂给模型的
+        # 文本长度,不改判定与复现口径),故同样缺席快照
+        "refine_head_lines",
+        "refine_tail_lines",
         "task_max_workers",
         "recycle_finished_workspace",
         "recycle_grace_seconds",

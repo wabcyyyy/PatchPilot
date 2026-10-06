@@ -89,6 +89,9 @@ class Settings(BaseSettings):
     # (「攻击成本翻倍」无建模支撑,原宣称作废)。定位是**结构性冒烟复核**,
     # 不是防线。关闭只降开销不降拦截,排障时可置 false。
     verify_double_run: bool = True
+    # 模型可见层输出折叠的工具消息保留头尾行数(原始 junit/stderr 证据不受影响)
+    refine_head_lines: int = 40
+    refine_tail_lines: int = 15
 
 
 @lru_cache

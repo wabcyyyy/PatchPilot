@@ -24,6 +24,7 @@ from app.graph.state import TaskState
 from app.llm.base import Model
 from app.prompts import LOCALIZE_PROMPT, PROPOSE_PROMPT, build_feedback
 from app.tools.base import ToolContext
+from app.tools.output_filter import refine_traceback
 from app.tools.registry import FINISH_TOOL
 from app.tools.tracker import Tracker
 
@@ -408,7 +409,11 @@ class TaskNodes:
         # 回归集单独失败时也要有反馈(此前只处理 failed 集,回归失败反馈会悬空);
         # failed+regression 的失败签名合并成一组做"连续相同"检测(重复错误 → 换思路提示)
         failing_cases = [
-            {"name": c.test_name, "signature": c.signature}
+            {
+                "name": c.test_name,
+                "signature": c.signature,
+                "traceback": refine_traceback(c.traceback, self.workspace),
+            }
             for c in [*failed_report.failed_cases, *regression_report.failed_cases]
         ]
         if failing_cases:

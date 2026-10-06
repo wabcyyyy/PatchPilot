@@ -18,6 +18,7 @@ from app.gitops.differ import working_tree_diff
 from app.llm.base import AssistantTurn, Model, messages_tokens
 from app.prompts import SYSTEM_PROMPT
 from app.tools.base import ToolContext, ToolResult
+from app.tools.output_filter import fold_output
 from app.tools.registry import FINISH_TOOL, execute, tool_schemas
 
 log = logging.getLogger(__name__)
@@ -242,8 +243,12 @@ def run_plain_loop(
                 )
             payload = result.output if result.ok else {"error": result.error}
             content = json.dumps(payload, ensure_ascii=False, default=str)
-            if len(content) > 8000:
-                content = content[:8000] + "... (truncated)"
+            # 模型可见层折叠:头 tail 保留 + hard_cap 兜底(原始报告/junit 证据不动)
+            content = fold_output(
+                content,
+                head=settings.refine_head_lines,
+                tail=settings.refine_tail_lines,
+            )
             messages.append({"role": "tool", "tool_call_id": call.id, "content": content})
 
     raise _budget_error(

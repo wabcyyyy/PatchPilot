@@ -32,6 +32,9 @@ class FailedCase:
     kind: str  # failure | error
     message_first_line: str
     signature: str
+    # 模型可见层用的完整 traceback(junit <failure> 节点正文,截 4000 字符)。
+    # 放在末位且带默认值:既有位置参数构造与签名判定口径都不受影响。
+    traceback: str = ""
 
 
 @dataclass
@@ -146,6 +149,7 @@ def parse_junit_xml(path: Path) -> PytestReport:
                 continue
             kind = "failure" if failure is not None else "error"
             message = node.get("message", "") or (node.text or "")
+            traceback_text = (node.text or "")[:4000]
             test_id = _case_id(case)
             report.failed_cases.append(
                 FailedCase(
@@ -154,6 +158,7 @@ def parse_junit_xml(path: Path) -> PytestReport:
                     kind=kind,
                     message_first_line=message.strip().splitlines()[0] if message.strip() else "",
                     signature=failure_signature(kind, message),
+                    traceback=traceback_text,
                 )
             )
     return report
