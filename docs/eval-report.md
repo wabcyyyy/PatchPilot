@@ -1,10 +1,10 @@
 # PatchPilot 评测报告
 
-- 生成时间:2026-09-24 19:12 UTC
-- 运行目录:`runs\fake36-2026-09-25`(共 35 次运行,每题取最新 35 题)
+- 生成时间:2026-10-06 07:21 UTC
+- 运行目录:`runs\fake35-2026-10-06`(共 35 次运行,每题取最新 35 题)
 - 模型提供方:**fake-replay**
 - 引擎:plain
-- 批次溯源:执行后端 local · 代码 367ae367aeb4(取自批次最新运行)
+- 批次溯源:执行后端 local · 代码 8ab4e0813673(取自批次最新运行)
 
 > **数据来源声明**:本报告由 `python -m app.evals.report` 从运行产物自动生成;
 > 每个指标都有判定脚本(metrics.py),无人工标注。当前批次为 fake-replay 回放模型,用于验证平台闭环的确定性,**不代表真实模型成绩**;接入真实模型后同命令重跑即可替换。
@@ -18,14 +18,14 @@
 | 定位成功率 | 1.0 |
 | 补丁应用率 | 1.0 |
 | 回归引入率 | 0.0 |
-| 越权拦截 | 0 次(攻击样例 9 个,拦截验证见 tests/test_attacks.py) |
+| 越权拦截 | 0 次(攻击样例 10 个,拦截验证见 tests/test_attacks.py) |
 | 平均修复轮数 | 1.0 |
-| 平均耗时 | 7021 ms |
+| 平均耗时 | 7816 ms |
 | 平均 Token | 177 |
-| 耗时 min/p50/p95/max | 6679 / 6876 / 7509 / 9752 ms |
+| 耗时 min/p50/p95/max | 6770 / 7589 / 9667 / 10053 ms |
 | Token min/max | 133 / 314 |
 | 轮数分布(1 / 2 / 3+) | 35 / 0 / 0 |
-| 判型计数 | resolved 35 · PATCH_REJECTED 0 · NEEDS_REVIEW 0 · 其他 0 |
+| 判型计数 | resolved 35 · 门禁拦截 0 · needs_review 0 · 其他 0 |
 
 ## 分题结果
 
@@ -77,6 +77,6 @@
 
 ```bash
 # 单题示例(--bug 换成同批任意题目即可)
-python -m app.evals.run_single --bug BUG-001 --model fake --engine plain --out runs/fake36-2026-09-25
-python -m app.evals.report --runs runs/fake36-2026-09-25 --out docs/eval-report.md
+python -m app.evals.run_single --bug BUG-001 --model fake --engine plain --out runs/fake35-2026-10-06
+python -m app.evals.report --runs runs/fake35-2026-10-06 --out docs/eval-report.md
 ```
