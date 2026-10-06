@@ -42,7 +42,7 @@ def upstream(tmp_path: Path) -> Path:
     (repo / "src" / "__init__.py").write_text("", encoding="utf-8")
     (repo / "tests" / "__init__.py").write_text("", encoding="utf-8")
     (repo / "src" / "mod.py").write_text(
-        "def sign(n):\n    \"\"\"正数 1,负数 -1,零也应返回 0。\"\"\"\n    return 1 if n >= 0 else -1\n",
+        'def sign(n):\n    """正数 1,负数 -1,零也应返回 0。"""\n    return 1 if n >= 0 else -1\n',
         encoding="utf-8",
         newline="\n",
     )
@@ -135,9 +135,7 @@ def test_fetch_instance_requires_test_patch(offline_clone: Path, tmp_path: Path)
         fetch_instance(inst, tmp_path / "cache")
 
 
-def test_import_instance_writes_bug_shaped_directory(
-    offline_clone: Path, tmp_path: Path
-) -> None:
+def test_import_instance_writes_bug_shaped_directory(offline_clone: Path, tmp_path: Path) -> None:
     sha = _git(offline_clone, "rev-parse", "HEAD")
     inst = _instance(offline_clone, sha)
     bugs_root = tmp_path / "bugs"
@@ -213,9 +211,7 @@ def test_cli_import_is_idempotent(tmp_path: Path, upstream: Path, monkeypatch) -
     assert (bugs_root / "SWE-pkg__mod-1" / "repo" / "src" / "mod.py").is_file()
 
 
-def test_validate_entry_rejects_already_green_baseline(
-    offline_clone: Path, tmp_path: Path
-) -> None:
+def test_validate_entry_rejects_already_green_baseline(offline_clone: Path, tmp_path: Path) -> None:
     """基线已绿的题必须被拒:它的 FAIL_TO_PASS 无从证明"修好了"。"""
     sha = _git(offline_clone, "rev-parse", "HEAD")
     bugs_root = tmp_path / "bugs"
