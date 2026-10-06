@@ -36,7 +36,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app.adapters.pytest_adapter import run_pytest  # noqa: E402
+# SWE-bench 官方评测镜像的固定布局:conda env `testbed`,仓库预装在 /testbed 且按该
+# 路径做了 editable 安装(镜像里 sphinx.__file__ 就是 /testbed/sphinx/__init__.py)。
+CONTAINER_PYTHON = "/opt/miniconda3/envs/testbed/bin/python"
+CONTAINER_WORKDIR = "/testbed"
+
+from app.adapters.pytest_adapter import BugEnv, run_pytest  # noqa: E402
 from app.evals.bugset import load_bug, validate_test_ids  # noqa: E402
 from app.evals.swebench import SweInstance, load_instances  # noqa: E402
 from app.gitops.blockpatch import (  # noqa: E402
@@ -146,7 +151,23 @@ def kept_p2p(instance: SweInstance, max_p2p: int) -> list[str]:
     return pool[:max_p2p] if max_p2p > 0 else pool
 
 
-def build_manifest(instance: SweInstance, p2p_kept: list[str], bug_id: str | None = None) -> str:
+def container_env(instance: SweInstance) -> BugEnv | None:
+    """数据集自带的官方评测镜像 → 题目执行环境(conda env `test`,仓库预装在 /testbed)。
+
+    挂载点必须写 /testbed:镜像里对该路径做了 editable 安装,工作区挂到别处时
+    import 到的仍是镜像内未修改的那份代码,基线与验证都会静默失真。
+    """
+    if not instance.image.strip():
+        return None
+    return BugEnv(python=CONTAINER_PYTHON, image=instance.image.strip(), workdir=CONTAINER_WORKDIR)
+
+
+def build_manifest(
+    instance: SweInstance,
+    p2p_kept: list[str],
+    bug_id: str | None = None,
+    env: BugEnv | None = None,
+) -> str:
     # manifest 的 id 必须等于题目目录名(load_bug 以 manifest.id 为任务身份)
     bid = bug_id or f"SWE-{instance.instance_id}"
 
@@ -164,8 +185,15 @@ def build_manifest(instance: SweInstance, p2p_kept: list[str], bug_id: str | Non
         *_block("regression_tests", p2p_kept),
         "allowed_paths: []",  # 外部仓库无修改范围先验;门禁仍拦测试文件与越界路径
         "max_rounds: 5",
-        "",
     ]
+    if env is not None:
+        lines += [
+            "env:",
+            f"  image: {env.image}",
+            f"  workdir: {env.workdir}",
+            f"  python: {env.python}",
+        ]
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -258,7 +286,12 @@ def validate_entry(bug_dir: Path) -> list[str]:
     tmp = Path(tempfile.mkdtemp(prefix="swe-validate-"))
     try:
         failed_report, _ = run_pytest(
-            sys.executable, bug.repo_dir, bug.failed_tests, tmp / "f2p.xml", timeout_seconds=600
+            sys.executable,
+            bug.repo_dir,
+            bug.failed_tests,
+            tmp / "f2p.xml",
+            timeout_seconds=600,
+            env=bug.env,
         )
         if failed_report.all_passed:
             reasons.append("基线不成立:FAIL_TO_PASS 在未修复的 repo 上已全绿")
@@ -271,6 +304,7 @@ def validate_entry(bug_dir: Path) -> list[str]:
                 bug.regression_tests,
                 tmp / "p2p.xml",
                 timeout_seconds=600,
+                env=bug.env,
             )
             if not regression_report.all_passed:
                 bad = ", ".join(c.signature[:60] for c in regression_report.failed_cases[:3])
@@ -306,6 +340,7 @@ def import_instance(
     max_p2p: int,
     *,
     skip_validate: bool = False,
+    use_container: bool = False,
 ) -> tuple[str, str, dict | None]:
     """导入一题,返回 (状态, 原因, tasks 条目)。状态 ∈ {ok, replay-only, skipped}。"""
     bug_id = f"SWE-{instance.instance_id}"
@@ -316,10 +351,13 @@ def import_instance(
     except RuntimeError as exc:
         return "skipped", str(exc), None
 
+    env = container_env(instance) if use_container else None
+    if use_container and env is None:
+        return "skipped", f"{bug_id}: --container 要求实例带 image 字段(jsonl 缺该列)", None
     bug_dir.mkdir(parents=True, exist_ok=True)
     (bug_dir / "issue.md").write_text(instance.problem_statement.strip() + "\n", encoding="utf-8")
     (bug_dir / "manifest.yaml").write_text(
-        build_manifest(instance, p2p_kept), encoding="utf-8", newline="\n"
+        build_manifest(instance, p2p_kept, env=env), encoding="utf-8", newline="\n"
     )
     export_repo(checkout, bug_dir / "repo")
 
@@ -410,6 +448,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--skip-validate", action="store_true", help="跳过基线硬校验(仅调试题目形态时用)"
     )
+    parser.add_argument(
+        "--container",
+        action="store_true",
+        help="用实例自带的官方镜像当执行环境写进 manifest(基线校验也走该容器)",
+    )
     args = parser.parse_args(argv)
 
     instances = load_instances(args.jsonl)
@@ -440,6 +483,7 @@ def main(argv: list[str] | None = None) -> int:
             cache_dir,
             args.max_p2p,
             skip_validate=args.skip_validate,
+            use_container=args.container,
         )
         if entry:
             entry["origin_jsonl"] = str(args.jsonl)

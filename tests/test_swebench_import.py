@@ -18,6 +18,7 @@ from app.evals.bugset import load_bug
 from app.gitops.blockpatch import parse_block_patch
 from scripts.import_swebench import (
     build_manifest,
+    container_env,
     fetch_instance,
     import_instance,
     kept_p2p,
@@ -359,3 +360,21 @@ def test_parse_instance_reads_optional_patch_fields() -> None:
         }
     )
     assert bare.patch == "" and bare.test_patch == ""
+
+
+def test_container_env_from_image_written_into_manifest() -> None:
+    """实例带官方镜像时 manifest 要有 env 段(镜像/挂载点/容器内解释器);
+    不带镜像的存量形态一行都不许多,免得把没容器的题目误导进 docker 后端。
+    """
+    inst = _instance(Path("."), "deadbeef" * 5, image="swebench/sweb.eval.x86_64.demo:latest")
+    env = container_env(inst)
+    assert env is not None and env.is_container
+    assert env.workdir == "/testbed" and env.python.startswith("/opt/")
+    text = build_manifest(inst, [P2P], env=env)
+    assert "env:" in text
+    assert "  image: swebench/sweb.eval.x86_64.demo:latest" in text
+    assert "  workdir: /testbed" in text
+
+    plain = _instance(Path("."), "deadbeef" * 5)
+    assert container_env(plain) is None
+    assert "env:" not in build_manifest(plain, [P2P])

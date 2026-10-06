@@ -51,10 +51,14 @@ def run_tests_in_container(
     memory: str = "1g",
     cpus: str = "1.0",
     python_bin: str = "python",
+    workdir: str = "/ws",
 ) -> tuple[PytestReport, object]:
     """在临时容器中执行指定测试集;返回 (解析后的报告, 原始运行结果)。
 
     与 local_runner 的差异只在隔离边界:命令组装、报告解析完全复用。
+    workdir 是工作区在容器内的挂载点:外部数据集镜像(如 SWE-bench)把仓库预装在固定
+    路径并按该路径做了 editable 安装,必须把打过补丁的工作区挂到同一路径,否则
+    import 到的仍是镜像里未修改的那份代码。
     """
     ws = Path(workspace).resolve()
     reports = Path(report_dir).resolve()
@@ -78,11 +82,11 @@ def run_tests_in_container(
         "--cpus",
         cpus,
         "-v",
-        f"{ws}:/ws",
+        f"{ws}:{workdir}",
         "-v",
         f"{reports}:/reports",
         "-w",
-        "/ws",
+        workdir,
         image,
         python_bin,
         "-m",

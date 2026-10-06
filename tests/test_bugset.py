@@ -124,3 +124,80 @@ def test_validate_test_ids_rejects_workspace_escape() -> None:
 
     # 合法形态(含参数化)不受影响
     validate_test_ids(["tests/test_x.py::test_a", "src/pkg/test_y.py::TestC::test_d[1-2]"], "ok")
+
+
+NL = chr(10)
+
+
+def _env_rows(**rows: str) -> str:
+    """拼一段 manifest `env:` 文本(运行期拼接,免得字面量里塞真实换行)。"""
+    return "env:" + NL + "".join(f"  {key}: {value}" + NL for key, value in rows.items())
+
+
+def _bug_with_env(tmp_path: Path, env_text: str) -> Path:
+    """复制一道真题目到 tmp_path,并在 manifest 末尾接上 env 段。"""
+    import shutil
+
+    dst = tmp_path / "BUG-ENV"
+    shutil.copytree(Path("bugs/BUG-003"), dst)
+    manifest = dst / "manifest.yaml"
+    text = manifest.read_text(encoding="utf-8").rstrip()
+    manifest.write_text(text + NL + env_text, encoding="utf-8", newline=NL)
+    return dst
+
+
+def test_manifest_env_container_section_loads(tmp_path: Path) -> None:
+    """外部数据集题目自带容器环境:manifest 的 env 段原样装载成 BugEnv。"""
+    from app.evals.bugset import load_bug
+
+    dst = _bug_with_env(
+        tmp_path,
+        _env_rows(
+            image="swebench/sweb.eval.x86_64.demo:latest",
+            workdir="/testbed",
+            python="/opt/miniconda3/envs/testbed/bin/python",
+        ),
+    )
+    bug = load_bug(dst)
+    assert bug.env is not None
+    assert bug.env.is_container
+    assert bug.env.workdir == "/testbed"
+
+
+def test_manifest_env_image_and_workdir_must_pair(tmp_path: Path) -> None:
+    """只给 image 不给挂载点会静默挂到 /ws,验的其实是镜像里未修改的代码 → 装载期即拒。"""
+    from app.evals.bugset import load_bug
+
+    dst = _bug_with_env(tmp_path, _env_rows(image="demo:latest", python="/opt/x/bin/python"))
+    with pytest.raises(Exception, match="must be given together"):
+        load_bug(dst)
+
+
+def test_manifest_env_host_python_must_exist(tmp_path: Path) -> None:
+    """宿主题(env 只有 python)的路径必须真实存在,拼写错误不要拖到跑测试时才暴露。"""
+    from app.evals.bugset import load_bug
+
+    dst = _bug_with_env(tmp_path, _env_rows(python="/no/such/interpreter"))
+    with pytest.raises(Exception, match=r"env\.python not found"):
+        load_bug(dst)
+
+
+def test_manifest_env_rejects_unknown_keys(tmp_path: Path) -> None:
+    from app.evals.bugset import load_bug
+
+    dst = _bug_with_env(tmp_path, _env_rows(pip_install="evil"))
+    with pytest.raises(Exception, match="unknown keys"):
+        load_bug(dst)
+
+
+def test_build_custom_bug_carries_no_env() -> None:
+    """env 只来自本地 manifest:API 自定义任务不得携带执行环境,否则请求体就能指定解释器。"""
+    from app.evals.bugset import build_custom_bug
+
+    bug = build_custom_bug(
+        repo_path=Path("repo"),
+        issue_text="x",
+        failed_tests=["tests/test_a.py::test_a"],
+        regression_tests=[],
+    )
+    assert bug.env is None

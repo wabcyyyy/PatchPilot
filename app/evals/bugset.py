@@ -13,6 +13,7 @@ from typing import Any
 
 import yaml
 
+from app.adapters.pytest_adapter import BugEnv
 from app.config import get_settings
 from app.errors import InvalidRequestError, TaskError
 
@@ -70,6 +71,9 @@ class BugTask:
     category: str = ""
     difficulty: str = "simple"
     replay_script_path: Path | None = None
+    # 题目自带执行环境(外部数据集用)。只由 manifest 提供,API 侧 build_custom_bug
+    # 永不填 → 不是模型/请求可控面。
+    env: BugEnv | None = None
     test_sets: dict[str, list[str]] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
@@ -80,6 +84,35 @@ def _require(data: dict[str, Any], key: str, ctx: str) -> Any:
     if key not in data:
         raise TaskError(f"manifest missing {key!r} ({ctx})")
     return data[key]
+
+
+def _load_env(data: dict[str, Any], bug_id: str) -> BugEnv | None:
+    """解析 manifest 的可选 `env:` 段(外部数据集的每题执行环境)。
+
+    容器环境必须 image + workdir 成对:只给 image 而挂载点缺省,打补丁的目录和被
+    import 的目录可能不是同一个,基线会"看起来绿"却验的是镜像里那份未修改的代码。
+    """
+    raw = data.get("env")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise TaskError(f"{bug_id}: manifest env must be a mapping")
+    unknown = sorted(set(raw) - {"python", "image", "workdir"})
+    if unknown:
+        raise TaskError(f"{bug_id}: manifest env has unknown keys {unknown}")
+    got = {k: (str(v).strip() or None) for k, v in raw.items()}
+    env = BugEnv(python=got.get("python"), image=got.get("image"), workdir=got.get("workdir"))
+    if bool(env.image) != bool(env.workdir):
+        raise TaskError(f"{bug_id}: env.image and env.workdir must be given together")
+    if env.image and not (env.python or "").startswith("/"):
+        raise TaskError(
+            f"{bug_id}: env.python must be an absolute in-container path with env.image"
+        )
+    if not env.image and env.python and not Path(env.python).exists():
+        raise TaskError(f"{bug_id}: env.python not found: {env.python}")
+    if not any((env.python, env.image, env.workdir)):
+        raise TaskError(f"{bug_id}: manifest env is empty")
+    return env
 
 
 def load_bug(path_or_id: str | Path, root: Path | str = BUGS_ROOT) -> BugTask:
@@ -127,6 +160,7 @@ def load_bug(path_or_id: str | Path, root: Path | str = BUGS_ROOT) -> BugTask:
         category=str(data.get("category", "")),
         difficulty=str(data.get("difficulty", "simple")),
         replay_script_path=replay if replay.exists() else None,
+        env=_load_env(data, bug_id),
     )
 
 

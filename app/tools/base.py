@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from app.adapters.pytest_adapter import BugEnv
 from app.executor.whitelist import DEFAULT_WHITELIST
 from app.tools.tracker import Tracker
 
@@ -27,6 +28,9 @@ class ToolContext:
         default_factory=lambda: Path("runs")
     )  # junit 等报告的落盘目录(工作区外)
     python_exe: str = field(default_factory=lambda: sys.executable)
+    # 题目自带执行环境(外部数据集)。None = 沿用 python_exe 与全局镜像配置,
+    # 存量题目行为不变。
+    env: BugEnv | None = None
     test_sets: dict[str, list[str]] = field(default_factory=dict)
     allowed_paths: list[str] | None = None
     whitelist: tuple[str, ...] = DEFAULT_WHITELIST

@@ -36,6 +36,9 @@ class SweInstance:
     # test_patch 缺失 → 基线不成立,整题不可用;patch 缺失 → 只出不回放条目。
     patch: str = ""
     test_patch: str = ""
+    # 该实例的官方评测镜像(conda 环境年代精确)。有它才可能在本机复现基线:
+    # 现装依赖会装成"今天的最新版",与题目年代不匹配。
+    image: str = ""
 
 
 def _parse_test_list(raw: object, field_name: str, instance_id: str) -> list[str]:
@@ -71,6 +74,7 @@ def parse_instance(record: dict) -> SweInstance:
         pass_to_pass=_parse_test_list(record.get("PASS_TO_PASS"), "PASS_TO_PASS", instance_id),
         patch=str(record.get("patch", "") or ""),
         test_patch=str(record.get("test_patch", "") or ""),
+        image=str(record.get("image", "") or ""),
     )
 
 

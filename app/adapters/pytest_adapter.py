@@ -23,6 +23,23 @@ RC_OK = 0
 RC_NO_TESTS_COLLECTED = 5
 
 
+@dataclass(frozen=True)
+class BugEnv:
+    """题目自带的测试执行环境(外部数据集用;由 manifest `env:` 段提供)。
+
+    image+workdir 成对出现 = 容器环境:工作区挂到镜像预装的仓库路径上,`python` 是
+    **容器内**绝对路径。只有 python 没有 image = 宿主解释器(自带依赖的虚拟环境)。
+    """
+
+    python: str | None = None
+    image: str | None = None
+    workdir: str | None = None
+
+    @property
+    def is_container(self) -> bool:
+        return bool(self.image and self.workdir)
+
+
 @dataclass
 class FailedCase:
     """单个失败用例及其归一化签名。"""
@@ -198,6 +215,8 @@ def run_pytest(
     report_path: Path | None = None,
     timeout_seconds: int | None = None,
     extra_args: list[str] | None = None,
+    *,
+    env: BugEnv | None = None,
 ) -> tuple[PytestReport, TestRunResult]:
     """执行 pytest 并解析报告;报告缺失/超时都反映在返回值里。
 
@@ -205,13 +224,30 @@ def run_pytest(
     系统临时目录(权限/容量不可控),也不污染被验证的工作区。
     execution_backend="docker" 时改在临时容器内执行(隔离边界见 docker_runner),
     签名与返回结构不变,上层无感知;镜像需预装 pytest(见 docker/executor.Dockerfile)。
+    env 是题目自带环境:容器题覆盖镜像/挂载点/容器内解释器,宿主题覆盖解释器。
     """
     settings = get_settings()
     timeout = timeout_seconds or settings.test_timeout_seconds
     junit = report_path or (Path(cwd) / ".patchpilot_junit.xml")
     if settings.execution_backend == "docker":
-        return _run_pytest_in_container(cwd, test_ids, junit, timeout)
-    cmd = build_pytest_cmd(python_exe, test_ids, junit, extra_args)
+        if env is not None and not env.is_container:
+            raise ExecError("bug declares a host env.python but execution_backend='docker'")
+        return _run_pytest_in_container(
+            cwd,
+            test_ids,
+            junit,
+            timeout,
+            image=env.image if env else None,
+            workdir=env.workdir if env else None,
+            python_bin=env.python if env else None,
+        )
+    if env is not None and env.is_container:
+        raise ExecError(
+            f"bug requires container env (image={env.image!r}) but execution_backend='local'"
+        )
+    cmd = build_pytest_cmd(
+        env.python if env and env.python else python_exe, test_ids, junit, extra_args
+    )
     cmd.append(f"--basetemp={(junit.parent / 'basetemp').as_posix()}")
     run = run_tests(cmd, cwd, timeout)
     report = parse_junit_xml(junit)
@@ -236,18 +272,30 @@ def _run_pytest_in_container(
     test_ids: list[str] | None,
     junit: Path,
     timeout_seconds: int,
+    *,
+    image: str | None = None,
+    workdir: str | None = None,
+    python_bin: str | None = None,
 ) -> tuple[PytestReport, TestRunResult]:
     """docker 后端的 pytest 执行:复用 docker_runner 的双挂载与 junit 回传。
 
     与 local 路径的差异:extra_args 不下发(容器内命令由 docker_runner 组装,
     当前生产调用方未使用该参数);basetemp 用容器内可弃临时目录。
+    image/workdir/python_bin 为 None 时退回全局 Settings 与既有默认(/ws + python)。
     """
     from app.executor.docker_runner import docker_available, run_tests_in_container
 
     if not docker_available():
         raise ExecError("execution_backend='docker' but docker daemon is not available")
+    kwargs: dict[str, object] = {}
+    if image:
+        kwargs["image"] = image
+    if workdir:
+        kwargs["workdir"] = workdir
+    if python_bin:
+        kwargs["python_bin"] = python_bin
     report, run = run_tests_in_container(
-        cwd, test_ids or [], report_dir=junit.parent, timeout_seconds=timeout_seconds
+        cwd, test_ids or [], report_dir=junit.parent, timeout_seconds=timeout_seconds, **kwargs
     )
     report.no_tests_collected = run.exit_code == RC_NO_TESTS_COLLECTED and not run.timed_out
     log.info(

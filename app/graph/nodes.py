@@ -154,6 +154,7 @@ class TaskNodes:
                 baseline_commit=self.baseline_commit,
                 tracker=self.tracker,
                 report_dir=self.report_dir,
+                env=self.bug.env,
                 test_sets=self.bug.test_sets,
                 allowed_paths=self.bug.allowed_paths,
                 max_patch_files=settings.max_patch_files,
@@ -183,12 +184,14 @@ class TaskNodes:
             self.workspace,
             self.bug.failed_tests,
             self.report_dir / "baseline-failed.xml",
+            env=self.ctx.env,
         )
         regression_report, _ = run_pytest(
             self.ctx.python_exe,
             self.workspace,
             self.bug.regression_tests,
             self.report_dir / "baseline-regression.xml",
+            env=self.ctx.env,
         )
         signature = (
             failed_report.failed_cases[0].signature if failed_report.failed_cases else "(none)"
@@ -439,12 +442,14 @@ class TaskNodes:
             self.workspace,
             self.bug.failed_tests,
             self.report_dir / "verify-failed.xml",
+            env=self.ctx.env,
         )
         regression_report, _ = run_pytest(
             self.ctx.python_exe,
             self.workspace,
             self.bug.regression_tests,
             self.report_dir / "verify-regression.xml",
+            env=self.ctx.env,
         )
         update: dict[str, Any] = {
             "verify_failed_ok": failed_report.all_passed,
@@ -484,12 +489,14 @@ class TaskNodes:
                 self.workspace,
                 self.bug.failed_tests,
                 self.report_dir / "verify-failed-rerun.xml",
+                env=self.ctx.env,
             )
             rerun_regression, _ = run_pytest(
                 self.ctx.python_exe,
                 self.workspace,
                 self.bug.regression_tests,
                 self.report_dir / "verify-regression-rerun.xml",
+                env=self.ctx.env,
             )
             mismatch = _double_run_mismatch(
                 failed_report, regression_report, rerun_failed, rerun_regression
@@ -591,6 +598,7 @@ class TaskNodes:
             baseline_commit=sha,
             tracker=Tracker(cand_reports / "trajectory.jsonl", task_id=f"cand{index}"),
             report_dir=cand_reports,
+            env=self.bug.env,
             python_exe=self.ctx.python_exe,
             test_sets=self.ctx.test_sets,
             allowed_paths=self.ctx.allowed_paths,
@@ -652,6 +660,7 @@ class TaskNodes:
             self.bug.failed_tests,
             cand_reports / "branch-failed.xml",
             timeout_seconds=settings.test_timeout_seconds,
+            env=cand_ctx.env,
         )
         regression_report, _ = run_pytest(
             cand_ctx.python_exe,
@@ -659,6 +668,7 @@ class TaskNodes:
             self.bug.regression_tests,
             cand_reports / "branch-regression.xml",
             timeout_seconds=settings.test_timeout_seconds,
+            env=cand_ctx.env,
         )
         # 候选阶段不做 E3 双跑:双跑复核属于主流程的 resolved 判定,择优阶段
         # 多一倍 pytest 开销换来的只是"同一伪绿再验一次",与择优目的无关

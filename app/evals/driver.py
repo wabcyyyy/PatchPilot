@@ -151,6 +151,7 @@ def run_task(
             baseline_commit=baseline_commit,
             tracker=tracker,
             report_dir=report_dir,
+            env=bug.env,
             test_sets=bug.test_sets,
             allowed_paths=bug.allowed_paths,
             max_patch_files=settings.max_patch_files,
@@ -166,13 +167,18 @@ def run_task(
         )
 
         failed_report, _ = run_pytest(
-            ctx.python_exe, ctx.workspace, bug.failed_tests, report_dir / "baseline-failed.xml"
+            ctx.python_exe,
+            ctx.workspace,
+            bug.failed_tests,
+            report_dir / "baseline-failed.xml",
+            env=ctx.env,
         )
         regression_report, _ = run_pytest(
             ctx.python_exe,
             ctx.workspace,
             bug.regression_tests,
             report_dir / "baseline-regression.xml",
+            env=ctx.env,
         )
         result.baseline_failed = failed_report.failed + failed_report.errors
         result.baseline_regression_ok = regression_report.all_passed
@@ -213,13 +219,18 @@ def run_task(
 
         # VERIFY:用平台自己的执行器重新验证,不信任模型的声明
         verify_failed, _ = run_pytest(
-            ctx.python_exe, ctx.workspace, bug.failed_tests, report_dir / "verify-failed.xml"
+            ctx.python_exe,
+            ctx.workspace,
+            bug.failed_tests,
+            report_dir / "verify-failed.xml",
+            env=ctx.env,
         )
         verify_regression, _ = run_pytest(
             ctx.python_exe,
             ctx.workspace,
             bug.regression_tests,
             report_dir / "verify-regression.xml",
+            env=ctx.env,
         )
         result.verify_failed_ok = verify_failed.all_passed
         result.verify_regression_ok = verify_regression.all_passed
