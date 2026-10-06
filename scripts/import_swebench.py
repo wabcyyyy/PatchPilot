@@ -231,7 +231,11 @@ def build_replay_steps(
 
 
 def validate_entry(bug_dir: Path) -> list[str]:
-    """基线硬校验:题面能载入、FAIL_TO_PASS 真失败、保留的 PASS_TO_PASS 真绿。"""
+    """基线硬校验:题面能载入、FAIL_TO_PASS 真失败、保留的 PASS_TO_PASS 真绿。
+
+    PASS_TO_PASS 至少留一条作绿灯探针:环境缺依赖时 F2P 也会以收集错误"失败",
+    没有必然为绿的对照用例就无从区分"题目本身没修"与"这台机器跑不了这个 repo"。
+    """
     import tempfile
 
     reasons: list[str] = []
@@ -245,6 +249,11 @@ def validate_entry(bug_dir: Path) -> list[str]:
     except Exception as exc:
         reasons.append(f"测试 id 不合平台白名单口径:{exc}")
         return reasons
+    if not bug.regression_tests:
+        return [
+            "基线不可证:PASS_TO_PASS 为空,没有绿灯探针"
+            "(环境缺依赖时 F2P 同样以收集错误失败,无从与真实缺陷区分)"
+        ]
 
     tmp = Path(tempfile.mkdtemp(prefix="swe-validate-"))
     try:

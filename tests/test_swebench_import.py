@@ -230,6 +230,23 @@ def test_validate_entry_rejects_already_green_baseline(offline_clone: Path, tmp_
     assert "已全绿" in reasons[0]
 
 
+def test_validate_entry_requires_green_canary(offline_clone: Path, tmp_path: Path) -> None:
+    """PASS_TO_PASS 为空的条目一律"不可证":环境缺依赖时 F2P 也以收集错误失败,
+    没有必然为绿的探针就分不开"题目没修"与"这台机器跑不了这个 repo"。
+    """
+    sha = _git(offline_clone, "rev-parse", "HEAD")
+    bug_dir = tmp_path / "bugs" / "SWE-no-p2p"
+    bug_dir.mkdir(parents=True)
+    import scripts.import_swebench as mod
+
+    mod.export_repo(offline_clone, bug_dir / "repo")
+    (bug_dir / "issue.md").write_text("x\n", encoding="utf-8")
+    inst = _instance(offline_clone, sha, instance_id="no-p2p", pass_to_pass=[])
+    (bug_dir / "manifest.yaml").write_text(build_manifest(inst, []), encoding="utf-8", newline="\n")
+    reasons = validate_entry(bug_dir)
+    assert reasons and "绿灯探针" in reasons[0]
+
+
 def test_validate_entry_rejects_dirty_regression_set(offline_clone: Path, tmp_path: Path) -> None:
     sha = _git(offline_clone, "rev-parse", "HEAD")
     bugs_root = tmp_path / "bugs"

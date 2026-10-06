@@ -19,6 +19,8 @@ runs/
 # SWE-bench 导入产物(纯数据、可删;题目身份在 eval_suite/tasks.json 里)
 .swe_cache/
 bugs/SWE-*/
+# 外部数据集切片(含第三方仓库的 gold patch),只做导入输入,不入本仓历史
+data/
 
 # 密钥与本地配置
 .env
