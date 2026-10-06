@@ -51,12 +51,23 @@ PROPOSE_PROMPT = """## 阶段:生成补丁(第 {round_no} 轮)
 """
 
 
-def build_feedback(failed_cases: list[dict[str, str]], extra_note: str = "") -> str:
-    """把上一轮验证的失败用例转成反馈文本。"""
+def build_feedback(
+    failed_cases: list[dict[str, str]], extra_note: str = "", repeat_streak: int = 0
+) -> str:
+    """把上一轮验证的失败用例转成反馈文本。
+
+    repeat_streak ≥ 2 表示同一组失败已连续多轮完全一致:附"换思路"提示,
+    防止模型在原地重复无效修改(循环保护)。
+    """
     if not failed_cases and not extra_note:
         return "上一轮补丁已应用。请继续验证。"
     lines = ["上一轮补丁应用后仍有失败:"]
     lines.extend(f"- {case.get('name')}: {case.get('signature')}" for case in failed_cases)
     if extra_note:
         lines.append(extra_note)
+    if repeat_streak >= 2:
+        lines.append(
+            f"注意:同一组失败已连续 {repeat_streak} 轮完全一致。重复同样的修改思路大概率仍会失败,"
+            "请换一种定位方向(重新核对根因、检查遗漏的失败路径或前置条件),不要重复上一轮的改动。"
+        )
     return "\n".join(lines)

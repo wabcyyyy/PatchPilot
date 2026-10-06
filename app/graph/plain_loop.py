@@ -15,12 +15,14 @@ from dataclasses import dataclass
 from app.config import get_settings
 from app.errors import BudgetError, TaskCancelled
 from app.gitops.differ import working_tree_diff
-from app.llm.base import Model, messages_tokens
+from app.llm.base import AssistantTurn, Model, messages_tokens
 from app.prompts import SYSTEM_PROMPT
 from app.tools.base import ToolContext, ToolResult
 from app.tools.registry import FINISH_TOOL, execute, tool_schemas
 
 log = logging.getLogger(__name__)
+
+_MAX_THOUGHT_CHARS = 2000
 
 
 @dataclass
@@ -61,6 +63,37 @@ def _budget_error(
     exc.tokens_completion = tokens_completion  # type: ignore[attr-defined]
     exc.turns = turns  # type: ignore[attr-defined]
     return exc
+
+
+def _record_thought(
+    ctx: ToolContext,
+    response: AssistantTurn,
+    *,
+    state_label: str,
+    round_no: int,
+    turn_no: int,
+    duration_ms: int,
+) -> None:
+    """把模型本轮输出(Thought 侧)记入轨迹,补全 Thought→Action→Observation。
+
+    content 截断到 _MAX_THOUGHT_CHARS;tool_calls 只记工具名,参数与结果
+    由工具执行事件(registry.execute)记录,不重复。
+    """
+    content = response.content or ""
+    if len(content) > _MAX_THOUGHT_CHARS:
+        content = content[:_MAX_THOUGHT_CHARS] + f"... ({len(content)} chars)"
+    ctx.tracker.record(
+        tool="llm",
+        round_no=round_no,
+        state=state_label,
+        input_payload={"turn": turn_no},
+        output_summary={
+            "content": content,
+            "tool_calls": [c.name for c in response.tool_calls],
+            "tokens": response.usage_tokens,
+        },
+        duration_ms=duration_ms,
+    )
 
 
 def run_plain_loop(
@@ -124,10 +157,20 @@ def run_plain_loop(
                 tokens_completion,
                 turns=turn_no,
             )
+        llm_started = time.monotonic()
         response = model.complete(messages, tool_schemas())  # type: ignore[arg-type]
+        llm_ms = int((time.monotonic() - llm_started) * 1000)
         tokens_spent += response.usage_tokens
         tokens_prompt += response.prompt_tokens
         tokens_completion += response.completion_tokens
+        _record_thought(
+            ctx,
+            response,
+            state_label=state_label,
+            round_no=round_no,
+            turn_no=turn_no,
+            duration_ms=llm_ms,
+        )
 
         if not response.is_tool_call:
             messages.append({"role": "assistant", "content": response.content or ""})

@@ -93,7 +93,11 @@ def test_full_repair_loop_via_fake_llm(ctx: ToolContext) -> None:
     events = [
         json.loads(line) for line in ctx.tracker.path.read_text(encoding="utf-8").splitlines()
     ]
-    tools_used = [e["tool"] for e in events]
+    # P1-b:每轮模型输出先有一条 llm 事件(Thought),工具事件随后(Action/Observation)
+    llm_events = [e for e in events if e["tool"] == "llm"]
+    assert len(llm_events) == outcome.turns
+    assert llm_events[0]["state"] == "LOOP"
+    tools_used = [e["tool"] for e in events if e["tool"] != "llm"]
     assert tools_used[0] == "search_code" and tools_used[-1] == "finish"
     assert events[-1]["output_summary"]["patch_applied"] is True
 
@@ -229,3 +233,29 @@ def test_budget_error_carries_usage(ctx: ToolContext) -> None:
         run_plain_loop(ctx, FakeLLM(script), "issue", max_turns=3)
     assert exc_info.value.turns == 3  # type: ignore[attr-defined]
     assert getattr(exc_info.value, "tokens_spent", 0) > 0
+
+
+def test_llm_thought_recorded_with_truncation(ctx: ToolContext) -> None:
+    """P1-b:推理文本+工具名逐轮入轨迹;超长内容截断并标注原文长度。"""
+    model = FakeLLM(
+        [
+            {"content": "先看看目录。"},
+            {"content": "x" * 2500},
+            {"tool": "finish", "args": {"success": True, "summary": "s"}},
+        ]
+    )
+    outcome = run_plain_loop(ctx, model, "issue")
+    assert outcome.success
+
+    assert ctx.tracker.path is not None
+    events = [
+        json.loads(line) for line in ctx.tracker.path.read_text(encoding="utf-8").splitlines()
+    ]
+    llm = [e for e in events if e["tool"] == "llm"]
+    assert [e["input"]["turn"] for e in llm] == [1, 2, 3]
+    assert llm[0]["output_summary"]["content"] == "先看看目录。"
+    assert llm[0]["output_summary"]["tool_calls"] == []
+    truncated = llm[1]["output_summary"]["content"]
+    assert truncated.startswith("x" * 100) and "(2500 chars)" in truncated
+    assert len(truncated) < 2500
+    assert llm[2]["output_summary"]["tool_calls"] == ["finish"]

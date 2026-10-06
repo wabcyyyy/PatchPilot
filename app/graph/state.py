@@ -30,6 +30,9 @@ class TaskState(TypedDict, total=False):
     findings: str
     feedback: str
     gate_violations: list[str]
+    # 反思提示:上一轮反馈的归一化特征串与连续相同轮数(0 = 无失败)
+    last_feedback_signatures: list[str]
+    repeat_streak: int
 
     # 验证结果
     baseline_failed: int

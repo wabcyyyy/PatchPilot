@@ -33,7 +33,10 @@ def git_diff(ctx: ToolContext) -> ToolResult:
 
 
 def apply_patch(ctx: ToolContext, diff_text: str) -> ToolResult:
-    """应用 unified diff:静态门禁 → git apply --check → 应用。"""
+    """应用 unified diff:静态门禁 → git apply --check → 应用 → Python 语法预检。
+
+    任何一步拒绝都返回带 rejected_reason 的失败信息,交由模型在下一轮修正。
+    """
     gate = run_gates(
         diff_text,
         allowed_paths=ctx.allowed_paths,
@@ -45,7 +48,7 @@ def apply_patch(ctx: ToolContext, diff_text: str) -> ToolResult:
 
     result = git_apply_patch(ctx.workspace, diff_text)
     if not result.applied:
-        return ToolResult.fail(f"git apply --check failed: {result.detail}")
+        return ToolResult.fail(f"patch rejected ({result.rejected_reason}): {result.detail}")
 
     diff = working_tree_diff(ctx.workspace)
     return ToolResult(

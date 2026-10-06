@@ -65,6 +65,21 @@ def _double_run_mismatch(
     return ""
 
 
+def _feedback_streak(state: TaskState, current: list[str]) -> tuple[list[str], int]:
+    """归一化本轮反馈特征串,并计算"连续相同"轮数。
+
+    签名排序后全量比对:完全一致才累加,任何变化都从 1 重新计数;空白
+    输入(全绿)归零。verify 失败与门禁拒绝共用同一对状态字段——两类
+    特征串永不会相等,不会互相误认成"同一个错误"。
+    """
+    normalized = sorted(current)
+    if not normalized:
+        return [], 0
+    previous = sorted(state.get("last_feedback_signatures", []))
+    streak = state.get("repeat_streak", 0) + 1 if normalized == previous else 1
+    return normalized, streak
+
+
 @dataclass
 class TaskNodes:
     """一个任务一次图执行的节点集合(闭包状态,不进 LangGraph state)。"""
@@ -345,10 +360,15 @@ class TaskNodes:
             output_summary={"violations": violations},
             error=violations[0],
         )
+        signatures, streak = _feedback_streak(state, violations)
         update: dict[str, Any] = {
             "status": "PATCH_REJECTED",
             "gate_violations": violations,
-            "feedback": build_feedback([], "上一轮补丁被门禁拒绝:" + "; ".join(violations)),
+            "feedback": build_feedback(
+                [], "上一轮补丁被门禁拒绝:" + "; ".join(violations), repeat_streak=streak
+            ),
+            "last_feedback_signatures": signatures,
+            "repeat_streak": streak,
         }
         if state["round_no"] < self.max_rounds:
             # 转移表:PATCH_REJECTED 且轮数未超 → 回 PROPOSE 重试;重试计入轮数
@@ -384,13 +404,19 @@ class TaskNodes:
             "verify_regression_ok": regression_report.all_passed,
             "status": "VERIFY",
         }
-        if not failed_report.all_passed:
-            update["feedback"] = build_feedback(
-                [
-                    {"name": c.test_name, "signature": c.signature}
-                    for c in failed_report.failed_cases
-                ]
+        # 回归集单独失败时也要有反馈(此前只处理 failed 集,回归失败反馈会悬空);
+        # failed+regression 的失败签名合并成一组做"连续相同"检测(重复错误 → 换思路提示)
+        failing_cases = [
+            {"name": c.test_name, "signature": c.signature}
+            for c in [*failed_report.failed_cases, *regression_report.failed_cases]
+        ]
+        if failing_cases:
+            signatures, streak = _feedback_streak(
+                state, [f"{c['name']}|{c['signature']}" for c in failing_cases]
             )
+            update["feedback"] = build_feedback(failing_cases, repeat_streak=streak)
+            update["last_feedback_signatures"] = signatures
+            update["repeat_streak"] = streak
         # E3 double-run 分支:仅当第一遍双测试集全绿(即即将判 resolved)时,
         # 用相同命令再跑一遍并比对两次 junit——判定面与被测代码同机(threat-model
         # §4 不防 junit 伪造),本复核防的是非自适应偶发伪绿;对基线预置伪造的

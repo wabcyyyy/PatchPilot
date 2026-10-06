@@ -520,3 +520,98 @@ def test_graph_wrong_failed_test_id_never_resolves(tmp_path: Path) -> None:
     assert result.status in {"VERIFY_FAILED", "BUDGET_EXCEEDED"}
     assert result.verdict != "resolved"
     assert result.verify_failed_ok is False
+
+
+# ---------- P1-c:重复错误检测与换思路提示 ----------
+
+
+def _capture_feedback(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    """捕获 nodes 层每次 build_feedback 调用(白盒:验证连续相同检测的注入点)。"""
+    import app.graph.nodes as nodes_mod
+
+    captured: list[dict] = []
+    real = nodes_mod.build_feedback
+
+    def spy(failed_cases: list[dict], extra_note: str = "", repeat_streak: int = 0) -> str:
+        text = real(failed_cases, extra_note, repeat_streak)
+        captured.append(
+            {"cases": failed_cases, "extra": extra_note, "streak": repeat_streak, "text": text}
+        )
+        return text
+
+    monkeypatch.setattr(nodes_mod, "build_feedback", spy)
+    return captured
+
+
+def test_feedback_streak_counts_and_resets() -> None:
+    """连续相同才累加;集合变化重置;空白归零;比对与顺序无关。"""
+    from app.graph.nodes import _feedback_streak
+
+    assert _feedback_streak({}, ["b|2", "a|1"]) == (["a|1", "b|2"], 1)
+    prev = {"last_feedback_signatures": ["a|1", "b|2"], "repeat_streak": 1}
+    assert _feedback_streak(prev, ["b|2", "a|1"]) == (["a|1", "b|2"], 2)
+    changed = {"last_feedback_signatures": ["a|1", "b|2"], "repeat_streak": 1}
+    assert _feedback_streak(changed, ["a|1"]) == (["a|1"], 1)
+    empty = {"last_feedback_signatures": ["a|1"], "repeat_streak": 2}
+    assert _feedback_streak(empty, []) == ([], 0)
+
+
+def test_build_feedback_repeat_hint_threshold() -> None:
+    """提示只在连续 ≥2 轮时注入。"""
+    from app.prompts import build_feedback
+
+    cases = [{"name": "t", "signature": "failure: X"}]
+    assert "换一种定位方向" not in build_feedback(cases, repeat_streak=1)
+    hinted = build_feedback(cases, repeat_streak=2)
+    assert "连续 2 轮" in hinted and "换一种定位方向" in hinted
+
+
+def test_repeat_failure_streak_prompts_new_direction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """verify 连续两轮同一失败签名 → 第二轮反馈注入"换思路"提示。"""
+    captured = _capture_feedback(monkeypatch)
+    bug = load_bug("BUG-001", BUG_ROOT)
+    model = FakeLLM(
+        _localize_script() + _propose_script(_comment_diff()) + _propose_script(_comment_diff())
+    )
+    result = run_task_graph(bug, model, runs_root=tmp_path / "runs")
+
+    verify_feedback = [c for c in captured if c["cases"]]
+    assert len(verify_feedback) == 2
+    assert [c["streak"] for c in verify_feedback] == [1, 2]
+    assert "连续 2 轮" in verify_feedback[1]["text"]
+    assert result.verdict != "resolved"
+
+
+def test_repeat_gate_rejection_streak_prompts_new_direction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """门禁拒绝连续两轮相同 → 同样注入提示(与失败签名共用计数,互不误认)。"""
+    captured = _capture_feedback(monkeypatch)
+    bad_patch = [
+        {
+            "tool": "apply_patch",
+            "args": {
+                "diff_text": (
+                    "diff --git a/tests/test_dateparse.py b/tests/test_dateparse.py\n"
+                    "--- a/tests/test_dateparse.py\n"
+                    "+++ b/tests/test_dateparse.py\n"
+                    "@@ -1,3 +1,4 @@\n"
+                    " import pytest\n"
+                    "+\n"
+                    " from src.dateparse import parse_date\n"
+                )
+            },
+        },
+        {"tool": "finish", "args": {"success": True, "summary": "试图改测试"}},
+    ]
+    give_up = [{"tool": "finish", "args": {"success": False, "summary": "放弃"}}]
+    bug = load_bug("BUG-001", BUG_ROOT)
+    model = FakeLLM(_localize_script() + bad_patch + bad_patch + give_up)
+    result = run_task_graph(bug, model, runs_root=tmp_path / "runs")
+
+    gate_feedback = [c for c in captured if not c["cases"] and c["extra"]]
+    assert [c["streak"] for c in gate_feedback[:2]] == [1, 2]
+    assert "连续 2 轮" in gate_feedback[1]["text"]
+    assert result.verdict != "resolved"

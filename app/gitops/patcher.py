@@ -2,10 +2,14 @@
 
 顺序固定:先 `git apply --check` 干跑校验,再真正应用;
 任何格式/上下文/越界问题都在 check 阶段被拒绝,不会留下半套用的补丁。
+应用成功后立即对触及的 .py 文件做语法预检(ast.parse);不通过则把本次
+补丁整体还原——语法错误不留在工作区,也不必烧掉一次 pytest 才发现
+(rejected_reason = python_syntax_error)。
 """
 
 from __future__ import annotations
 
+import ast
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -84,6 +88,64 @@ def check_patch(workspace: Path | str, diff_text: str) -> tuple[bool, str]:
     return rc == 0, err.strip()
 
 
+def _touched_python_files(diff_text: str) -> list[str]:
+    """diff 触及的 .py 相对路径(去重保序);语法预检与还原快照共用。"""
+    files: list[str] = []
+    for rel in [*parse_diff_files(diff_text), *parse_new_files(diff_text)]:
+        if rel.endswith(".py") and rel not in files:
+            files.append(rel)
+    return files
+
+
+def _snapshot_files(ws: Path, rels: list[str]) -> dict[str, bytes | None]:
+    """应用前快照文件字节内容(不存在记 None),供语法预检失败时精确还原。"""
+    snapshot: dict[str, bytes | None] = {}
+    for rel in rels:
+        target = ws / rel
+        snapshot[rel] = target.read_bytes() if target.is_file() else None
+    return snapshot
+
+
+def _restore_files(ws: Path, snapshot: dict[str, bytes | None]) -> list[str]:
+    """按快照还原应用前的文件状态;返回还原失败的路径描述(正常应为空)。"""
+    failed: list[str] = []
+    for rel, content in snapshot.items():
+        try:
+            if content is None:
+                (ws / rel).unlink(missing_ok=True)
+            else:
+                (ws / rel).write_bytes(content)
+        except OSError as exc:
+            failed.append(f"{rel} ({exc})")
+    return failed
+
+
+def _syntax_errors(ws: Path, rels: list[str]) -> list[str]:
+    """应用后的 Python 语法预检:返回错误描述列表(空 = 通过)。
+
+    触及的 .py 应用后必须通过 `ast.parse`:语法错误要烧掉一次 pytest
+    (collection error)才会被模型看到,本预检把这类补丁在落盘前拦下。
+    被删除的文件跳过;错误里带新文件内的行列号,模型可直接据此修正。
+    """
+    errors: list[str] = []
+    for rel in rels:
+        target = ws / rel
+        if not target.is_file():
+            continue
+        try:
+            ast.parse(target.read_bytes(), filename=rel)
+        except SyntaxError as exc:
+            line = exc.lineno if exc.lineno is not None else "?"
+            col = exc.offset if exc.offset is not None else "?"
+            errors.append(f"{rel}:{line}:{col}: {exc.msg}")
+        except OSError as exc:
+            errors.append(f"{rel}: unreadable for syntax check: {exc}")
+        except ValueError as exc:
+            # compile 级错误(如源码含空字节)
+            errors.append(f"{rel}: {exc}")
+    return errors
+
+
 def apply_patch(workspace: Path | str, diff_text: str) -> PatchApplyResult:
     """把 unified diff 应用到工作区;失败时返回结构化结果而不是抛异常。
 
@@ -107,6 +169,9 @@ def apply_patch(workspace: Path | str, diff_text: str) -> PatchApplyResult:
         log.info("patch rejected by --check: %s", detail.splitlines()[0] if detail else "unknown")
         return PatchApplyResult(False, "git apply --check failed", detail)
 
+    py_files = _touched_python_files(diff_text)
+    snapshot = _snapshot_files(ws, py_files)
+
     rc, _, err = run_git(
         ws, "apply", "--whitespace=nowarn", check=False, input_bytes=diff_text.encode("utf-8")
     )
@@ -115,5 +180,19 @@ def apply_patch(workspace: Path | str, diff_text: str) -> PatchApplyResult:
         # 结构化结果,与 docstring 一致,不再抛异常层的 GitCmdError(RuntimeError)
         log.warning("patch apply failed rc=%s: %s", rc, err.splitlines()[0] if err else "unknown")
         return PatchApplyResult(False, "git apply failed", err)
+
+    syntax_errors = _syntax_errors(ws, py_files)
+    if syntax_errors:
+        restore_failed = _restore_files(ws, snapshot)
+        detail_text = (
+            "patch leaves Python syntax error(s) in touched file(s);"
+            " all changes from this patch were reverted:\n"
+            + "\n".join(f"  - {e}" for e in syntax_errors)
+        )
+        if restore_failed:
+            detail_text += "\nrestore failed for: " + "; ".join(restore_failed)
+        log.warning("patch rejected by syntax precheck: %s", syntax_errors[0])
+        return PatchApplyResult(False, "python_syntax_error", detail_text)
+
     log.info("patch applied to %s", ws)
     return PatchApplyResult(True, None, "applied cleanly")

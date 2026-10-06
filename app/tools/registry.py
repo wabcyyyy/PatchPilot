@@ -78,7 +78,10 @@ def _build_registry() -> dict[str, ToolSpec]:
         ),
         "apply_patch": ToolSpec(
             name="apply_patch",
-            description="应用 unified diff 补丁。禁止修改测试文件;路径与文件数受门禁限制。",
+            description=(
+                "应用 unified diff 补丁。禁止修改测试文件;路径与文件数受门禁限制;"
+                "引入 Python 语法错误的补丁会被拒绝并还原。"
+            ),
             parameters=_schema(
                 "apply_patch",
                 "应用补丁",

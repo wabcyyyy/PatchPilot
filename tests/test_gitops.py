@@ -212,3 +212,70 @@ def test_materialize_repo_refuses_nesting(tmp_path: Path) -> None:
     (outer / "tpl" / "b.txt").write_text("x", encoding="utf-8")
     with pytest.raises(TaskError, match="contain each other"):
         materialize_repo(outer / "tpl", outer)
+
+
+# ---------- P1-a:Python 语法预检(应用后,失败整体还原) ----------
+
+
+def test_apply_patch_rejects_syntax_error_and_restores(demo_repo: Path, tmp_path: Path) -> None:
+    """语法错误的补丁不得落地:拒绝 + 工作区还原到补丁前(git 视角干净)。"""
+    ws1, ws2 = tmp_path / "ws1", tmp_path / "ws2"
+    create_workspace(demo_repo, ws1)
+    create_workspace(demo_repo, ws2)
+    before = _read(ws2 / "src" / "dateparse.py")
+
+    target = ws1 / "src" / "dateparse.py"
+    target.write_text(_read(target) + "\ndef broken(:\n", encoding="utf-8", newline="\n")
+    diff = working_tree_diff(ws1).diff_text
+
+    result = apply_patch(ws2, diff)
+    assert not result.applied
+    assert result.rejected_reason == "python_syntax_error"
+    assert "src/dateparse.py" in result.detail and "reverted" in result.detail
+    assert _read(ws2 / "src" / "dateparse.py") == before
+    assert working_tree_is_clean(ws2)
+
+
+def test_apply_patch_syntax_error_new_file_not_left_behind(demo_repo: Path, tmp_path: Path) -> None:
+    """新增 .py 语法错误:拒绝后文件不得残留。"""
+    ws1, ws2 = tmp_path / "ws1", tmp_path / "ws2"
+    create_workspace(demo_repo, ws1)
+    create_workspace(demo_repo, ws2)
+    (ws1 / "src" / "broken.py").write_text("def broken(:\n", encoding="utf-8", newline="\n")
+    diff = working_tree_diff(ws1).diff_text
+
+    result = apply_patch(ws2, diff)
+    assert not result.applied and result.rejected_reason == "python_syntax_error"
+    assert not (ws2 / "src" / "broken.py").exists()
+    assert working_tree_is_clean(ws2)
+
+
+def test_apply_patch_syntax_error_reverts_whole_patch(demo_repo: Path, tmp_path: Path) -> None:
+    """多文件补丁:一个合法修改 + 一个语法错误新增 → 整体还原,合法部分也不留。"""
+    ws1, ws2 = tmp_path / "ws1", tmp_path / "ws2"
+    create_workspace(demo_repo, ws1)
+    create_workspace(demo_repo, ws2)
+    before = _read(ws2 / "src" / "dateparse.py")
+    _edit_source_file(ws1, "valid change")
+    (ws1 / "src" / "broken.py").write_text("def broken(:\n", encoding="utf-8", newline="\n")
+    diff = working_tree_diff(ws1).diff_text
+    assert "dateparse.py" in diff and "broken.py" in diff
+
+    result = apply_patch(ws2, diff)
+    assert not result.applied and result.rejected_reason == "python_syntax_error"
+    assert _read(ws2 / "src" / "dateparse.py") == before
+    assert not (ws2 / "src" / "broken.py").exists()
+    assert working_tree_is_clean(ws2)
+
+
+def test_apply_patch_ignores_non_python_content(demo_repo: Path, tmp_path: Path) -> None:
+    """非 .py 文件不做语法预检:含 'def broken(:' 的文本文件照常应用。"""
+    ws1, ws2 = tmp_path / "ws1", tmp_path / "ws2"
+    create_workspace(demo_repo, ws1)
+    create_workspace(demo_repo, ws2)
+    (ws1 / "notes.txt").write_text("def broken(:\n", encoding="utf-8", newline="\n")
+    diff = working_tree_diff(ws1).diff_text
+
+    result = apply_patch(ws2, diff)
+    assert result.applied, result.detail
+    assert (ws2 / "notes.txt").exists()
