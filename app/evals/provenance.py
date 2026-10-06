@@ -186,11 +186,16 @@ def require_model_name(model_name: str | None, llm_enabled: bool) -> None:
         )
 
 
-def build_provenance(model_provider: str, model_name: str, engine: str) -> dict[str, Any]:
+def build_provenance(
+    model_provider: str, model_name: str, engine: str, arm: str = "agent"
+) -> dict[str, Any]:
     """任务开始时取证:同样配置能否复跑,取决于这里的字段是否被记录。
 
     P3-2:外加工作树状态(worktree_dirty/dirty_fingerprint)——锚点 commit
     单独一项不足以复现脏树批次;None = 无法判定,空指纹 = 干净。
+
+    arm 记录的是"执行体"(agent 循环 / 消融对照臂);它不是 engine 的一部分,
+    因为两臂跑的是同一个引擎,区别只在循环形状。
     """
     settings = get_settings()
     return {
@@ -198,6 +203,7 @@ def build_provenance(model_provider: str, model_name: str, engine: str) -> dict[
         "model_provider": model_provider,
         "model_name": model_name,
         "engine": engine,
+        "arm": arm,
         "execution_backend": settings.execution_backend,
         "llm_enabled": settings.llm_enabled,
         "llm_thinking": settings.llm_thinking,

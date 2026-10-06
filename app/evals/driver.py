@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,12 +36,25 @@ from app.evals.provenance import (
 from app.gitops.differ import working_tree_diff
 from app.gitops.testing import materialize_repo
 from app.graph.gates import run_gates
-from app.graph.plain_loop import run_plain_loop
+from app.graph.plain_loop import LoopOutcome, run_plain_loop
 from app.llm.base import Model
 from app.tools.base import ToolContext
 from app.tools.tracker import Tracker
 
 log = logging.getLogger(__name__)
+
+# 执行体签名:agent 循环的可替换插槽(消融对照臂用它换掉循环形状,不动判定路径)
+AgentFn = Callable[..., LoopOutcome]
+
+
+def _default_agent(
+    ctx: ToolContext,
+    model: Model,
+    bug: Any,
+    **kwargs: Any,
+) -> LoopOutcome:
+    """默认执行体:plain 引擎的单轮多步工具循环(历史行为,一字未变)。"""
+    return run_plain_loop(ctx, model, bug.issue_text, **kwargs)
 
 
 @dataclass
@@ -55,6 +69,9 @@ class TaskResult:
     model_provider: str = ""
     model_name: str = ""  # 真实模型名(openai 时来自 Settings.llm_model;fake 为空)
     engine: str = "plain"
+    # 执行体:agent=默认工具循环;one_shot=消融对照臂(见 app/evals/single_shot.py)。
+    # 与 engine 分开记,因为两臂跑的是同一个引擎,区别只在循环形状。
+    arm: str = "agent"
     rounds: int = 1
     turns: int = 0
     tokens_used: int = 0
@@ -106,6 +123,8 @@ def run_task(
     run_dir: Path | None = None,
     model_name: str = "",
     cancel_event: threading.Event | None = None,
+    arm: str = "agent",
+    agent: AgentFn | None = None,
 ) -> TaskResult:
     """执行一个任务:基线 → 工具循环 → 验证 → 判定,全程落盘。
 
@@ -114,6 +133,10 @@ def run_task(
     max_turns + task_timeout_seconds + token_budget。
 
     task_id/run_dir 可由调用方(API 服务)指定,保证产物目录与服务记录一致。
+
+    agent 是执行体插槽:默认跑 plain 工具循环,消融对照臂传入自己的循环。
+    **只有循环可换**——基线、验证、门禁、判定规则对本臂与默认臂逐字同一条路径,
+    否则两臂之差就说不清是机制贡献还是判定口径差异。
     """
     settings = get_settings()
     provider = getattr(model, "provider", "unknown")
@@ -133,10 +156,11 @@ def run_task(
         model_provider=provider,
         model_name=model_name,
         engine=engine,
+        arm=arm,
         run_dir=str(run_dir),
     )
     # 批次溯源:任务开始即取证,后续任何崩溃路径的 report.json 都带复现口径
-    result.provenance = build_provenance(result.model_provider, model_name, engine)
+    result.provenance = build_provenance(result.model_provider, model_name, engine, arm)
     tracker = Tracker(run_dir / "trajectory.jsonl", task_id=task_id)
     started = time.monotonic()
     ctx: ToolContext | None = None  # materialize 失败时 finally 仍可安全引用
@@ -202,11 +226,15 @@ def run_task(
         )
 
         # LOCALIZE + PROPOSE_PATCH:工具循环(plain 引擎单轮多步)
-        tracker.record(tool="start_loop", state="LOCALIZE", input_payload={"max_turns": max_turns})
-        outcome = run_plain_loop(
+        tracker.record(
+            tool="start_loop",
+            state="LOCALIZE",
+            input_payload={"max_turns": max_turns, "arm": arm},
+        )
+        outcome = (agent or _default_agent)(
             ctx,
             model,
-            bug.issue_text,
+            bug,
             max_turns=max_turns,
             started_monotonic=started,
             time_budget_seconds=settings.task_timeout_seconds,

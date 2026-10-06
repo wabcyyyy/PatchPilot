@@ -28,26 +28,30 @@ def _model_flag(provider: str) -> str:
 
 
 def repro_commands(runs_root: Path, per_bug: list[RunRow], report_out: str) -> list[str]:
-    """从批次行归并出复现命令(T10.1):provider/engine 取自运行产物,不再手写。
+    """从批次行归并出复现命令(T10.1):provider/engine/arm 取自运行产物,不再手写。
 
-    同一批次可能出现多种 (model, engine) 组合,每种给一行单题示例。
+    同一批次可能出现多种 (model, engine, arm) 组合,每种给一行单题示例。
     """
-    combos: dict[tuple[str, str], str] = {}
+    combos: dict[tuple[str, str, str], str] = {}
     for row in sorted(per_bug, key=lambda r: r.bug_id):
         provider = str(row.provenance.get("model_provider") or row.model_provider)
         # P3-16:兜底 "unknown" 而非 "graph"——146 份历史 report 无一同时缺
         # engine 与 provenance(实测),但真缺时编造可执行的假命令比承认
         # "引擎不明"更糟:「不可执行的诚实」优于「可执行的错误」
         engine = str(row.provenance.get("engine") or row.engine or "unknown")
-        combos.setdefault((_model_flag(provider), engine), row.bug_id)
+        # 执行体(消融臂)必须进命令:同一 engine 下两臂跑出的结果不可互复现,
+        # 漏了 --arm 就等于给对照批生成一条会跑出"默认臂"的假复现命令
+        arm = str(row.provenance.get("arm") or "agent")
+        combos.setdefault((_model_flag(provider), engine, arm), row.bug_id)
 
     lines = []
     if not combos:  # 空批次:退化为通用示例(plain 引擎,驱动器真实支持)
-        combos = {("fake", "plain"): "BUG-001"}
-    for (model_flag, engine), bug_id in sorted(combos.items()):
+        combos = {("fake", "plain", "agent"): "BUG-001"}
+    for (model_flag, engine, arm), bug_id in sorted(combos.items()):
+        arm_flag = "" if arm == "agent" else f" --arm {arm}"
         lines.append(
             f"python -m app.evals.run_single --bug {bug_id}"
-            f" --model {model_flag} --engine {engine} --out {runs_root.as_posix()}"
+            f" --model {model_flag} --engine {engine}{arm_flag} --out {runs_root.as_posix()}"
         )
     lines.append(f"python -m app.evals.report --runs {runs_root.as_posix()} --out {report_out}")
     return lines

@@ -76,6 +76,22 @@ PROPOSE_PROMPT = """## 阶段:生成补丁(第 {round_no} 轮)
 """
 
 
+ONE_SHOT_PROPOSE_PROMPT = """## 阶段:生成补丁(单发)
+针对以下 Bug 的已确认根因生成修复,并按系统提示里的 apply_patch 块协议提交。
+
+### Bug 描述
+{issue_text}
+
+### 定位阶段结论
+{findings}
+
+要求:
+1. 用 apply_patch 提交补丁(`*** Begin Patch` 起、`*** End Patch` 止,不要写行号);
+2. 本阶段不提供测试执行工具,补丁是否正确由平台独立验证;
+   提交后直接调用 finish(success=true)。
+"""
+
+
 def build_feedback(
     failed_cases: list[dict[str, str]], extra_note: str = "", repeat_streak: int = 0
 ) -> str:

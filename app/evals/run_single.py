@@ -4,6 +4,8 @@
     python -m app.evals.run_single --bug BUG-001 --model fake --out runs
     python -m app.evals.run_single --bug bugs/BUG-002 --model openai --out runs
     (--model openai 需在 .env 配好端点凭据,且 PATCHPILOT_LLM_ENABLED=true)
+    python -m app.evals.run_single --bug BUG-001 --model fake --arm one_shot --out runs
+    (--arm one_shot = 消融对照臂:单发补丁、无执行反馈、无重试,仅 plain 引擎)
 """
 
 from __future__ import annotations
@@ -51,6 +53,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--engine", default="plain", choices=["plain", "graph"])
     parser.add_argument("--out", default="runs", help="runs 根目录")
     parser.add_argument("--max-turns", type=int, default=20)
+    parser.add_argument(
+        "--arm",
+        default="agent",
+        choices=["agent", "one_shot"],
+        help="执行体:agent=默认工具循环;one_shot=消融对照臂(单发补丁,无执行反馈),只作用于 plain 引擎",
+    )
     args = parser.parse_args(argv)
 
     settings = get_settings()
@@ -65,6 +73,10 @@ def main(argv: list[str] | None = None) -> int:
     require_model_name(real_model_name, settings.llm_enabled and args.model == "openai")
 
     if args.engine == "graph":
+        if args.arm != "agent":
+            # 对照臂消融的是"循环形状",而 graph 的循环写在状态机里(禁区)。
+            # 要在 graph 上做同样的消融得改节点转移,不能在这里顺手假称支持。
+            parser.error("--arm one_shot 只作用于 --engine plain")
         from app.graph.runner import run_task_graph
 
         result = run_task_graph(
@@ -76,12 +88,20 @@ def main(argv: list[str] | None = None) -> int:
             branch_model_factory=_branch_model_factory(bug, args.model, settings),
         )
     else:
+        # 对照臂按需 import:它的 LOCALIZE 工具集来自 app.graph.nodes(langgraph),
+        # 默认臂跑 plain 时不必为此付导入成本
+        arm_kwargs: dict[str, object] = {}
+        if args.arm == "one_shot":
+            from app.evals.single_shot import one_shot_agent
+
+            arm_kwargs = {"arm": "one_shot", "agent": one_shot_agent}
         result = run_task(
             bug,
             model,
             runs_root=Path(args.out),
             max_turns=args.max_turns,
             model_name=real_model_name,
+            **arm_kwargs,  # type: ignore[arg-type]
         )
     print(json.dumps(result.as_dict(), ensure_ascii=False, indent=2))
     print(f"\n[{bug.id}] status={result.status} verdict={result.verdict} -> {result.run_dir}")
