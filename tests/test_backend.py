@@ -219,6 +219,79 @@ def test_run_pytest_threads_bug_env_into_container(monkeypatch, tmp_path: Path) 
     }
 
 
+def test_env_network_defaults_to_none_and_forwards_when_declared(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """网络边界默认不动(不下发 network 参数,沿用 docker_runner 的 none);
+    只有题目 manifest 显式声明才逐题下发,并且只允许枚举内的值。
+    """
+    from app.adapters.pytest_adapter import BugEnv, PytestReport, run_pytest
+
+    captured: dict = {}
+    fake_report = PytestReport(exit_code=0, passed=1)
+    fake_run = TestRunResult(
+        command=["docker", "run"], exit_code=0, stdout_tail="", stderr_tail="", duration_ms=1
+    )
+
+    def fake_container(workspace, test_ids, *, report_dir, timeout_seconds=None, **kwargs):
+        captured.clear()
+        captured.update(kwargs)
+        return fake_report, fake_run
+
+    monkeypatch.setenv("PATCHPILOT_EXECUTION_BACKEND", "docker")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setattr("app.executor.docker_runner.run_tests_in_container", fake_container)
+    monkeypatch.setattr("app.executor.docker_runner.docker_available", lambda: True)
+    env = BugEnv(
+        python="/opt/e/bin/python", image="img:latest", workdir="/testbed", network="bridge"
+    )
+    try:
+        run_pytest(
+            sys.executable, tmp_path, ["t.py::test_a"], report_path=tmp_path / "j.xml", env=env
+        )
+        assert captured["network"] == "bridge"
+        # 不声明 network 的题:参数根本不出现,由 runner 的缺省 none 兜住
+        run_pytest(
+            sys.executable,
+            tmp_path,
+            ["t.py::test_a"],
+            report_path=tmp_path / "j2.xml",
+            env=BugEnv(python="/opt/e/bin/python", image="img:latest", workdir="/testbed"),
+        )
+        assert "network" not in captured
+    finally:
+        get_settings.cache_clear()
+
+
+def test_docker_runner_uses_declared_network(monkeypatch, tmp_path: Path) -> None:
+    """容器命令里的 --network 跟随参数,缺省仍是 none。"""
+    from app.executor import docker_runner
+
+    captured: dict = {}
+
+    def fake_run_tests(command, cwd, timeout_seconds=None):
+        captured["command"] = command
+        return TestRunResult(
+            command=command, exit_code=0, stdout_tail="", stderr_tail="", duration_ms=1
+        )
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setattr(docker_runner, "run_tests", fake_run_tests)
+    docker_runner.run_tests_in_container(
+        ws, ["t.py::t"], report_dir=tmp_path / "r", image="img:latest"
+    )
+    assert captured["command"][captured["command"].index("--network") + 1] == "none"
+
+    captured.clear()
+    docker_runner.run_tests_in_container(
+        ws, ["t.py::t"], report_dir=tmp_path / "r2", image="img:latest", network="bridge"
+    )
+    assert captured["command"][captured["command"].index("--network") + 1] == "bridge"
+
+
 def test_run_pytest_rejects_container_env_on_local_backend(monkeypatch, tmp_path: Path) -> None:
     """声明了容器环境的题不允许退回宿主直跑:宿主没有那套年代精确依赖,
     跑出来的"失败"分不清是缺陷还是环境坏,正是 validate_entry 要拦的那类假信号。

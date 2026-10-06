@@ -362,6 +362,51 @@ def test_parse_instance_reads_optional_patch_fields() -> None:
     assert bare.patch == "" and bare.test_patch == ""
 
 
+def test_capture_build_artifacts_hydrates_from_image(monkeypatch, tmp_path: Path) -> None:
+    """补生成物必须把宿主 checkout 挂到 /host 而非 /testbed:挂到 /testbed 会遮住镜像里
+    那份原始树,无物可补;禁网是因为这一步只搬文件,不装东西。
+    """
+    import scripts.import_swebench as mod
+
+    captured: dict = {}
+
+    class FakeProc:
+        returncode = 0
+        stdout = "HYDRATED 1 ['src/_pytest/_version.py']"
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["timeout"] = kwargs.get("timeout")
+        return FakeProc()
+
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    monkeypatch.setattr("app.executor.docker_runner.docker_available", lambda: True)
+    note = mod.capture_build_artifacts(tmp_path, "img:latest")
+    assert note.startswith("HYDRATED 1")
+    cmd = captured["cmd"]
+    assert cmd[cmd.index("--network") + 1] == "none"
+    assert f"{tmp_path.resolve()}:/host" in cmd
+    assert f"{tmp_path.resolve()}:/testbed" not in cmd
+    assert cmd[cmd.index("--entrypoint") + 1] == "/opt/miniconda3/envs/testbed/bin/python"
+    assert "/testbed" in cmd[-1] and "/host" in cmd[-1]
+
+
+def test_capture_build_failure_does_not_drop_the_instance(monkeypatch, tmp_path: Path) -> None:
+    """补生成物失败(镜像里没有那个 python 等)不该顺手让题目消失:能不能证交给基线硬校验。"""
+    import scripts.import_swebench as mod
+
+    class FakeProc:
+        returncode = 1
+        stdout = ""
+        stderr = "No module named pip"
+
+    monkeypatch.setattr(mod.subprocess, "run", lambda cmd, **kw: FakeProc())
+    monkeypatch.setattr("app.executor.docker_runner.docker_available", lambda: True)
+    note = mod.capture_build_artifacts(tmp_path, "img:latest")
+    assert note.startswith("失败") and "不阻断导入" in note
+
+
 def test_container_env_from_image_written_into_manifest() -> None:
     """实例带官方镜像时 manifest 要有 env 段(镜像/挂载点/容器内解释器);
     不带镜像的存量形态一行都不许多,免得把没容器的题目误导进 docker 后端。

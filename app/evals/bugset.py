@@ -21,6 +21,10 @@ log = logging.getLogger(__name__)
 
 BUGS_ROOT = Path("bugs")
 
+# env.network 的允许值:none 是平台默认隔离,bridge/host 必须由题目 manifest 显式声明。
+# host 只放开到宿主网络栈,仍看不到宿主文件系统(挂载只有工作区那一处)。
+_ALLOWED_ENV_NETWORKS = ("none", "bridge", "host")
+
 # P2-5 整改:测试 id 是要拼进 pytest argv 的外部输入(manifest 或 API 请求),
 # 必须先过格式白名单——否则 "-p evil" 这类 pytest 选项会构成注入。
 # 空格允许:参数化 id 如 test_x[a b] 是合法节点 id,argv 单元素传参无注入语义。
@@ -97,20 +101,30 @@ def _load_env(data: dict[str, Any], bug_id: str) -> BugEnv | None:
         return None
     if not isinstance(raw, dict):
         raise TaskError(f"{bug_id}: manifest env must be a mapping")
-    unknown = sorted(set(raw) - {"python", "image", "workdir"})
+    unknown = sorted(set(raw) - {"python", "image", "workdir", "network"})
     if unknown:
         raise TaskError(f"{bug_id}: manifest env has unknown keys {unknown}")
     got = {k: (str(v).strip() or None) for k, v in raw.items()}
-    env = BugEnv(python=got.get("python"), image=got.get("image"), workdir=got.get("workdir"))
+    env = BugEnv(
+        python=got.get("python"),
+        image=got.get("image"),
+        workdir=got.get("workdir"),
+        network=got.get("network"),
+    )
     if bool(env.image) != bool(env.workdir):
         raise TaskError(f"{bug_id}: env.image and env.workdir must be given together")
+    if env.network is not None:
+        if not env.is_container:
+            raise TaskError(f"{bug_id}: env.network only applies to a container env")
+        if env.network not in _ALLOWED_ENV_NETWORKS:
+            raise TaskError(f"{bug_id}: env.network must be one of {list(_ALLOWED_ENV_NETWORKS)}")
     if env.image and not (env.python or "").startswith("/"):
         raise TaskError(
             f"{bug_id}: env.python must be an absolute in-container path with env.image"
         )
     if not env.image and env.python and not Path(env.python).exists():
         raise TaskError(f"{bug_id}: env.python not found: {env.python}")
-    if not any((env.python, env.image, env.workdir)):
+    if not any((env.python, env.image, env.workdir, env.network)):
         raise TaskError(f"{bug_id}: manifest env is empty")
     return env
 

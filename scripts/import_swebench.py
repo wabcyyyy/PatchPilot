@@ -40,6 +40,8 @@ sys.path.insert(0, str(ROOT))
 # 路径做了 editable 安装(镜像里 sphinx.__file__ 就是 /testbed/sphinx/__init__.py)。
 CONTAINER_PYTHON = "/opt/miniconda3/envs/testbed/bin/python"
 CONTAINER_WORKDIR = "/testbed"
+# 补生成物时把宿主 checkout 挂到别的目录:挂到 /testbed 会遮住镜像里那份原始树,无物可补
+HOST_MOUNT = "/host"
 
 from app.adapters.pytest_adapter import BugEnv, run_pytest  # noqa: E402
 from app.evals.bugset import load_bug, validate_test_ids  # noqa: E402
@@ -151,15 +153,22 @@ def kept_p2p(instance: SweInstance, max_p2p: int) -> list[str]:
     return pool[:max_p2p] if max_p2p > 0 else pool
 
 
-def container_env(instance: SweInstance) -> BugEnv | None:
-    """数据集自带的官方评测镜像 → 题目执行环境(conda env `test`,仓库预装在 /testbed)。
+def container_env(instance: SweInstance, network: str | None = None) -> BugEnv | None:
+    """数据集自带的官方评测镜像 → 题目执行环境(conda env `testbed`,仓库预装在 /testbed)。
 
     挂载点必须写 /testbed:镜像里对该路径做了 editable 安装,工作区挂到别处时
     import 到的仍是镜像内未修改的那份代码,基线与验证都会静默失真。
+    network 非缺省 none 时写进 manifest——这是运维对"对照组测试本身要出网"的
+    题目显式放行,不是平台默认形态。
     """
     if not instance.image.strip():
         return None
-    return BugEnv(python=CONTAINER_PYTHON, image=instance.image.strip(), workdir=CONTAINER_WORKDIR)
+    return BugEnv(
+        python=CONTAINER_PYTHON,
+        image=instance.image.strip(),
+        workdir=CONTAINER_WORKDIR,
+        network=None if network in (None, "", "none") else network,
+    )
 
 
 def build_manifest(
@@ -193,6 +202,8 @@ def build_manifest(
             f"  workdir: {env.workdir}",
             f"  python: {env.python}",
         ]
+        if env.network:
+            lines.append(f"  network: {env.network}")
     lines.append("")
     return "\n".join(lines)
 
@@ -333,6 +344,60 @@ def _update_tasks_index(tasks_path: Path, entries: list[dict]) -> None:
     )
 
 
+HYDRATE_SNIPPET = """
+import pathlib, shutil, sys
+src, dst = pathlib.Path({src!r}), pathlib.Path({dst!r})
+missing, copied = [], 0
+for p in sorted(src.rglob('*')):
+    if not p.is_file() or '.git' in p.relative_to(src).parts:
+        continue
+    target = dst / p.relative_to(src)
+    if target.exists():
+        continue
+    missing.append(str(p.relative_to(src)))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(p, target)
+    copied += 1
+print('HYDRATED', copied, missing[:12])
+""".strip()
+
+
+def capture_build_artifacts(checkout: Path, image: str, *, timeout: int = 900) -> str:
+    """把镜像里有、我们的 git 导出树里没有的构建生成物补回工作区。
+
+    没有这一步 pytest 系题目一律不可证:官方镜像的 /testbed 带着 setuptools_scm 生成的
+    `src/_pytest/_version.py`(生成物,不入版本控制),而我们挂上去的是 git 树,正好把
+    那个文件遮住 → pytest 自己的 `_checkversion` 读到版本 'unknown' 就崩,报错看着像
+    题目坏了,其实是我们少了构建产物。注意挂载点必须是别的目录(/host)而不是 /testbed,
+    否则镜像里那份原始树被遮住,无物可补。原地 pip install -e 试过,补不出这个文件
+    (镜像是用新版 scm 插件构建的,老 setup.py 的 write_to 不再触发生成)。
+    """
+    from app.executor.docker_runner import docker_available
+
+    if not docker_available():
+        return "跳过(docker 守护进程不可用)"
+    cmd = [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "-v",
+        f"{checkout.resolve()}:{HOST_MOUNT}",
+        "--entrypoint",
+        CONTAINER_PYTHON,
+        image,
+        "-c",
+        HYDRATE_SNIPPET.format(src=CONTAINER_WORKDIR, dst=HOST_MOUNT),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-3:]
+        return "失败(不阻断导入,交给基线校验判定):" + " | ".join(tail)
+    out = (proc.stdout or "").strip().splitlines()
+    return out[-1] if out else "已补齐 0 个生成物"
+
+
 def import_instance(
     instance: SweInstance,
     bugs_root: Path,
@@ -341,6 +406,8 @@ def import_instance(
     *,
     skip_validate: bool = False,
     use_container: bool = False,
+    container_network: str = "none",
+    capture_build: bool = True,
 ) -> tuple[str, str, dict | None]:
     """导入一题,返回 (状态, 原因, tasks 条目)。状态 ∈ {ok, replay-only, skipped}。"""
     bug_id = f"SWE-{instance.instance_id}"
@@ -351,9 +418,17 @@ def import_instance(
     except RuntimeError as exc:
         return "skipped", str(exc), None
 
-    env = container_env(instance) if use_container else None
+    env = container_env(instance, container_network) if use_container else None
     if use_container and env is None:
         return "skipped", f"{bug_id}: --container 要求实例带 image 字段(jsonl 缺该列)", None
+    if use_container and capture_build:
+        marker = checkout / ".patchpilot-build-captured"
+        if not marker.exists():
+            note = capture_build_artifacts(checkout, env.image or "")
+            print(f"[build] {bug_id}: {note}")
+            marker.write_text(note + "\n", encoding="utf-8")
+        else:
+            print(f"[build] {bug_id}: 已回捞过,跳过")
     bug_dir.mkdir(parents=True, exist_ok=True)
     (bug_dir / "issue.md").write_text(instance.problem_statement.strip() + "\n", encoding="utf-8")
     (bug_dir / "manifest.yaml").write_text(
@@ -453,6 +528,17 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="用实例自带的官方镜像当执行环境写进 manifest(基线校验也走该容器)",
     )
+    parser.add_argument(
+        "--container-network",
+        default="none",
+        choices=["none", "bridge", "host"],
+        help="放行题目对照组测试出网(仅运维显式指定才写进 manifest;默认 none)",
+    )
+    parser.add_argument(
+        "--no-capture-build",
+        action="store_true",
+        help="不回捞构建期生成物(调试用;关掉后 setuptools_scm 类仓库会因缺 _version.py 不可证)",
+    )
     args = parser.parse_args(argv)
 
     instances = load_instances(args.jsonl)
@@ -484,6 +570,8 @@ def main(argv: list[str] | None = None) -> int:
             args.max_p2p,
             skip_validate=args.skip_validate,
             use_container=args.container,
+            container_network=args.container_network,
+            capture_build=not args.no_capture_build,
         )
         if entry:
             entry["origin_jsonl"] = str(args.jsonl)

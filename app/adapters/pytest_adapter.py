@@ -29,11 +29,14 @@ class BugEnv:
 
     image+workdir 成对出现 = 容器环境:工作区挂到镜像预装的仓库路径上,`python` 是
     **容器内**绝对路径。只有 python 没有 image = 宿主解释器(自带依赖的虚拟环境)。
+    network 只在容器环境有意义,缺省 none(平台隔离边界);放行的取值受枚举限制,
+    且只可能来自本地 manifest——模型与 API 请求都写不到这一层。
     """
 
     python: str | None = None
     image: str | None = None
     workdir: str | None = None
+    network: str | None = None
 
     @property
     def is_container(self) -> bool:
@@ -240,6 +243,7 @@ def run_pytest(
             image=env.image if env else None,
             workdir=env.workdir if env else None,
             python_bin=env.python if env else None,
+            network=env.network if env else None,
         )
     if env is not None and env.is_container:
         raise ExecError(
@@ -276,6 +280,7 @@ def _run_pytest_in_container(
     image: str | None = None,
     workdir: str | None = None,
     python_bin: str | None = None,
+    network: str | None = None,
 ) -> tuple[PytestReport, TestRunResult]:
     """docker 后端的 pytest 执行:复用 docker_runner 的双挂载与 junit 回传。
 
@@ -294,6 +299,8 @@ def _run_pytest_in_container(
         kwargs["workdir"] = workdir
     if python_bin:
         kwargs["python_bin"] = python_bin
+    if network:
+        kwargs["network"] = network
     report, run = run_tests_in_container(
         cwd, test_ids or [], report_dir=junit.parent, timeout_seconds=timeout_seconds, **kwargs
     )

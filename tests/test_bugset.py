@@ -190,6 +190,48 @@ def test_manifest_env_rejects_unknown_keys(tmp_path: Path) -> None:
         load_bug(dst)
 
 
+def test_manifest_env_network_requires_container_env(tmp_path: Path) -> None:
+    """env.network 只对容器题有意义:宿主题没有网络边界可改,声明即拒(不留半个语义)。"""
+    from app.evals.bugset import load_bug
+
+    dst = _bug_with_env(tmp_path, _env_rows(network="bridge", python="x"))
+    with pytest.raises(Exception, match="only applies to a container env"):
+        load_bug(dst)
+
+
+def test_manifest_env_network_is_enumerated(tmp_path: Path) -> None:
+    """放行的网络形态只有枚举内三种,写错或想套 "host "+任意串都不放行。"""
+    from app.evals.bugset import load_bug
+
+    dst = _bug_with_env(
+        tmp_path,
+        _env_rows(
+            image="demo:latest",
+            workdir="/testbed",
+            python="/opt/x/bin/python",
+            network="macvlan",
+        ),
+    )
+    with pytest.raises(Exception, match=r"env\.network must be one of"):
+        load_bug(dst)
+
+
+def test_manifest_env_network_loads_for_container(tmp_path: Path) -> None:
+    from app.evals.bugset import load_bug
+
+    dst = _bug_with_env(
+        tmp_path,
+        _env_rows(
+            image="demo:latest",
+            workdir="/testbed",
+            python="/opt/x/bin/python",
+            network="bridge",
+        ),
+    )
+    bug = load_bug(dst)
+    assert bug.env is not None and bug.env.network == "bridge"
+
+
 def test_build_custom_bug_carries_no_env() -> None:
     """env 只来自本地 manifest:API 自定义任务不得携带执行环境,否则请求体就能指定解释器。"""
     from app.evals.bugset import build_custom_bug
