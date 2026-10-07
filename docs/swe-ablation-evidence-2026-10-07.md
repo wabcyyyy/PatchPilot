@@ -176,13 +176,65 @@ BlockPatchError: [context] ambiguous_anchor:
 如果以后要接这类题,方向是给转换器加"自动向上下文两侧扩行直到唯一"的能力——
 那是 `app/gitops/blockpatch.py` 的语义变更,属禁区,需要先讨论。
 
+## 难样本第二档:两臂可比对只有 2 对,判据未被满足
+
+口径(两臂逐字同参):`--max-turns 24`(每段)、`PATCHPILOT_TOKEN_BUDGET=400000`、
+`PATCHPILOT_TASK_TIMEOUT_SECONDS=1800`、`execution_backend=docker`、`--model openai`(= deepseek-flash)。
+三值都由 `provenance.config_snapshot` 逐题记录。产物目录:真实臂 `runs/swe-hard-graph`,
+消融臂 `runs/swe-hard-oneshot2`(修复 handicap 后独立成批,不与第一档混目录)。
+
+| 题(补丁规模) | 真实臂 | 消融臂 | 说明 |
+| --- | --- | --- | --- |
+| `astropy-8707` 75 行 / 2 文件 | **resolved** 250,175 tok / 21 轮(定位 11 + 补丁 10) | **failed** 405,427 tok / 定位 19 轮耗尽预算,`apply_patch` 0 次 | 两臂唯一一处结果差异 |
+| `xarray-3095` 49 行 / 2 文件 | **resolved** 226,868 tok | **resolved** 320,386 tok(定位 18 + 补丁 5,全程未跑测试) | 消融臂反而更贵 |
+| `sphinx-7590` 107 行 / 3 文件 | failed,定位段 417,894 tok 爆预算 | 未跑 | 见下方剔除规则 |
+| `sphinx-7748` 90 行 / 1 文件 | failed,定位段 418,802 tok 爆预算 | 未跑 | 同上 |
+
+**按预先登记的判据读**:可比对 n=2,真实臂 2/2、消融臂 1/2,差值 = 1 → 落在"差 ≤1 ⇒ 循环在本证据集内
+无净增贡献"这一侧,**没有拿到净贡献证据**。
+
+**而且那唯一一处差异不足以算作机制证据**:`astropy-8707` 消融臂是死在定位段耗尽 400k,而定位段两臂共用
+同一段代码、同一份提示、同一个工具集——真实臂同题只用 11 轮就收束,消融臂用了 19 轮。差别来自模型采样的
+随机性,不是被消融的机制。单次运行(每臂 n=1)分辨不了这一点,这是本节结论的硬上限。
+
+**剔除规则(为省钱也为口径)**:真实臂死在 LOCALIZE 的题不再跑消融臂——同段同因失败不可能产生差值。
+`sphinx-7590`、`sphinx-7748` 据此排除,记为"两臂同段同因失败",不算作消融臂的失败样本。
+另有 `sphinx-8593/9461/8548` 三道同仓未跑(同一失败模式的先验概率高)。
+
+**本轮最硬的产出不是分数,是瓶颈定位**:这一档难度的实际约束是**定位阶段的 token 消耗**。
+4 次卡在定位段的运行全部是"只读调查吃满 400k、从未进入补丁阶段"。代码层面能对上:
+`app/graph/nodes.py` 的 `_token_budget_for` 把 `token_budget - 已用` **整份**交给定位段,
+没有任何"给补丁阶段留量"的约束;定位段因此可以合法地把任务预算花光而一次补丁都不提。
+可执行的改动方向(属禁区语义,须先讨论):给 PROPOSE 段预留固定比例预算,或给 LOCALIZE 设
+"读满 N 轮必须给结论"的软收束。
+
+## 本档四道真问题的账目(全程真实花费)
+
+| 阶段 | tokens |
+| --- | --- |
+| 第一档消融臂 7 题(handicap 版,作废) | 777k |
+| 第二档真实臂 3 题 | 1,033k |
+| 第二档补齐两臂 3 次运行 | 953k |
+| 合计 | ≈2.76M |
+
+买到的可复用产出:1 例真实多文件题在平台判定下拉通(见上表 astropy/xarray)、
+3 条设计/实现缺陷(`reasoning_content` 未回传已修 `4a4093e`、消融臂 handicap 已撤 `f4a128e`、
+定位段预算无预留)、1 条协议边界(块协议无法表示上下文重复的金补丁)。
+
 ## 复现
 
 ```text
-# 消融臂单题(真实模型;容器镜像需已导入,后端必须 docker)
+# 第一档(最易 5 题,默认口径 12 轮 / 200k / 900s)
 PATCHPILOT_EXECUTION_BACKEND=docker python -m app.evals.run_single \
   --bug SWE-pallets__flask-5014 --model openai --engine plain --arm one_shot \
   --max-turns 12 --out runs/swe-oneshot-1
+
+# 第二档(难题集,两臂同口径:24 轮/段、400k、1800s)
+PATCHPILOT_EXECUTION_BACKEND=docker PATCHPILOT_TOKEN_BUDGET=400000 \
+PATCHPILOT_TASK_TIMEOUT_SECONDS=1800 python -m app.evals.run_single \
+  --bug SWE-astropy__astropy-8707 --model openai --engine graph --max-turns 24 \
+  --out runs/swe-hard-graph
+# 消融臂同题同参,只把 --engine graph 换成 --engine plain --arm one_shot --out runs/swe-hard-oneshot2
 
 # 两臂对照(三段口径缺一不可)
 python -c "from app.evals.metrics import annotate, compute_metrics, load_run; \
