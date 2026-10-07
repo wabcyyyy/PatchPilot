@@ -260,3 +260,61 @@ def test_llm_thought_recorded_with_truncation(ctx: ToolContext) -> None:
     assert truncated.startswith("x" * 100) and "(2500 chars)" in truncated
     assert len(truncated) < 2500
     assert llm[2]["output_summary"]["tool_calls"] == ["finish"]
+
+
+class _ScriptedModel:
+    """按预置回合吐 AssistantTurn,并记下每次收到的 messages(离线,不联网)。"""
+
+    provider = "scripted"
+
+    def __init__(self, turns: list[AssistantTurn]) -> None:
+        self.turns = list(turns)
+        self.seen: list[list[dict]] = []
+
+    def complete(self, messages, tools):  # type: ignore[no-untyped-def]
+        self.seen.append([dict(m) for m in messages])
+        return self.turns[len(self.seen) - 1]
+
+
+def _two_turn_model(reasoning: str | None) -> _ScriptedModel:
+    from app.llm.base import ToolCall
+
+    return _ScriptedModel(
+        [
+            AssistantTurn(
+                content="先读文件",
+                tool_calls=[
+                    ToolCall(id="c1", name="read_file", arguments={"path": "src/dateparse.py"})
+                ],
+                reasoning_content=reasoning,
+            ),
+            AssistantTurn(
+                tool_calls=[
+                    ToolCall(id="c2", name="finish", arguments={"success": True, "summary": "好了"})
+                ]
+            ),
+        ]
+    )
+
+
+def test_loop_passes_reasoning_content_back_on_next_turn(ctx: ToolContext) -> None:
+    """思考模式的思维链必须回传:端点缺了它就 400,整题崩成 NEEDS_REVIEW。"""
+    model = _two_turn_model("我在想失败测试为什么断言不成立")
+    outcome = run_plain_loop(ctx, model, "issue")
+
+    assert outcome.finish_declared
+    second_request = model.seen[1]
+    assistants = [m for m in second_request if m.get("role") == "assistant"]
+    assert assistants, "第二轮请求里应带上上一轮的 assistant 消息"
+    assert assistants[0]["reasoning_content"] == "我在想失败测试为什么断言不成立"
+    assert assistants[0]["tool_calls"], "回传时不能丢工具调用"
+
+
+def test_loop_message_shape_unchanged_without_reasoning(ctx: ToolContext) -> None:
+    """非思考端点:assistant 消息里不得凭空多出 reasoning_content 键。"""
+    model = _two_turn_model(None)
+    run_plain_loop(ctx, model, "issue")
+
+    assistants = [m for m in model.seen[1] if m.get("role") == "assistant"]
+    assert assistants
+    assert "reasoning_content" not in assistants[0]

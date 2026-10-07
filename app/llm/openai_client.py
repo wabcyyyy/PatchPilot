@@ -108,6 +108,8 @@ class OpenAICompatModel:
             usage_tokens=int(tokens),
             prompt_tokens=int(prompt_tokens or 0),
             completion_tokens=int(completion_tokens or 0),
+            # 思考模式的思维链必须原样回传(见 AssistantTurn.reasoning_content)
+            reasoning_content=getattr(message, "reasoning_content", None),
         )
 
 

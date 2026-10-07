@@ -189,3 +189,43 @@ def test_complete_passes_thinking_effort(monkeypatch: pytest.MonkeyPatch) -> Non
     )
     model.complete([{"role": "user", "content": "hi"}], [])
     assert captured["extra_body"] == {"thinking": {"type": "enabled"}, "reasoning_effort": "low"}
+
+
+def test_client_captures_reasoning_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    """思考模式端点返回的 reasoning_content 必须带在 AssistantTurn 上。
+
+    实测坑:DeepSeek 类端点要求后续请求把思维链原样回传,缺了就 400 整题崩掉,
+    而 400 走的是崩溃路径,连花了多少 token 都不入账。
+    """
+    model = OpenAICompatModel(_settings(llm_model="deepseek-flash"))
+    usage = SimpleNamespace(total_tokens=500, prompt_tokens=400, completion_tokens=100)
+
+    def fake_create(**kwargs: Any) -> SimpleNamespace:
+        message = SimpleNamespace(
+            content="我要读 src/a.py", tool_calls=None, reasoning_content="先想一下失败原因……"
+        )
+        choice = SimpleNamespace(message=message, finish_reason="stop")
+        return SimpleNamespace(choices=[choice], usage=usage)
+
+    monkeypatch.setattr(model._client.chat.completions, "create", fake_create)
+    turn = model.complete([{"role": "user", "content": "hi"}], [])
+
+    assert turn.reasoning_content == "先想一下失败原因……"
+
+
+def test_client_leaves_reasoning_content_none_when_endpoint_omits_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """非思考端点(不返回该字段)行为不变:字段为 None,不会造出空键。"""
+    model = OpenAICompatModel(_settings(llm_model="gpt-mock"))
+    usage = SimpleNamespace(total_tokens=10, prompt_tokens=5, completion_tokens=5)
+
+    def fake_create(**kwargs: Any) -> SimpleNamespace:
+        message = SimpleNamespace(content="plain", tool_calls=None)
+        choice = SimpleNamespace(message=message, finish_reason="stop")
+        return SimpleNamespace(choices=[choice], usage=usage)
+
+    monkeypatch.setattr(model._client.chat.completions, "create", fake_create)
+    turn = model.complete([{"role": "user", "content": "hi"}], [])
+
+    assert turn.reasoning_content is None

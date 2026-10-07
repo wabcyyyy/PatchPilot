@@ -97,6 +97,19 @@ def _record_thought(
     )
 
 
+def _assistant_payload(response: AssistantTurn) -> dict[str, object]:
+    """回填给下一轮的 assistant 消息体。
+
+    reasoning_content 必须原样带回:思考模式端点(deepseek 等)校验"thinking 模式下
+    assistant 消息缺思维链就 400",实测让整题崩成 NEEDS_REVIEW(花了钱还不入账)。
+    非思考端点该字段恒 None,消息形态与此前完全一致。
+    """
+    payload: dict[str, object] = {"role": "assistant", "content": response.content or ""}
+    if response.reasoning_content:
+        payload["reasoning_content"] = response.reasoning_content
+    return payload
+
+
 def run_plain_loop(
     ctx: ToolContext,
     model: Model,
@@ -174,27 +187,23 @@ def run_plain_loop(
         )
 
         if not response.is_tool_call:
-            messages.append({"role": "assistant", "content": response.content or ""})
+            messages.append(_assistant_payload(response))
             log.debug("turn %s: plain content, continuing", turn_no)
             continue
 
-        messages.append(
+        assistant_payload = _assistant_payload(response)
+        assistant_payload["tool_calls"] = [
             {
-                "role": "assistant",
-                "content": response.content or "",
-                "tool_calls": [
-                    {
-                        "type": "function",
-                        "id": c.id,
-                        "function": {
-                            "name": c.name,
-                            "arguments": json.dumps(c.arguments, ensure_ascii=False),
-                        },
-                    }
-                    for c in response.tool_calls
-                ],
+                "type": "function",
+                "id": c.id,
+                "function": {
+                    "name": c.name,
+                    "arguments": json.dumps(c.arguments, ensure_ascii=False),
+                },
             }
-        )
+            for c in response.tool_calls
+        ]
+        messages.append(assistant_payload)
 
         for call in response.tool_calls:
             if call.name == FINISH_TOOL:

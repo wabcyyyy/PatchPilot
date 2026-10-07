@@ -15,7 +15,13 @@ class ToolCall:
 
 @dataclass
 class AssistantTurn:
-    """模型的一次回复:要么带工具调用,要么纯文本。"""
+    """模型的一次回复:要么带工具调用,要么纯文本。
+
+    reasoning_content 是思考模式端点(deepseek 等)返回的思维链原文。它必须与
+    content 一起在同一字段位回传给下一轮请求——这类端点校验"thinking 模式下
+    assistant 消息要带 reasoning_content",不带就直接 400,整个任务被吞成
+    NEEDS_REVIEW。非思考端点恒为 None,消息里也就不出现这个键。
+    """
 
     content: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
@@ -23,6 +29,7 @@ class AssistantTurn:
     usage_tokens: int = 0
     prompt_tokens: int = 0  # 输入明细;端点未提供时为 0
     completion_tokens: int = 0  # 输出明细;端点未提供时为 0
+    reasoning_content: str | None = None  # 思维链原文,须原样回传
 
     @property
     def is_tool_call(self) -> bool:
