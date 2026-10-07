@@ -10,7 +10,10 @@ from __future__ import annotations
 
 from app.errors import GateError
 
-SHELL_METACHARS = (";", "|", "&", "`", ">", "<", "(", ")", "$", "\n", "\r", "\x00")
+# 复盘 P1-4:括号不放行会误伤参数化测试 id(如 test_x[(1,2)]——pytest 合法 id,
+# 且 nodes 的基线路径直接跑同款命令,形成"基线能跑、Agent 工具不能跑"的口径分裂)。
+# shell=False 参数列表下括号无 shell 语义;$ 仍被拒,故 $(cmd) 注入路径依旧拦截
+SHELL_METACHARS = (";", "|", "&", "`", ">", "<", "$", "\n", "\r", "\x00")
 
 DEFAULT_WHITELIST: tuple[str, ...] = ("python", "python3", "pytest")
 

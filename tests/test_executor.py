@@ -40,6 +40,16 @@ def test_whitelist_rejects_shell_metachars() -> None:
         check_cmd_allowed([PYTHON, "-m", "pytest", "a;rm -rf /"], whitelist=("python",))
     with pytest.raises(GateError):
         check_cmd_allowed([PYTHON, "-m", "pytest", ">out.txt"], whitelist=("python",))
+    with pytest.raises(GateError):
+        check_cmd_allowed([PYTHON, "-m", "pytest", "$(rm -rf /)"], whitelist=("python",))
+
+
+def test_whitelist_allows_parametrized_test_ids() -> None:
+    """复盘 P1-4:test_x[(1,2)] 是 pytest 合法参数化 id,括号无 shell 语义
+    (shell=False 参数列表),不得误判为注入;$ 路径见上,仍拦截。"""
+    check_cmd_allowed(
+        [PYTHON, "-m", "pytest", "tests/test_x.py::test_x[(1, 2)]"], whitelist=("python",)
+    )
 
 
 def test_whitelist_rejects_empty() -> None:
