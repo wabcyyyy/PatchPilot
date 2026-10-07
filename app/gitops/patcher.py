@@ -2,7 +2,8 @@
 
 顺序固定:先 `git apply --check` 干跑校验,再真正应用;
 任何格式/上下文/越界问题都在 check 阶段被拒绝,不会留下半套用的补丁。
-应用成功后立即对触及的 .py 文件做语法预检(ast.parse);不通过则把本次
+应用成功后:① 对全部触碰路径复扫落点校验(TOCTOU 后置收口,见 apply_patch);
+② 立即对触及的 .py 文件做语法预检(ast.parse);不通过则把本次
 补丁整体还原——语法错误不留在工作区,也不必烧掉一次 pytest 才发现
 (rejected_reason = python_syntax_error)。
 """
@@ -180,6 +181,30 @@ def apply_patch(workspace: Path | str, diff_text: str) -> PatchApplyResult:
         # 结构化结果,与 docstring 一致,不再抛异常层的 GitCmdError(RuntimeError)
         log.warning("patch apply failed rc=%s: %s", rc, err.splitlines()[0] if err else "unknown")
         return PatchApplyResult(False, "git apply failed", err)
+
+    # 复盘 R-3(TOCTOU 后置复扫):check_patch_targets 与真 apply 之间是时间窗,
+    # 窗口内落点被换成软链/越界时不再依赖"工具串行所以没人能换"的时序假设——
+    # apply 后对全部触碰路径重跑落点校验,违规即 git apply -R 反向还原,
+    # 按结构化拒绝收口(同一防线也拦住绕过上层静态门禁直灌 patcher 的调用方)
+    touched = [*parse_diff_files(diff_text), *parse_new_files(diff_text)]
+    post_violation = next(
+        ((rel, reason) for rel in touched if (reason := _target_violation(ws, rel)) is not None),
+        None,
+    )
+    if post_violation is not None:
+        rel, reason = post_violation
+        rc_r, _, err_r = run_git(
+            ws, "apply", "-R", "--whitespace=nowarn", check=False,
+            input_bytes=diff_text.encode("utf-8"),
+        )
+        detail = (
+            f"[{reason}] target violated after apply (TOCTOU recheck): {rel};"
+            f" patch reverted (reverse apply rc={rc_r}"
+            + (f", err={err_r.strip().splitlines()[0]}" if rc_r != 0 and err_r.strip() else "")
+            + ")"
+        )
+        log.warning("patch rejected by post-apply recheck: %s", detail)
+        return PatchApplyResult(False, reason, detail)
 
     syntax_errors = _syntax_errors(ws, py_files)
     if syntax_errors:

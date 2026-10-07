@@ -78,6 +78,40 @@ def test_apply_patch_roundtrip(demo_repo: Path, tmp_path: Path) -> None:
     assert _read(ws1 / "src" / "dateparse.py") == _read(ws2 / "src" / "dateparse.py")
 
 
+def test_apply_patch_reverts_target_swapped_in_check_window(
+    demo_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """复盘 R-3(TOCTOU 后置复扫):check_patch_targets 与真 apply 之间的窗口内
+    落点被换成软链时,apply 后的复扫必须发现并反向还原补丁,结构化拒绝。"""
+    import app.gitops.patcher as patcher_mod
+
+    calls = {"n": 0}
+    real_violation = patcher_mod._target_violation
+
+    def stateful_violation(ws: Path, rel: str) -> str | None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return real_violation(ws, rel)  # apply 前校验:放行
+        return "symlink_escape"  # apply 后复扫:窗口内已被换成软链
+
+    monkeypatch.setattr(patcher_mod, "_target_violation", stateful_violation)
+
+    ws1, ws2 = tmp_path / "ws1", tmp_path / "ws2"
+    create_workspace(demo_repo, ws1)
+    create_workspace(demo_repo, ws2)
+    original = _read(ws2 / "src" / "dateparse.py")
+    _edit_source_file(ws1, "toctou")
+    diff = working_tree_diff(ws1)
+
+    result = apply_patch(ws2, diff.diff_text)
+    assert not result.applied
+    assert result.rejected_reason == "symlink_escape"
+    assert "[symlink_escape]" in result.detail and "TOCTOU" in result.detail
+    assert "patch reverted" in result.detail
+    # 反向还原后工作区回到基线内容
+    assert _read(ws2 / "src" / "dateparse.py") == original
+
+
 def test_apply_patch_rejects_garbage(demo_repo: Path, tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     create_workspace(demo_repo, ws)
