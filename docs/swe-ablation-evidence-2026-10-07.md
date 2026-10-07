@@ -221,6 +221,30 @@ BlockPatchError: [context] ambiguous_anchor:
 3 条设计/实现缺陷(`reasoning_content` 未回传已修 `4a4093e`、消融臂 handicap 已撤 `f4a128e`、
 定位段预算无预留)、1 条协议边界(块协议无法表示上下文重复的金补丁)。
 
+## 已落地的修复:定位段按份额取预算(commit `157c7c7`)
+
+上面"本档四道真问题的账目"里那条预算缺陷已修，语义如下:
+
+- `Settings.localize_budget_share`(默认 **0.6**,置 1.0 即完全等于旧行为)决定 LOCALIZE 段能拿
+  "任务剩余额度"的几成;补丁段因此有了保底预算。
+- 段份额或轮次耗尽**不再一律判死**:若任务级总额仍有余量,取模型最后一轮的实质文本作暂定
+  findings 继续进补丁阶段,并落 `localize_degraded` 取证事件(带 `reason=phase_share|max_turns`);
+  **任务级总额真的超了仍是 `BUDGET_EXCEEDED` 终点**——N-5 的"不得绕资源门禁顺路继续"语义未动,
+  N-11 的用量回账也未动。`run_plain_loop` 的 `BudgetError` 因此多带一个 `last_content`。
+- 该键按 P3-11 分类护栏进 `SNAPSHOT_KEYS`(它决定轨迹形状,跨批次不可比),`test_docs_anchors`
+  的 `nodes.py` 行锚随之重钉 389→423(文档句未改)。
+
+回归验收(全部实测,非推断):
+
+| 门 | 结果 |
+| --- | --- |
+| `ruff check .` + `pytest -q` 全量 | **522 passed / 2 skipped / 0 failed** |
+| 新用例 `tests/test_localize_budget_share.py` | 7 例(份额切分、share=1.0 等价旧行为、份额耗尽降级、轮次耗尽降级、任务级超支仍判死、预算不限时降级、`last_content` 取最近实质文本) |
+| 零成本 graph 35 题回放(`runs/graph35-share06`) vs 基线 `runs/graph35-v2` | **逐题 9 字段 0 条差异**;批次指标全等(final_resolution/localization/patch_application 1.0、avg_rounds 1.0、avg_tokens 198=198);轨迹中 `localize_degraded` **0 次**——回放语料定位只用 3–9 轮,份额从未触到 |
+
+尚未做的验证:**真实模型 1 题**(`sphinx-7590`,即那道"定位 16 轮烧到 418k 一次补丁没提")确认新语义下它真能进补丁阶段。
+需付费(≤400k tokens),等用户单独批准;未批之前不跑。
+
 ## 复现
 
 ```text
