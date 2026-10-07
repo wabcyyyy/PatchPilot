@@ -113,12 +113,16 @@ def run_task_graph(
             "turns": 0,
             "tokens_used": 0,
         }
-        # recursion_limit 随 max_rounds 推导(R2 整改):固定前缀 3 步(prepare/baseline/
-        # localize),每轮 4 步(propose/apply/verify/rollback),成功收尾 1 步;
-        # 硬编码 80 会在 max_rounds=20 的长重试任务耗尽轮数前误抛 GraphRecursionError
+        # recursion_limit 随 max_rounds 推导(R2 整改):固定前缀 4 步(prepare/baseline/
+        # localize/plan),每轮 5 步(plan/propose/apply/verify/rollback),成功收尾 1 步;
+        # 硬编码 80 会在 max_rounds=20 的长重试任务耗尽轮数前误抛 GraphRecursionError。
+        # M5 插入 PLAN 阶段后每轮多一个 superstep(4N+8 → 5N+8):不跟着涨的话,轮数用满
+        # 的长重试任务会先撞上 LangGraph 的递归上限——那是崩溃(GraphRecursionError 被
+        # runner 收敛成 NEEDS_REVIEW),而不是我们自己的结构化终态 BUDGET_EXCEEDED,
+        # 判定语义会凭空变成"需要人看"。
         config = {
             "configurable": {"thread_id": task_id},
-            "recursion_limit": 4 * nodes.max_rounds + 8,
+            "recursion_limit": 5 * nodes.max_rounds + 8,
         }
         final: TaskState = graph.invoke(initial, config=config)  # type: ignore[assignment]
 

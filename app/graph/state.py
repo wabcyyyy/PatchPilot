@@ -29,6 +29,11 @@ class TaskState(TypedDict, total=False):
     failure_signature: str
     findings: str
     feedback: str
+    # PLAN 阶段(M5)的产物:一段"改哪些文件/符号 + 失效机理 + 最小改动意图 + 验证预期"的
+    # 计划文本。它是**跨轮持久的工件**(不是某一轮的一次性输出):失败轮回到 plan 节点时
+    # 带着上一版计划与失败反馈做"修订",而不是让下一轮 PROPOSE 冷启动重猜。
+    # 必须是普通 str——整个 TaskState 要能被 SqliteSaver 序列化(runner 每任务都开检查点)。
+    plan: str
     gate_violations: list[str]
     # 反思提示:上一轮反馈的归一化特征串与连续相同轮数(0 = 无失败)
     last_feedback_signatures: list[str]

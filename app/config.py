@@ -215,6 +215,25 @@ class Settings(BaseSettings):
             raise ValueError(f"max_search_files must be >= 1, got {value}")
         return value
 
+    # PLAN 阶段(M5,范式 LOCALIZE→PLAN→ACT→VERIFY)。缺陷出处(PROGRESS.md D.8/D.11):
+    # 计划从来不是工件——"计划如何修复"只是 LOCALIZE_PROMPT 要求塞进 finish.summary 的自由文本,
+    # 付费实跑 runs/swe-hard-graph/3 两次独立跑法同形:PROPOSE 13 次 search / 10 次 read、
+    # apply_patch 0 次(拿着薄摘要重新调查,而不是按计划动手)。
+    # 置 false = 逐字退回旧行为:不发计划请求、不记轨迹、state.plan 恒空,
+    # 于是 PROPOSE 的渲染与引入本阶段之前逐字节相同。
+    plan_stage_enabled: bool = True
+    # 计划段占"任务剩余额度"的比例(与 localize_budget_share 同一口径,share 只切余量、
+    # 不放宽任何额度)。计划只产出一段文本,份额应当远小于定位;
+    # 份额耗尽属于**降级**(带暂定文本继续 propose),任务级总额耗尽仍是硬终点(N-5)。
+    plan_budget_share: float = 0.15
+
+    @field_validator("plan_budget_share")
+    @classmethod
+    def _check_plan_budget_share(cls, value: float) -> float:
+        if not 0.0 < value <= 1.0:
+            raise ValueError(f"plan_budget_share must be in (0, 1], got {value}")
+        return value
+
 
 @lru_cache
 def get_settings() -> Settings:

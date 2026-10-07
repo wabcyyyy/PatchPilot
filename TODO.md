@@ -77,11 +77,17 @@
 
 ### M5 严格的 Locate→Plan→Act→Verify
 
-- [ ] M5.1 `TaskState` 增 `plan` 字段(可序列化,进 checkpoint)。
-- [ ] M5.2 `builder.py`/`nodes.py` 在 localize 与 propose 之间插 `plan` 节点:一次结构化调用产出可执行计划
+- [x] M5.1 `TaskState` 增 `plan` 字段(可序列化,进 checkpoint)。
+- [x] M5.2 `builder.py`/`nodes.py` 在 localize 与 propose 之间插 `plan` 节点:一次结构化调用产出可执行计划
       (目标文件/符号、改动意图、预期验证),计划文本被 pin 进 PROPOSE 上下文并进轨迹;VERIFY 失败时回流 PLAN 修订。
-- [ ] M5.3 `Settings.plan_stage_enabled`(默认开;置 false 回到三段时间线),plan 调用走既有预算/时间/取消检查。
-- [ ] M5.4 用例:开关两态图形状、plan 为空/超长、预算耗尽时 plan 段降级继续(与 LOCALIZE 同构)、fake 回放 35 题零回归。
+      复核补:plan 也注入仓库骨架(计划要能点名文件与符号)。
+- [x] M5.3 `Settings.plan_stage_enabled`(默认开)与 `plan_budget_share=0.15`;关闭时零请求、
+      `state.plan` 恒空、PROPOSE 渲染逐字节不变;plan 调用走既有预算/时间/取消检查,
+      `recursion_limit` 由 `4N+8` 抬到 `5N+8`。
+- [x] M5.4 用例:阶段顺序、失败轮回 PLAN 并带上轮反馈、降级仍进 PROPOSE 落 `plan_degraded`、
+      任务级耗尽仍 `BUDGET_EXCEEDED`、脚本模型零额外步消耗(`consumed` 相等)、
+      `TaskState.plan` 可 checkpoint、fake 图路径 25 例一行未动仍绿。
+- [ ] M5.5 文档对齐:`docs/adr/0001` 与 `docs/design.md` 仍写 `4N+8`,归入 M7.3。
 
 ### M6 状态持久化与中断恢复(checkpointer 从"留档"变"可续跑")
 

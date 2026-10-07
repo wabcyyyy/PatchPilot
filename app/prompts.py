@@ -75,6 +75,73 @@ PROPOSE_PROMPT = """## 阶段:生成补丁(第 {round_no} 轮)
 4. 全部通过后 finish(success=true)。
 """
 
+# PLAN 阶段的自识别标记(M5)。它同时是 FakeLLM 的"不消耗脚本"开关:回放脚本都写成
+# `_localize_script() + _propose_script(...)`,计划请求若弹掉一步,整套 graph 用例的脚本
+# 就会错位。识别点只有这一个标记字符串,见 app/llm/fake.py。
+PLAN_MARKER = "[[plan_stage]]"
+
+PLAN_PROMPT = f"""{PLAN_MARKER}
+## 阶段:计划(第 {{round_no}} 轮)
+现在**不要改代码,也不要调用任何工具**。把定位结论转成一份能被验证证伪的修复计划。
+
+### Bug 描述
+{{issue}}
+
+### 定位阶段结论
+{{findings}}
+
+{{previous_plan}}{{feedback}}
+输出 4-6 行,每行一项,具体到可以直接执行:
+1. 目标文件与符号(路径只能来自上面的定位结论,不要臆造、不要重新检索);
+2. 你认为失效的机理(一句话,要能被第 4 条的验证预期证伪);
+3. 最小改动意图(改哪个分支/哪个前置条件,不做附带重构);
+4. 验证预期(改完后 failed 集与 regression 集各自应当是什么结果)。
+不要输出代码正文或补丁(补丁由下一阶段提交),不要调用工具。
+存在上一版计划或上一轮失败反馈时:**修订**它们——写清哪一条已经不成立、换成什么假设,
+不要把同一份计划复述一遍。
+"""
+
+# 上一版计划的回灌块:只在确有上一版时出现(首轮渲染不留痕迹,免得"修订"指令凭空压进来)
+PLAN_PREVIOUS_BLOCK = """### 上一版计划(尚未成立,请修订而不是复述)
+{plan}
+
+"""
+
+# 计划进 PROPOSE 的方式:整块**追加**在既有提示之后。plan 为空 → 空串,
+# 渲染结果与引入 PLAN 阶段之前逐字节相同(回归钉子见 tests/test_plan_invariants.py)。
+PROPOSE_PLAN_BLOCK = """
+### 修复计划(PLAN 阶段产出,本轮按它执行,不要重新调查)
+{plan}
+"""
+
+
+def build_plan_prompt(
+    *,
+    issue_text: str,
+    findings: str,
+    feedback: str,
+    previous_plan: str,
+    round_no: int,
+) -> str:
+    """渲染 PLAN 阶段提示;previous_plan/feedback 为空时对应的块整块不出现。"""
+    previous_block = (
+        PLAN_PREVIOUS_BLOCK.format(plan=previous_plan.strip()) if previous_plan.strip() else ""
+    )
+    return PLAN_PROMPT.format(
+        round_no=round_no,
+        issue=issue_text,
+        findings=findings.strip() or "(定位阶段未给出结论;先写清你打算确认哪一条假设)",
+        previous_plan=previous_block,
+        feedback=feedback,
+    )
+
+
+def plan_block_for_propose(plan: str) -> str:
+    """非空计划 → 追加给 PROPOSE 的固定块;空计划 → 空串(拼接后文本一字不动)。"""
+    if not plan.strip():
+        return ""
+    return PROPOSE_PLAN_BLOCK.format(plan=plan.strip())
+
 
 ONE_SHOT_PROPOSE_PROMPT = """## 阶段:生成补丁(单发)
 针对以下 Bug 的已确认根因生成修复,并按系统提示里的 apply_patch 块协议提交。

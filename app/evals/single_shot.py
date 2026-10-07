@@ -27,6 +27,16 @@ from app.prompts import LOCALIZE_PROMPT, ONE_SHOT_PROPOSE_PROMPT
 from app.tools.base import ToolContext
 from app.tools.registry import FINISH_TOOL
 
+# 消融臂纪律(M5 追加,不是可选项):plan_stage 是 **graph 引擎专属**特性
+# (app/graph/nodes.py 的 plan 节点 + builder 的 LOCALIZE→PLAN→ACT→VERIFY 路由),
+# 本臂走 plain 引擎的"定位→补丁"两段循环,**故意不加**计划阶段。
+# 后果必须记在明处:两臂的差值只在"有无执行反馈/有无跨轮重试"这一组变量上成立,
+# 而 agent 臂从此还多了一次 PLAN 请求与一份计划提示。将来若要做"默认臂 vs 本臂"的
+# 两臂对照并下结论,必须先把 plan_stage_enabled / plan_budget_share 一并登记为消融变量
+# (两臂同值,或按臂各关各开),否则对照就悄悄混进了第三个变量。
+# 本仓库被这件事烧过:一个未登记的额外限额把整批付费实验变成了空结果
+# (见 PROGRESS.md 的 0/7 与项目记忆里的两臂同变量规则)。
+
 # 单发补丁阶段的工具集 = agent 臂的写阶段去掉 run_tests。
 # reset_workspace 一并去掉:没有执行反馈时"回滚重来"没有判据,留着只会掩盖消融点。
 # M3 的 find_symbol/describe_file 必须在两臂同时在场:消融变量是"有无测试反馈/有无重试",

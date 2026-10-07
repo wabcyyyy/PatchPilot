@@ -229,6 +229,52 @@
 - 证据:`ruff check .` 全过;定向 4 文件 `85 passed, 1 skipped`;全量在本条 commit 后单独跑。
 
 
+## M5 严格的 LOCALIZE→PLAN→ACT→VERIFY(2026-10-07,子代理实现 + 主代理复核改动)
+
+- 缺陷(D.8):根本没有计划这一步——"计划如何修复"只是 `LOCALIZE_PROMPT` 让模型塞进
+  `finish.summary` 的自由文本(`app/prompts.py:57`),不是工件。付费实跑两次独立同形:
+  PROPOSE 13 次 search / 10 次 read、`apply_patch` **0 次**(`runs/swe-hard-graph/3`)——
+  拿着单薄的定位摘要就重新调查,而不是动手改。
+- 新增 `plan` 节点(`app/graph/nodes.py`)与 `TaskState.plan: str`(可序列化,进 checkpoint):
+  一次独立的 LLM 调用产出"目标文件/符号 + 失效机制 + 最小改动意图 + 预期如何被验证证实",
+  工具白名单只留 `finish`(刻意:**"先计划"不能变成"再调查一轮"**);
+  份额由新键 `plan_budget_share=0.15` 决定,走既有 `_token_budget_for` 与 `ensure_budget` 通道。
+- 路由:`localize→plan→propose`;`apply` 的重试边与 `rollback` 的重试边都回到 **plan**
+  而不是 propose——失败轮**修订同一份工件**,不是让下一轮冷启动再猜一遍。
+  状态字符串一字未改(只改节点指向),所以终态/门禁语义零漂移。
+  `runner.py` 的 `recursion_limit` 从 `4N+8` 抬到 `5N+8`(每轮多一个 superstep;
+  撞到 LangGraph 递归上限会以框架异常终止,而不是我们的结构化终态——这是必须抬的理由)。
+- 计划段降级 ≠ 失败:份额/轮次耗尽时带"模型最后一轮实质文本"进 PROPOSE 并落
+  `plan_degraded` 事件(与 localize 的同构处置);**任务级总额耗尽仍是硬终点,N-5 一字未动**。
+- `plan_stage_enabled=False` → 零 LLM 请求、零轨迹事件、`state.plan` 恒空,
+  于是 PROPOSE 的渲染与引入该阶段之前**逐字节相同**(用例钉住)。
+- 脚本模型兼容(这是本卡最大的工程风险):`FakeLLM` 按固定脚本逐步回放,
+  多一次调用就会让 `tests/test_graph.py` 的 25 个用例全部错位。
+  做法是 PLAN 提示带 `[[plan_stage]]` 标记,`FakeLLM` 认出标记后**不移动游标**直接给
+  "计划文本 + finish" 的回合(带 finish 是为了让计划段的循环在第一个 turn 收敛——
+  纯文本回合会继续下一轮,那就真的弹脚本步了)。用例断言"计划开/关两次的
+  `consumed` 相等且等于脚本长度",把这条兼容性钉死;`tests/test_graph.py` 一行未动。
+- **主代理复核后改掉子代理的一处取舍**:它没给 PLAN 注入仓库骨架,理由是
+  `tests/test_repo_map.py` 有源码级断言把骨架接线点钉成"只有 localize/propose 两处"。
+  我判断这是错的取舍:计划必须点名文件与符号,而实测定位结论常薄到 63-397 字符
+  (`runs/swe-hard-graph2` 首次降级 findings 只有 63 字符),只靠它只能写出"改那个模块"
+  这类无法执行的话;骨架是本地零请求的,给计划段用正是它最该出现的地方。
+  于是 plan 也接 `_persistent_context`,并把那条源码级断言改为"三处接、候选点仍不接"
+  (候选点不接是为了保住分支对照的单变量形状)。
+- 用例:`tests/test_plan_stage.py`(5 例)+ `tests/test_plan_invariants.py`(6 例)——
+  阶段顺序与"零脚本步消耗"的兼容性证明、PROPOSE 的计划块存在性与 plan 空时逐字节相同、
+  失败轮回 PLAN 且第二次计划请求带上上一轮反馈、降级仍进 PROPOSE 且落 `plan_degraded`、
+  任务级耗尽仍 `BUDGET_EXCEEDED`、`plan_budget_share` 校验、`recursion_limit` 抬升后的多轮跑通、
+  `TaskState.plan` 可 checkpoint。
+- 消融臂纪律(刻意的不做):`app/evals/single_shot.py` 不加计划段,并在文件里写明
+  "计划段是 graph 引擎独有特性,将来任何两臂对照必须把 plan_stage 重新登记进消融变量",
+  否则对照就会悄悄多出一个未登记的差异变量(这条纪律来自本轮已被烧掉过一次付费实验)。
+- 已知不完整、留给 M7:ADR-0001 与 `docs/design.md` 仍写 `4N+8`;`nodes.py` 已从
+  982 行涨到 1150 行(七项门禁锚点 465→470→496→506→621→623),该文件已到需要拆分的规模,
+  今晚不动它(禁区文件的大规模重构不是无人值守该做的事),记为待讨论项。
+- 证据:M5 定向与图路径用例见 commit 正文;全量 `pytest -q` 在本 commit 前后各核一次。
+
+
 ## M3 ACI 检索升级(2026-10-07)
 
 - 新增 `app/context/ast_outline.py`(130 行):把 M2 骨架用的 AST 助手抽成单一口径

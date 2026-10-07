@@ -108,8 +108,11 @@ def test_p3_7_corrected_claims_are_pinned() -> None:
     # →470(M1 上下文压缩:localize/propose 调用点各插两行)
     # →496(M2 仓库骨架:_persistent_context 方法 + localize/propose 各插 extra_system)
     # →506(M3 检索工具:READ_TOOLS/WRITE_TOOLS 各加 find_symbol/describe_file)
+    # →621(M5 PLAN 阶段:plan/route_plan 节点插在 _token_budget_for 与 PROPOSE 之间,
+    #        另加 build_plan_prompt 的导入块)
+    # →623(M5 复核:plan 也接仓库骨架——计划要能点名文件与符号,只靠单薄的定位结论写不出可执行计划)
     assert "七项门禁" in _read("app/graph/gates.py")[0]
-    assert "七项门禁" in _read("app/graph/nodes.py")[506]
+    assert "七项门禁" in _read("app/graph/nodes.py")[623]
     # ADR-0002:compose 冒烟如实表述
     adr2 = _read("docs/adr/0002-execution-backend-local-默认.md")
     assert any("无留档的实测运行" in line for line in adr2[28:34]), adr2[28:34]

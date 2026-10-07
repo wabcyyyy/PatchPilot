@@ -29,7 +29,13 @@ from app.graph.gates import ensure_budget, run_gates
 from app.graph.plain_loop import LoopOutcome, run_plain_loop
 from app.graph.state import TaskState
 from app.llm.base import Model
-from app.prompts import LOCALIZE_PROMPT, PROPOSE_PROMPT, build_feedback
+from app.prompts import (
+    LOCALIZE_PROMPT,
+    PROPOSE_PROMPT,
+    build_feedback,
+    build_plan_prompt,
+    plan_block_for_propose,
+)
 from app.tools.base import ToolContext
 from app.tools.output_filter import refine_traceback
 from app.tools.registry import FINISH_TOOL
@@ -413,19 +419,130 @@ class TaskNodes:
             return remaining
         return max(int(remaining * share), 1)
 
+    # ---------- PLAN ----------
+
+    def plan(self, state: TaskState) -> dict[str, Any]:
+        """PLAN 阶段:把定位结论固化成一份跨轮可修订的计划工件(LOCALIZE→PLAN→ACT→VERIFY)。
+
+        缺陷证据(PROGRESS.md D.8/D.11):此前**根本没有计划这一步**——"计划如何修复"只是
+        LOCALIZE_PROMPT 要求塞进 finish.summary 的自由文本(app/prompts.py:57),不是工件。
+        付费实跑 runs/swe-hard-graph/3 两次独立跑法同形:PROPOSE 13 次 search / 10 次 read、
+        apply_patch **0 次**——它拿着一份单薄的定位摘要,于是重新调查而不是动手改。
+        本节点的产出进 state(可 checkpoint),失败轮由 apply 重试边/rollback 边回到这里
+        **修订同一工件**,而不是让下一轮 PROPOSE 冷启动再猜一遍。
+
+        刻意不做的两件事:
+        ①不给任何检索/写入工具——"先计划"不能变成"再调查一轮";结构信息走骨架注入
+          (与 localize/propose 同一份持久记忆:计划要点名文件与符号,而实测定位结论
+          常薄到 63-397 字符,只靠它就只能写出"改那个模块"这类无法执行的话);
+        ②降级不等于失败——计划段份额用完只带暂定文本进 PROPOSE(与 localize 同构),
+          任务级总额耗尽仍是硬终点,N-5 的处置一字不改。
+        """
+        assert self.ctx is not None
+        settings = get_settings()
+        if not getattr(settings, "plan_stage_enabled", True):
+            # 关闭即回到旧行为:零 LLM 请求、零轨迹事件、state.plan 恒为空串,
+            # 于是 PROPOSE 的渲染与引入本阶段之前逐字节相同
+            return {"plan": ""}
+
+        prompt = build_plan_prompt(
+            issue_text=state["issue_text"],
+            findings=state.get("findings", ""),
+            feedback=state.get("feedback", ""),
+            previous_plan=state.get("plan", ""),
+            round_no=state["round_no"],
+        )
+        try:
+            outcome = run_plain_loop(
+                self.ctx,
+                self.model,
+                prompt,
+                max_turns=self.max_turns,
+                round_no=state["round_no"],
+                state_label="PLAN",
+                extra_system=self._persistent_context(self.workspace),
+                # 计划只产文本:工具白名单只留 finish,不给任何检索/写入面
+                # (否则"先计划"会变成"再调查一轮")
+                allowed_tools=[FINISH_TOOL],
+                started_monotonic=self.started_monotonic,
+                time_budget_seconds=settings.task_timeout_seconds,
+                token_budget=self._token_budget_for(
+                    state, share=getattr(settings, "plan_budget_share", 0.15)
+                ),
+                context_window_tokens=settings.context_window_tokens,
+                context_keep_recent_turns=settings.context_keep_recent_turns,
+                cancel_event=self.cancel_event,
+            )
+        except BudgetError as exc:
+            # 两类"耗尽"的处置与 localize 同构:任务级总额已超 → 终点;
+            # 只是计划段的份额/轮次用尽 → 拿模型最后一轮的实质文本当暂定计划继续。
+            # N-11 同源:循环已经烧掉的 token/turns 必须记回任务级账本,不蒸发
+            usage = {
+                "turns": state.get("turns", 0) + exc.turns,
+                "tokens_used": state.get("tokens_used", 0) + exc.tokens_spent,
+                "tokens_prompt": state.get("tokens_prompt", 0) + exc.tokens_prompt,
+                "tokens_completion": state.get("tokens_completion", 0) + exc.tokens_completion,
+            }
+            budget = settings.token_budget
+            if budget > 0 and usage["tokens_used"] >= budget:
+                return {
+                    **usage,
+                    "status": "BUDGET_EXCEEDED",
+                    "outcome": "failed",
+                    "error": f"plan: {exc}",
+                }
+
+            provisional = (exc.last_content or "").strip()
+            self.tracker.record(
+                tool="plan_degraded",
+                state="PLAN",
+                input_payload={"task_token_budget": budget, "tokens_used": usage["tokens_used"]},
+                output_summary={
+                    "reason": "max_turns" if "max_turns" in str(exc) else "phase_share",
+                    "plan_chars": len(provisional),
+                },
+            )
+            return {**usage, "status": "PROPOSE_PATCH", "plan": provisional}
+        except TaskCancelled:
+            raise  # 交给 runner 收敛为 CANCELLED,不得吞成 NEEDS_REVIEW
+        except Exception as exc:
+            return {
+                "status": "NEEDS_REVIEW",
+                "outcome": "needs_review",
+                "error": f"plan: {exc}",
+            }
+
+        return {
+            "status": "PROPOSE_PATCH",
+            "plan": outcome.summary,
+            "turns": state.get("turns", 0) + outcome.turns,
+            "tokens_used": state.get("tokens_used", 0) + outcome.tokens_used,
+            "tokens_prompt": state.get("tokens_prompt", 0) + outcome.tokens_prompt,
+            "tokens_completion": state.get("tokens_completion", 0) + outcome.tokens_completion,
+        }
+
+    def route_plan(self, state: TaskState) -> str:
+        """终点只有 NEEDS_REVIEW / BUDGET_EXCEEDED 两条(与 route_localize 同口径)。
+
+        计划段自己的份额耗尽**不是**终点:route_apply/route_rollback 的重试边如今指向
+        本节点,若把降级判成终止,一道"计划没写全"就能把整题判死,比旧行为更糟。
+        """
+        return "end" if state["status"] in ("NEEDS_REVIEW", "BUDGET_EXCEEDED") else "continue"
+
     # ---------- PROPOSE_PATCH ----------
 
     def _propose_prompt(self, state: TaskState, round_no: int) -> str:
         """PROPOSE 阶段的完整提示(P1-1:全新会话必须带全 Bug 描述与定位结论)。
 
         分支候选与主线共用这一份构造——候选不比主线多看任何东西,只是换了思路提示。
+        M5:计划块按**追加**方式拼接,plan 为空时渲染结果与引入 PLAN 阶段之前逐字节相同。
         """
         return PROPOSE_PROMPT.format(
             round_no=round_no,
             issue_text=state["issue_text"],
             findings=state.get("findings") or "(定位阶段未给出结论;请先用只读工具确认根因)",
             feedback=state.get("feedback", ""),
-        )
+        ) + plan_block_for_propose(state.get("plan", ""))
 
     def propose(self, state: TaskState) -> dict[str, Any]:
         assert self.ctx is not None
@@ -539,14 +656,15 @@ class TaskNodes:
             "repeat_streak": streak,
         }
         if state["round_no"] < self.max_rounds:
-            # 转移表:PATCH_REJECTED 且轮数未超 → 回 PROPOSE 重试;重试计入轮数
+            # 转移表:PATCH_REJECTED 且轮数未超 → 回 PLAN 重规划(M5)再进 PROPOSE;重试计入轮数
             update["round_no"] = state["round_no"] + 1
         return update
 
     def route_apply(self, state: TaskState) -> str:
         if state["status"] == "VERIFY":
             return "verify"
-        # PATCH_REJECTED:轮数未超 → 回 PROPOSE 重试;超了 → BUDGET_EXCEEDED(企划书 4.2)
+        # PATCH_REJECTED:轮数未超 → 回 PLAN 重规划(builder 里 retry→plan);
+        # 超了 → BUDGET_EXCEEDED(企划书 4.2)
         if state["round_no"] < self.max_rounds:
             return "retry"
         return "exhausted"
@@ -1023,7 +1141,8 @@ class TaskNodes:
 
     def route_rollback(self, state: TaskState) -> str:
         """BUDGET_EXCEEDED → 终点;APPLY_PATCH(分支合流)→ apply 节点做图级门禁复核;
-        其余 → 下一轮 propose。"""
+        其余 → 下一轮重规划(M5:返回串仍是既有的 "propose" 键名,builder 把它接到 plan 节点,
+        这样状态串与本函数返回值都不动,只有节点目标改变)。"""
         if state["status"] == "BUDGET_EXCEEDED":
             return "end"
         if state["status"] == "APPLY_PATCH":

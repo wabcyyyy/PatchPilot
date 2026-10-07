@@ -289,10 +289,15 @@ def test_disabled_is_byte_identical_to_pre_change(
 
 
 def test_branch_candidate_call_site_still_takes_only_the_variant_hint() -> None:
-    """规格红线:骨架只接 localize/propose 两处,自适应候选点原样(只带换思路提示)。"""
+    """规格红线:骨架只接 localize/plan/propose 三处,自适应候选点原样(只带换思路提示)。
+
+    M5 把 plan 也接上(计划要点名文件与符号,只靠单薄的定位结论写不出可执行的计划);
+    候选点仍不接,是为了让分支对照保持"只差变体提示"的单变量形状。
+    """
     source = (REPO_ROOT / "app/graph/nodes.py").read_text(encoding="utf-8").splitlines()
     hits = [line.strip() for line in source if "extra_system=" in line]
     assert hits == [
+        "extra_system=self._persistent_context(self.workspace),",
         "extra_system=self._persistent_context(self.workspace),",
         "extra_system=self._persistent_context(self.workspace),",
         'extra_system=VARIANT_HINTS.get(index, ""),',

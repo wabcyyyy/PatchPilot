@@ -243,6 +243,8 @@ def test_checkpoint_roundtrip(tmp_path: Path) -> None:
         config=thread,
     )
     assert final["status"] == "FINISHED"
+    # M5:state 新增的 plan 必须是普通 str——它要能被 SqliteSaver 原样序列化进上面这个检查点库
+    assert isinstance(final.get("plan"), str) and final["plan"]
 
     resumed: TaskState = graph.invoke(None, config=thread)
     assert resumed["status"] == "FINISHED" and resumed["outcome"] == "resolved"

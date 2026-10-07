@@ -178,6 +178,9 @@ def test_provenance_carries_new_traceability_fields() -> None:
         "max_symbol_results",
         "max_search_files",
         "repo_map_dir_depth",
+        # M5 PLAN 阶段:开关与份额改变"动手前模型看到什么、多做什么",跨批次不可比
+        "plan_stage_enabled",
+        "plan_budget_share",
     } == set(SNAPSHOT_KEYS)
     started = datetime.fromisoformat(prov["started_at"])
     assert started.tzinfo is not None

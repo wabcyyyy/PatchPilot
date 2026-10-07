@@ -164,6 +164,12 @@ SNAPSHOT_KEYS: tuple[str, ...] = (
     # M3.6:遍历域上限决定"哪些文件在模型的可见范围内"——同一题换这个值就是换仓库大小,
     # 两次跑法不可比(裁过的仓库会被工具如实标 scope_truncated,但结论仍不同)
     "max_search_files",
+    # M5 PLAN 阶段:这两键直接决定"模型在动手前看到什么、多做一次什么请求"——
+    # 开关改变提示与轨迹形状(有无计划块、有无一次额外请求),份额改变计划段能花多少额度
+    # (份额小→更早降级为空/暂定计划)。与 localize_budget_share 同族,不进豁免:
+    # 同题开/关计划阶段的两次跑法不可比
+    "plan_stage_enabled",
+    "plan_budget_share",
 )
 SECRET_KEYS: frozenset[str] = frozenset({"llm_api_key", "api_token"})
 EXEMPT_KEYS: frozenset[str] = frozenset(
