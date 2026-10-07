@@ -110,3 +110,35 @@ def test_gate_blocked_runs_do_not_inflate_patch_application_rate(tmp_path: Path)
     assert rows[0].security_blocked and not rows[0].patch_applied
     assert metrics["patch_application_rate"] == 0.0
     assert metrics["security_blocked_count"] == 1
+
+
+def test_localized_dual_criterion(tmp_path: Path) -> None:
+    """复盘 P0-2:localized(相交即可,弱信号)与 localized_strict(触碰集⊆期望集)并存,
+    旧口径数值不得改变;无 reference.diff 时两者同走"碰了即命中"退化路径。"""
+    # 相交但含期望外文件 → 弱口径命中,严格口径不命中
+    _write_report(
+        tmp_path / "BUG-001-20260916-000004-aaaa",
+        changed_files=["src/dateparse.py", "src/unrelated.py"],
+    )
+    # 触碰集 ⊆ 期望集(BUG-001 期望仅 src/dateparse.py)→ 双口径命中
+    _write_report(
+        tmp_path / "BUG-001-20260916-000005-bbbb",
+        changed_files=["src/dateparse.py"],
+    )
+    rows = [annotate(r, Path("bugs")) for r in collect_runs(tmp_path)]
+    weak, strict = sorted(rows, key=lambda r: r.run_dir.name)
+    assert weak.localized and not weak.localized_strict
+    assert strict.localized and strict.localized_strict
+    metrics = compute_metrics(rows)
+    assert metrics["localization_rate"] == 1.0
+    assert metrics["localization_strict_rate"] == 0.5
+
+    # 无 reference.diff 的 bugs 根:双口径同为 bool(touched) 退化路径
+    _write_report(
+        tmp_path / "BUG-001-20260916-000006-cccc",
+        changed_files=["anything.py"],
+    )
+    degraded = [annotate(r, tmp_path / "no-such-bugs") for r in collect_runs(tmp_path)]
+    for row in degraded:
+        assert row.localized == bool(row.changed_files)
+        assert row.localized_strict == row.localized

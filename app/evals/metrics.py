@@ -36,6 +36,7 @@ class RunRow:
     finished_stamp: float = 0.0  # report.json 修改时间:目录名格式各异,以文件时间为准
     provenance: dict[str, Any] = field(default_factory=dict)  # T10.1 批次溯源(透传)
     localized: bool = False
+    localized_strict: bool = False
     patch_applied: bool = False
     regression_introduced: bool = False
     security_blocked: bool = False
@@ -114,6 +115,9 @@ def annotate(row: RunRow, bugs_root: Path | str = Path("bugs")) -> RunRow:
     expected = set(row.expected_files)
     # 定位成功:补丁触碰了期望修改范围内的文件(相交即可,不要求完全一致)
     row.localized = bool(touched & expected) if expected else bool(touched)
+    # 严格口径(与旧口径并存,分母相同):触碰集 ⊆ 期望集;
+    # 无 reference.diff 时与旧口径同走"碰了即命中"的退化路径
+    row.localized_strict = (touched <= expected) if expected else bool(touched)
     row.patch_applied = bool(touched) and not row.gate_violations
     # 回归引入:原失败测试修好了,但回归集出现新失败
     row.regression_introduced = row.verify_failed_ok and not row.verify_regression_ok
@@ -138,6 +142,7 @@ def compute_metrics(rows: list[RunRow]) -> dict[str, Any]:
     return {
         "total_runs": total,
         "localization_rate": rate(sum(1 for r in rows if r.localized)),
+        "localization_strict_rate": rate(sum(1 for r in rows if r.localized_strict)),
         "patch_application_rate": (round(applied_count / total, 4) if total else None),
         "final_resolution_rate": rate(sum(1 for r in rows if r.verdict == "resolved")),
         "regression_introduction_rate": (

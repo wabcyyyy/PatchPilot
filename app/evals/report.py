@@ -190,6 +190,8 @@ def render(runs_root: Path, bugs_root: Path, report_out: str = "docs/eval-report
         "",
         "> **数据来源声明**:本报告由 `python -m app.evals.report` 从运行产物自动生成;",
         f"> 每个指标都有判定脚本(metrics.py),无人工标注。{batch_note}",
+        "> **口径说明**:定位成功=弱信号(命中任一期望文件即计,严格口径=触碰集⊆期望集,双行并排);"
+        "回归判定基于导入时抽样的 p2p 回归子集,不覆盖全量回归测试。",
         "",
     ]
     # P3-18:软集形态警报——真实模型批全绿且全部 1 轮时,该形态本身就是
@@ -214,7 +216,8 @@ def render(runs_root: Path, bugs_root: Path, report_out: str = "docs/eval-report
         "|---|---|",
         f"| 最终修复率(每题取最新) | {metrics['final_resolution_rate']} |",
         f"| 全量运行修复率(含同题重试,{len(rows)} 次) | {all_runs_rate} |",
-        f"| 定位成功率 | {metrics['localization_rate']} |",
+        f"| 定位成功率(命中任一期望文件) | {metrics['localization_rate']} |",
+        f"| 定位成功率(严格,触碰集⊆期望集) | {metrics['localization_strict_rate']} |",
         f"| 补丁应用率 | {metrics['patch_application_rate']} |",
         f"| 回归引入率 | {metrics['regression_introduction_rate']} |",
         f"| 越权拦截 | {metrics['security_blocked_count']} 次(攻击样例 {_attack_count(bugs_root)} 个,拦截验证见 tests/test_attacks.py) |",
@@ -234,7 +237,8 @@ def render(runs_root: Path, bugs_root: Path, report_out: str = "docs/eval-report
         lines.append(
             f"| {row.bug_id} | {mark} {row.verdict} | {row.status} | {row.rounds} | "
             f"{', '.join(f'`{f}`' for f in row.changed_files) or '—'} | "
-            f"{'命中' if row.localized else '未命中'} | {'⚠️ ' + str(len(row.gate_violations)) + ' 项违规' if row.gate_violations else '通过'} |"
+            f"{'严格命中' if row.localized_strict else '命中' if row.localized else '未命中'} | "
+            f"{'⚠️ ' + str(len(row.gate_violations)) + ' 项违规' if row.gate_violations else '通过'} |"
         )
 
     failures = [r for r in per_bug if r.verdict != "resolved"]
