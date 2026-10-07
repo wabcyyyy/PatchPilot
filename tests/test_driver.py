@@ -166,6 +166,7 @@ def test_provenance_carries_new_traceability_fields() -> None:
         "adaptive_branching_enabled",
         "branch_candidates",
         "branching_min_token_reserve",
+        "localize_budget_share",
     } == set(SNAPSHOT_KEYS)
     started = datetime.fromisoformat(prov["started_at"])
     assert started.tzinfo is not None

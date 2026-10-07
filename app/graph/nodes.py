@@ -239,22 +239,50 @@ class TaskNodes:
                 allowed_tools=READ_TOOLS,
                 started_monotonic=self.started_monotonic,
                 time_budget_seconds=get_settings().task_timeout_seconds,
-                token_budget=self._token_budget_for(state),
+                token_budget=self._token_budget_for(
+                    state, share=get_settings().localize_budget_share
+                ),
                 cancel_event=self.cancel_event,
             )
         except BudgetError as exc:
-            # N-5 整改:BUDGET_EXCEEDED 必须是转移终点(route_localize 会 end),
-            # 否则超预算后 propose 照跑、资源门禁被"顺路"绕过。
-            # N-11 整改:把循环已烧掉的 token/turns 记回任务级账本,不再蒸发
-            return {
-                "status": "BUDGET_EXCEEDED",
-                "outcome": "failed",
-                "error": f"localize: {exc}",
+            # 两种"耗尽"要分开看,否则会毁掉任务:
+            # - 任务级总额已超 → 仍是终点(N-5:不得带着已花的钱继续 propose 绕资源门禁);
+            # - 只是定位段的份额/轮次用尽,任务级还有余量 → **降级继续**:拿模型最后一轮
+            #   的结论当暂定 findings 进补丁阶段。实测难题档 4 次失败全是"只读调查花光额度、
+            #   apply_patch 一次都没发生",终止等于必然 0 产出。
+            # N-11 整改:两种情形都把循环已烧的 token/turns 记回任务级账本,不蒸发
+            spent = getattr(exc, "tokens_spent", 0)
+            usage = {
                 "turns": state.get("turns", 0) + getattr(exc, "turns", 0),
-                "tokens_used": state.get("tokens_used", 0) + getattr(exc, "tokens_spent", 0),
+                "tokens_used": state.get("tokens_used", 0) + spent,
                 "tokens_prompt": state.get("tokens_prompt", 0) + getattr(exc, "tokens_prompt", 0),
                 "tokens_completion": state.get("tokens_completion", 0)
                 + getattr(exc, "tokens_completion", 0),
+            }
+            budget = get_settings().token_budget
+            if budget > 0 and usage["tokens_used"] >= budget:
+                return {
+                    **usage,
+                    "status": "BUDGET_EXCEEDED",
+                    "outcome": "failed",
+                    "error": f"localize: {exc}",
+                }
+
+            provisional = str(getattr(exc, "last_content", "") or "").strip()
+            self.tracker.record(
+                tool="localize_degraded",
+                state="LOCALIZE",
+                input_payload={"task_token_budget": budget, "tokens_used": usage["tokens_used"]},
+                output_summary={
+                    "reason": "max_turns" if "max_turns" in str(exc) else "phase_share",
+                    "findings_chars": len(provisional),
+                },
+            )
+            return {
+                **usage,
+                "status": "PROPOSE_PATCH",
+                "findings": provisional
+                or "(定位未在额度内收敛;请先用只读工具确认根因,再按块协议提交补丁)",
             }
         except TaskCancelled:
             raise  # 交给 runner 收敛为 CANCELLED,不得吞成 NEEDS_REVIEW
@@ -285,17 +313,23 @@ class TaskNodes:
         """定位失败/超预算都是终点(N-5):超预算后不得继续 propose。"""
         return "end" if state["status"] in ("NEEDS_REVIEW", "BUDGET_EXCEEDED") else "continue"
 
-    def _token_budget_for(self, state: TaskState) -> int | None:
+    def _token_budget_for(self, state: TaskState, share: float = 1.0) -> int | None:
         """本循环可用的 token 余量(N-11 整改)。
 
         此前每个循环都各自拿满 Settings.token_budget——localize 烧满后 propose
         又是全新一份,任务级真实消耗可达配置的数倍。None 表示任务级不限制。
         调用方需先处理余量已耗尽的情形(0 会被 run_plain_loop 当作"不限制")。
+
+        share < 1 时给该段只切一部分余量(LOCALIZE 用它,把剩余留给补丁阶段);
+        分支与候选的额度口径不受影响——它们本来就按整份余量做前置判断。
         """
         settings = get_settings()
         if settings.token_budget <= 0:
             return None
-        return max(settings.token_budget - state.get("tokens_used", 0), 1)
+        remaining = max(settings.token_budget - state.get("tokens_used", 0), 1)
+        if share >= 1.0:
+            return remaining
+        return max(int(remaining * share), 1)
 
     # ---------- PROPOSE_PATCH ----------
 

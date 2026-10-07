@@ -98,6 +98,18 @@ class Settings(BaseSettings):
     branch_candidates: int = 2
     # 分支一次的开销约等于两轮 propose;余量低于此值就不分支(预算前置,不绕资源门禁)
     branching_min_token_reserve: int = 30_000
+    # LOCALIZE 段的预算份额(占"任务剩余额度"的比例)。缺陷出处:该段此前拿的是整份
+    # 任务余量,真实多文件题光靠只读调查就能花光预算而一次补丁不提
+    # (实测 runs/swe-hard-graph 的 sphinx 两题:定位 16-19 轮、约 418k tokens、apply_patch 0 次)。
+    # 置 1.0 = 旧行为(定位可花光剩余额度)。份额耗尽不等于任务级超支,后者仍是硬终点(N-5)。
+    localize_budget_share: float = 0.6
+
+    @field_validator("localize_budget_share")
+    @classmethod
+    def _check_localize_budget_share(cls, value: float) -> float:
+        if not 0.0 < value <= 1.0:
+            raise ValueError(f"localize_budget_share must be in (0, 1], got {value}")
+        return value
 
 
 @lru_cache

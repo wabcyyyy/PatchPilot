@@ -138,6 +138,8 @@ SNAPSHOT_KEYS: tuple[str, ...] = (
     "adaptive_branching_enabled",
     "branch_candidates",
     "branching_min_token_reserve",
+    # 定位段份额同样决定轨迹形状(份额小→更早降级取暂定结论),跨批次必须可比
+    "localize_budget_share",
 )
 SECRET_KEYS: frozenset[str] = frozenset({"llm_api_key", "api_token"})
 EXEMPT_KEYS: frozenset[str] = frozenset(

@@ -51,18 +51,23 @@ def _budget_error(
     tokens_prompt: int,
     tokens_completion: int,
     turns: int = 0,
+    last_content: str = "",
 ) -> BudgetError:
     """构造携带已耗用量的 BudgetError(N-11 整改)。
 
     此前循环抛出预算异常时,本循环已烧掉的 token/turns 只存在于局部变量里,
     上层把异常翻译成终态后这些用量"蒸发"——任务级 report.json 的 tokens_used
     系统性低估,且任务级预算余量核算失真。
+
+    last_content 是模型最后一轮的实质文本:调用方据此判断"定位段额度用完了但任务级
+    还有余量"时可以拿它当暂定结论继续,而不是把整个任务判死。
     """
     exc = BudgetError(message)
     exc.tokens_spent = tokens_spent  # type: ignore[attr-defined]
     exc.tokens_prompt = tokens_prompt  # type: ignore[attr-defined]
     exc.tokens_completion = tokens_completion  # type: ignore[attr-defined]
     exc.turns = turns  # type: ignore[attr-defined]
+    exc.last_content = last_content  # type: ignore[attr-defined]
     return exc
 
 
@@ -146,6 +151,7 @@ def run_plain_loop(
     tokens_spent = 0
     tokens_prompt = 0
     tokens_completion = 0
+    last_content = ""  # 最近一次有实质文本的模型输出,供上层在额度耗尽时降级取用
 
     for turn_no in range(1, max_turns + 1):
         if cancel_event is not None and cancel_event.is_set():
@@ -161,6 +167,7 @@ def run_plain_loop(
                 tokens_prompt,
                 tokens_completion,
                 turns=turn_no,
+                last_content=last_content,
             )
         context_tokens = messages_tokens(messages)
         if budget > 0 and tokens_spent + context_tokens > budget:
@@ -170,6 +177,7 @@ def run_plain_loop(
                 tokens_prompt,
                 tokens_completion,
                 turns=turn_no,
+                last_content=last_content,
             )
         llm_started = time.monotonic()
         response = model.complete(messages, tool_schemas())  # type: ignore[arg-type]
@@ -177,6 +185,8 @@ def run_plain_loop(
         tokens_spent += response.usage_tokens
         tokens_prompt += response.prompt_tokens
         tokens_completion += response.completion_tokens
+        if response.content:
+            last_content = response.content
         _record_thought(
             ctx,
             response,
@@ -266,4 +276,5 @@ def run_plain_loop(
         tokens_prompt,
         tokens_completion,
         turns=max_turns,
+        last_content=last_content,
     )
