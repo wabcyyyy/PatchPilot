@@ -268,7 +268,7 @@ class TaskNodes:
                     "error": f"localize: {exc}",
                 }
 
-            provisional = str(getattr(exc, "last_content", "") or "").strip()
+            provisional = self._provisional_findings(str(getattr(exc, "last_content", "") or ""))
             self.tracker.record(
                 tool="localize_degraded",
                 state="LOCALIZE",
@@ -281,8 +281,7 @@ class TaskNodes:
             return {
                 **usage,
                 "status": "PROPOSE_PATCH",
-                "findings": provisional
-                or "(定位未在额度内收敛;请先用只读工具确认根因,再按块协议提交补丁)",
+                "findings": provisional,
             }
         except TaskCancelled:
             raise  # 交给 runner 收敛为 CANCELLED,不得吞成 NEEDS_REVIEW
@@ -312,6 +311,49 @@ class TaskNodes:
     def route_localize(self, state: TaskState) -> str:
         """定位失败/超预算都是终点(N-5):超预算后不得继续 propose。"""
         return "end" if state["status"] in ("NEEDS_REVIEW", "BUDGET_EXCEEDED") else "continue"
+
+    def _provisional_findings(self, last_content: str) -> str:
+        """额度耗尽时的暂定结论:模型最后一轮的实质文本 + 已调查过的线索清单。
+
+        为什么不止"最后一轮文本":实测 sphinx-7590 拿 63 字符的半程结论冷启动补丁阶段后,
+        又 search/read 了 17 次仍未提交(0 次 apply_patch)就撞任务级总额。把"定位阶段已经查过
+        什么"带进提示,补丁阶段才能从"接着写"开始而不是"重新查"。纯本地拼接,不多花一次请求。
+
+        清单按出现次数降序、次数相同按首次出现顺序(确定性,回放可比);每项截断,总量封顶。
+        """
+        buckets: dict[str, dict[str, int]] = {"read_file": {}, "search_code": {}, "list_files": {}}
+        seen: dict[str, int] = {}
+        for ev in self.tracker.events:
+            if ev.state != "LOCALIZE" or ev.tool not in buckets:
+                continue
+            args = ev.input or {}
+            key = str(
+                args.get("path")
+                or args.get("keyword")
+                or args.get("subdir")
+                or args.get("glob")
+                or ""
+            ).strip()
+            if not key:
+                continue
+            key = key[:80]
+            counts = buckets[ev.tool]
+            counts[key] = counts.get(key, 0) + 1
+            seen.setdefault(key, len(seen))
+
+        lines = [
+            last_content or "(定位未在额度内收敛;以下为已调查线索,请先确认根因再按块协议提交补丁)"
+        ]
+        rendered = False
+        for tool, counts in buckets.items():
+            if not counts:
+                continue
+            top = sorted(counts.items(), key=lambda kv: (-kv[1], seen.get(kv[0], 0)))[:8]
+            lines.append(f"- {tool}: " + ", ".join(f"{k} ×{c}" for k, c in top))
+            rendered = True
+        if rendered:
+            lines.insert(1, "定位阶段已调查线索(未收敛,仅作起点):")
+        return "\n".join(lines)
 
     def _token_budget_for(self, state: TaskState, share: float = 1.0) -> int | None:
         """本循环可用的 token 余量(N-11 整改)。

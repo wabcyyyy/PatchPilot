@@ -199,6 +199,49 @@ def test_unlimited_budget_degrades_on_turn_exhaustion(
     assert out["findings"] == "边界在 header.py"
 
 
+def test_degraded_findings_carry_investigated_leaks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """降级提示要带上"已经查过什么":实测薄 findings 会让补丁阶段重新调查而不是写补丁。"""
+    monkeypatch.setattr(
+        "app.graph.nodes.run_plain_loop",
+        lambda *a, **k: _raise_budget("agent loop tokens 130000 exceed budget 120000", 60_000, ""),
+    )
+    nodes = _nodes(monkeypatch, _settings(), tmp_path)
+    for path, times in (("sphinx/util/cfamily.py", 3), ("sphinx/domains/c.py", 1)):
+        for _ in range(times):
+            nodes.tracker.record(tool="read_file", state="LOCALIZE", input_payload={"path": path})
+    nodes.tracker.record(tool="search_code", state="LOCALIZE", input_payload={"keyword": "family"})
+    nodes.tracker.record(tool="llm", state="LOCALIZE", input_payload={"turn": 1})  # 不该进清单
+
+    out = nodes.localize(_state(tokens_used=10_000))
+
+    findings = str(out["findings"])
+    assert "未在额度内收敛" in findings
+    assert "sphinx/util/cfamily.py ×3" in findings
+    assert "sphinx/domains/c.py ×1" in findings
+    assert "family ×1" in findings
+    assert "llm" not in findings  # 只带只读调查线索,不带循环噪声
+
+
+def test_degraded_findings_caps_long_lists(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """清单封顶:每个工具最多 8 项,免得降级把提示撑成第二份上下文。"""
+    monkeypatch.setattr(
+        "app.graph.nodes.run_plain_loop",
+        lambda *a, **k: _raise_budget("agent loop exceeded max_turns=10", 20_000, "半程结论"),
+    )
+    nodes = _nodes(monkeypatch, _settings(), tmp_path)
+    for i in range(12):
+        nodes.tracker.record(
+            tool="read_file", state="LOCALIZE", input_payload={"path": f"pkg/m{i}.py"}
+        )
+
+    findings = str(nodes.localize(_state())["findings"])
+
+    assert findings.startswith("半程结论")
+    assert findings.count("pkg/m") == 8
+
+
 def test_plain_loop_carries_last_content_of_latest_substantive_turn(
     demo_repo: Path, tmp_path: Path
 ) -> None:
