@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from app.storage.locks import InMemoryLock, build_lock
+
+# 复盘 R-5:Redis 测试地址可经环境变量适配(本机 ta-redis 映射宿主 6380,
+# 写死 6379 时永远 skip);默认仍是 6379,CI/他机零配置不变
+REDIS_URL = os.environ.get("PATCHPILOT_TEST_REDIS_URL", "redis://localhost:6379/0")
 
 
 def _redis_ping_ok() -> bool:
@@ -12,9 +18,7 @@ def _redis_ping_ok() -> bool:
     try:
         import redis
 
-        client = redis.Redis.from_url(
-            "redis://localhost:6379/0", socket_connect_timeout=1, socket_timeout=1
-        )
+        client = redis.Redis.from_url(REDIS_URL, socket_connect_timeout=1, socket_timeout=1)
         return bool(client.ping())
     except Exception:
         return False
@@ -42,9 +46,9 @@ def test_build_lock_defaults_to_memory_when_no_url() -> None:
     assert isinstance(build_lock(""), InMemoryLock)
 
 
-@pytest.mark.skipif(not _redis_ping_ok(), reason="本机 6379 无可用 Redis 服务")
+@pytest.mark.skipif(not _redis_ping_ok(), reason=f"{REDIS_URL} 无可用 Redis 服务")
 def test_redis_lock_roundtrip() -> None:
-    lock = build_lock("redis://localhost:6379/0")
+    lock = build_lock(REDIS_URL)
     assert not isinstance(lock, InMemoryLock)
     assert lock.acquire("k-redis", ttl_seconds=30)
     assert not lock.acquire("k-redis", ttl_seconds=30)
@@ -61,9 +65,9 @@ def test_inmemory_force_release_ignores_holder() -> None:
     assert lock.acquire("k-stale", ttl_seconds=600)
 
 
-@pytest.mark.skipif(not _redis_ping_ok(), reason="本机 6379 无可用 Redis 服务")
+@pytest.mark.skipif(not _redis_ping_ok(), reason=f"{REDIS_URL} 无可用 Redis 服务")
 def test_redis_force_release() -> None:
-    lock = build_lock("redis://localhost:6379/0")
+    lock = build_lock(REDIS_URL)
     assert lock.acquire("k-force", ttl_seconds=30)
     lock.force_release("k-force")
     assert lock.acquire("k-force", ttl_seconds=30)
