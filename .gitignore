@@ -36,3 +36,6 @@ build/
 
 # ZCode 会话工作区配置
 .zcode/
+
+# IDE
+.idea/

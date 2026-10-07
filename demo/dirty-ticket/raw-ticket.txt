@@ -1,0 +1,15 @@
+【线上反馈】日期填空就报错
+
+环境：测试环境，表单「出生日期」字段
+账号：张女士
+
+操作：把日期清空后点保存，页面转圈然后 500
+期望：日期不是必填，不填应该能保存
+
+报错日志（开发甩过来的）：
+ValueError: unrecognized date format: ''
+  File "src/dateparse.py", line 17, in parse_date
+  File "api/form.py", line 42, in save_profile
+
+备注：之前好像有人说格式不对也会报错，不确定是不是同一个问题。
+优先级：P2，这周要上
