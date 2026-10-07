@@ -59,3 +59,68 @@ pytest tests/test_single_shot.py
 数据目录:`runs/swe-real`(真实臂,最易档)、`runs/swe-oneshot-1`(消融臂,最易档)、
 `runs/swe-hard-graph`(真实臂,难题档)、`runs/swe-hard-oneshot`/`runs/swe-hard-oneshot2`
 (消融臂,难题档,前者是我作废的 handicap 版)。
+
+---
+
+# 对外文案(可直接抄,每条都能被仓库产物核对)
+
+## 项目一句话
+
+PatchPilot:给定本地 Git 仓库 + Bug 描述,Agent 检索代码、按块协议提交补丁、在隔离工作区执行
+预定义测试集,由平台按四条件判定(原失败测试转绿 ∧ 回归集全绿 ∧ 通过全部门禁 ∧ 未超资源预算),
+**不采信模型自述**。自建 35 题评测集 + SWE-bench Verified 真实题接入;当前 524 个 pytest 用例、
+零网络测试套件,每条评测数字都有落盘产物。
+
+## 简历成就句(6 条,按可核对性排过)
+
+1. **设计并落地"补丁块协议"单入口**:模型只能提交 `*** Begin/End Patch` 块格式,unified diff 直接拒;
+   上下文行唯一性、软链(模式 120000)一律拒、路径越界、测试文件改动等构成可复核的拒因链,
+   并由 round-trip 语料测试长期守住不变量(含"协议产物永不含软链")。
+   证据:`app/gitops/blockpatch.py`、`tests/test_blockpatch.py`、`tests/test_attacks.py`。
+2. **把外部真实题接进同一套判定**:SWE-bench Verified 元数据 → 本地任务,每题自带时代正确的
+   容器执行环境(`env: python/image/workdir/network`),导入期从官方镜像回捞构建产物;
+   **基线可证是入库硬条件**——没有绿灯探针(P2P 为空)的题直接拒收。
+   证据:`scripts/import_swebench.py`、`app/adapters/pytest_adapter.py::BugEnv`、`docs/swe-ablation-evidence-2026-10-07.md` 的导入账目。
+3. **为"Agent 循环到底值不值"实现消融对照臂**,并强制两臂共用同一条判定路径(只在执行体上开插槽);
+   **它推翻了我自己的头条结论**:最易 5 题两臂同为 5/5,消融臂 token 只要一半(54,098 vs 100,738)。
+   证据:`app/evals/single_shot.py`、`runs/swe-oneshot-1`、`docs/swe-ablation-evidence-2026-10-07.md`。
+4. **修掉两个只在真实模型运行下才暴露的缺陷**:① 思考模式的 `reasoning_content` 未回传 → 多轮请求
+   直接 400,且崩溃路径连 token 用量都不入账(`4a4093e`);② 定位段可独占整份任务预算 → 真实多文件题
+   "读满预算、一次补丁不提"就被判死,改为按份额取预算 + 额度耗尽带暂定结论降级继续(`157c7c7`、`293cd64`)。
+5. **评测可复现性做成产物而不是口头**:`report.json` 自带 provenance(git commit / 工作树脏状态与指纹 /
+   配置快照 / 模型身份 / 执行后端),批次报告自动归并**可执行**复现命令;信息缺失时写"无法判定",
+   不编造能跑的假命令。证据:`app/evals/provenance.py`、`app/evals/report.py`、`tests/test_driver.py`。
+6. **把实验的代价与失败一起公开**:真实模型开销约 3.56M tokens 逐项计账;题单与判据**先入 git 再跑**
+   (防事后挑样本);分母不缩(预登记 10 题→8 可证→7 金补丁可修→2 对可比),不达标的结论照写。
+
+## 60 秒口径(面试自述)
+
+"我做的是给真实仓库打补丁的验证平台,不是又一个聊天 Agent。它的核心主张是**判定权不归模型**:
+模型只能用块协议提交补丁,平台在它自己的隔离工作区、用题目自带的历史正确环境跑测试,四个条件全满足
+才算修好。为了让这些数字值得相信,我接了 SWE-bench Verified 的真实题、给每题做了容器执行环境、
+每份报告都带可复现的 provenance。更重要的是我给自己做了一个消融臂——把测试反馈和重试都拿掉,
+判定路径一字不改地复用同一条。结果它把我的头条结论证伪了:最易那批 5 题两臂都是 5/5,而消融臂只花一半
+token,所以我不写'循环提升了修复率',我写'循环的价值在这批样本上未被证明',同时把为什么没测出来定位到了
+具体函数——定位段能独占整份预算。过程中还修了两个只有真实调用才会撞到的缺陷。"
+
+## 英文版(2 条)
+
+- Built a patch-**verification** platform (not another chat agent): the model submits patches only via an
+  apply_patch block protocol; the platform runs the task's predefined test sets in an isolated workspace
+  inside the instance's era-correct container, and resolves a task only when all four conditions hold —
+  it never trusts the model's own claim.
+- Shipped an ablation arm that removes execution feedback and retry while reusing the **same** judging path,
+  and it falsified my headline claim: both arms resolved 5/5 on the easy tier at half the tokens; I report the
+  loop's value as unproven and trace the binding constraint to the localize phase's budget handling.
+
+## 追问三层时怎么接
+
+| 追问 | 答法 |
+| --- | --- |
+| "两臂都 5/5,那你平台提供了什么?" | 提供的是**可核验性**:环境对代、测试真跑、门禁零绕过、判定不采信自述、provenance 可复现。5/5 之所以敢报,是因为有消融臂;不是因为有 5/5。 |
+| "难题档跑成什么样?" | 预登记 10 题→8 可证→7 金补丁可修→只有 2 对可比(真实臂 2/2、消融臂 1/2,差 1,按事前判据等于没证明)。唯一那处差异还能用定位段采样随机性解释,每臂 n=1,不算机制证据。 |
+| "那你怎么收尾?" | 同一道 107 行/3 文件的题独立跑两次,两次都是"读到预算耗尽也没提交补丁"。我按事先写死的停手条件停了付费(累计约 3.56M tokens),把它写成负面结论,而不是抬预算赌一次。 |
+
+**仍然不能对外说的话**(见上文"不能写"一节):任何解决率/跑分表述、"循环带来净增益"、
+"补丁等同上游修法"、金额数字(价目表未收录该模型,`cost_usd` 恒为 null)。
+
