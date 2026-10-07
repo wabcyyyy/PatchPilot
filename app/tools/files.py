@@ -24,34 +24,59 @@ SKIP_DIRS = {".git", "__pycache__", ".pytest_cache", ".ruff_cache", "node_module
 MAX_LIST_FILES = 500
 
 
-def _iter_repo_files(workspace: Path, glob: str | None) -> list[str]:
+def collect_repo_files(workspace: Path, glob: str | None, limit: int) -> tuple[list[str], bool]:
+    """仓库内文件的相对 POSIX 路径 + **是否被 limit 裁过**。
+
+    只按仓库内相对段匹配 SKIP_DIRS(复盘 P2):`path.parts` 含 workspace 绝对路径段,
+    workspace 落在 node_modules/.venv 等目录下时会全量误伤。
+
+    `limit` 的两个用途必须分开(M3.6,证据见 PROGRESS.md D.12):`list_files` 用它裁**输出体量**
+    (500 条),而检索与符号查找必须用独立的高上限裁**遍历域**——两者共用 500 时,
+    排序第 500 个之后的文件对模型彻底不可见(9 道真实难题里 4 道的必改文件正是如此)。
+    返回值里的 `capped` 让调用方能把"这次没搜全"如实告诉模型:一份声称穷尽仓库却漏了半仓的
+    空结果是谎言,比慢一点危害大得多。
+    """
     out: list[str] = []
     for path in sorted(workspace.rglob("*")):
         if not path.is_file():
             continue
         rel = path.relative_to(workspace).as_posix()
-        # 只按仓库内相对段匹配(复盘 P2):path.parts 含 workspace 绝对路径段,
-        # workspace 落在 node_modules/.venv 等目录下时会全量误伤
         if any(part in SKIP_DIRS for part in rel.split("/")):
             continue
         if glob and not fnmatch.fnmatch(rel, glob):
             continue
         out.append(rel)
-        if len(out) >= MAX_LIST_FILES:
-            break
-    return out
+        if len(out) >= limit:
+            return out, True
+    return out, False
+
+
+def search_scope(workspace: Path, glob: str | None = None) -> tuple[list[str], bool]:
+    """检索/符号查找的遍历域:上限来自 `Settings.max_search_files`,与列表输出体量无关。"""
+    limit = max(1, get_settings().max_search_files)
+    return collect_repo_files(workspace, glob, limit)
+
+
+def _iter_repo_files(workspace: Path, glob: str | None) -> list[str]:
+    """兼容入口:列表口径(500 条上限),只给 `list_files` 与骨架用。"""
+    files, _ = collect_repo_files(workspace, glob, MAX_LIST_FILES)
+    return files
 
 
 def list_files(ctx: ToolContext, subdir: str = "", glob: str | None = None) -> ToolResult:
-    """列出仓库文件(相对路径),供 Agent 建立结构认知。"""
+    """列出仓库文件(相对路径),供 Agent 建立结构认知。
+
+    `truncated=True` 表示清单被 500 条上限裁过(此前只给 count 不告知裁过,模型会把
+    "前 500 条"当成整个仓库);大仓库的真确形状请用 `find_symbol`/`search_code`。
+    """
     root = ctx.workspace
     if subdir:
         base = relpath_within(root, subdir)
         if base is None or not base.is_dir():
             return ToolResult.fail(f"subdir not found or outside workspace: {subdir!r}")
         root = base
-    files = _iter_repo_files(root, glob)
-    return ToolResult(ok=True, output={"count": len(files), "files": files})
+    files, capped = collect_repo_files(root, glob, MAX_LIST_FILES)
+    return ToolResult(ok=True, output={"count": len(files), "files": files, "truncated": capped})
 
 
 def _non_negative_int(value: object, label: str) -> int:
@@ -145,10 +170,11 @@ def search_code(
             return ToolResult.fail(f"invalid regex {keyword!r}: {exc}")
 
     meta: dict[str, Any] = {}
+    scope, scope_capped = search_scope(ctx.workspace, glob)
     matches, truncated = grep_files(
         ctx.workspace,
         keyword,
-        files=_iter_repo_files(ctx.workspace, glob),
+        files=scope,
         max_results=ctx.max_search_results,
         context_lines=context,
         per_file_cap=cap,
@@ -162,6 +188,9 @@ def search_code(
         "matches": matches,
         "total": len(matches),
         "truncated": truncated,
+        # 遍历域是否被裁过:没搜全时必须让模型看见"这次不是整仓",否则一个空结果会被
+        # 读成"仓库里没有",而真相可能是后半仓根本没进视线(D.12 的缺陷就是这么藏的)
+        "scope_truncated": scope_capped,
         ENGINE_KEY: meta.get(ENGINE_KEY, "python"),
     }
     if context > 0:

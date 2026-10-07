@@ -173,6 +173,36 @@
   同类);② 它实现了一个无人调用的 `hard_cap_tokens` 参数,已删除——本项目对死键的既有口径是
   删(`round_timeout_seconds`、`run_tests_by_backend` 都是先例)。
 
+## M3.6 + M2.5 检索遍历域解耦与大仓库骨架目录汇总(2026-10-07,主代理自写)
+
+- `app/tools/files.py`:拆成两件事——
+  `collect_repo_files(workspace, glob, limit) -> (files, capped)` 是唯一遍历实现,
+  `list_files` 继续用 500 条**输出**上限,新增 `search_scope()` 用独立的
+  `Settings.max_search_files=8000` 作**遍历域**上限;`search_code`/`find_symbol` 改走后者。
+- 诚实性护栏:`search_code`/`find_symbol` 输出新增 `scope_truncated`,
+  `list_files` 输出新增 `truncated`(此前只给 count、不告知裁过)。
+  理由:没搜全却给一个像"仓库里没有"的空结论,是谎报——这一条直接决定模型会不会反复重查。
+- `app/context/repo_map.py`:拆出 `_all_files`,`_dir_rollup(rels, depth)` 按目录聚合
+  (`pkg/  (8 files, 8 py)`),文件数超过取样上限时结构档改出目录汇总 + 一行如实说明;
+  **小仓库形状逐字不变**(`only.py [lines 2]` 那条快路径没动)。删掉已无人调用的 `_scoped_files`。
+- `app/config.py`:`max_search_files=8000`、`repo_map_dir_depth=3`(带校验器),
+  两键进 `SNAPSHOT_KEYS`;`nodes.py::_persistent_context` 多传 `dir_depth` 一行。
+- 用例 `tests/test_search_scope.py` 10 例:第 600 个文件里的命中搜得到、列表档仍裁 500 但如实标注、
+  小仓库不误报裁断、`max_search_files=100` 时拿不到尾部命中但 `scope_truncated=True`、
+  深层目录里的符号能跳转、600 文件树上 rg 与 Python 两引擎逐条同输出、两个新键的默认与校验、
+  大仓库出目录汇总(被裁的 `zzz/sub/` 也在场)、小仓库形状不变、深度切点把子目录并进祖先。
+- 一条**有意的形状变更**并按新口径重写断言(不是为过关而改期望):
+  `tests/test_repo_map.py::test_caps_and_degenerate_budgets` 原来钉的是
+  "只列前 N 个文件 + `… skeleton truncated: 5 files omitted`",新口径是目录汇总 +
+  `… 8 files in repo; directory rollup covers all of them, per-file outlines shown for a
+  3-file sample …`。保留的语义是"上限被裁且裁掉的部分对模型可见",改变的语义是
+  "可见的方式从'计数'变成'汇总'——因为计数会让整个目录凭空消失"(理由写在该用例里)。
+- 我自己的两处错,当场被用例抓出来:新增用例里 `tmp_path / "small"` 忘了 `mkdir()` 就写文件
+  (`FileNotFoundError`),以及 `dir_depth=1` 的断言把两个顶层目录的文件数误加成 11;
+  `ruff format` 先跑过我一次编辑,导致按旧文本改锚点的 Edit 落空(行锚 505→506 已重钉)。
+- 证据:`ruff check .` 全过;定向 4 文件 `85 passed, 1 skipped`;全量在本条 commit 后单独跑。
+
+
 ## M3 ACI 检索升级(2026-10-07)
 
 - 新增 `app/context/ast_outline.py`(130 行):把 M2 骨架用的 AST 助手抽成单一口径

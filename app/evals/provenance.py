@@ -152,6 +152,8 @@ SNAPSHOT_KEYS: tuple[str, ...] = (
     "repo_map_max_chars",
     # 文件数上限同样改变可见内容(裁掉的文件模型就看不见),且成本可忽略,一并进快照
     "repo_map_max_files",
+    # 目录汇总深度:大仓库里它决定模型看得见多细的结构档,同上不可比
+    "repo_map_dir_depth",
     # M3 检索引擎:这三键决定"模型每一轮检索看到什么内容"——引擎(rg 与 Python 的输出被
     # 等价性用例钉成同一份,但回落与否仍是轨迹差异)、上下文档位(直接决定可见行数)、
     # 符号条数上限(决定 find_symbol 给几条)。与 repo_map_* 同族(改变模型可见上下文本身),
@@ -159,6 +161,9 @@ SNAPSHOT_KEYS: tuple[str, ...] = (
     "search_engine",
     "max_search_context_lines",
     "max_symbol_results",
+    # M3.6:遍历域上限决定"哪些文件在模型的可见范围内"——同一题换这个值就是换仓库大小,
+    # 两次跑法不可比(裁过的仓库会被工具如实标 scope_truncated,但结论仍不同)
+    "max_search_files",
 )
 SECRET_KEYS: frozenset[str] = frozenset({"llm_api_key", "api_token"})
 EXEMPT_KEYS: frozenset[str] = frozenset(

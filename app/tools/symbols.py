@@ -21,7 +21,7 @@ from typing import Any
 from app.config import get_settings
 from app.context.ast_outline import SYMBOL_KINDS, parse_source, symbol_entries
 from app.tools.base import ToolContext, ToolResult
-from app.tools.files import _iter_repo_files
+from app.tools.files import search_scope
 from app.tools.paths import looks_like_text, relpath_within
 
 log = logging.getLogger(__name__)
@@ -78,7 +78,10 @@ def find_symbol(ctx: ToolContext, name: str, kind: str | None = None) -> ToolRes
     exact: list[dict[str, Any]] = []
     prefix: list[dict[str, Any]] = []
     target = name.lower()
-    for rel in _iter_repo_files(ctx.workspace, "*.py"):
+    # 遍历域走 search_scope(高上限),不用 list_files 的 500 条输出口径:
+    # 第 501 个文件里的定义也是定义,查不到就是假阴性(PROGRESS.md D.12)
+    scope, scope_capped = search_scope(ctx.workspace, "*.py")
+    for rel in scope:
         file = ctx.workspace / rel
         if file.is_symlink() or not looks_like_text(file):
             continue  # 符号链接/二进制:与 describe_file 的拒绝口径同,不给外部内容开口子
@@ -115,5 +118,6 @@ def find_symbol(ctx: ToolContext, name: str, kind: str | None = None) -> ToolRes
             "matches": found[:cap],
             "total": min(len(found), cap),
             "truncated": truncated,
+            "scope_truncated": scope_capped,
         },
     )

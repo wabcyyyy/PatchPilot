@@ -255,6 +255,7 @@ class TaskNodes:
             workspace,
             max_chars=getattr(settings, "repo_map_max_chars", 0),
             max_files=getattr(settings, "repo_map_max_files", 200),
+            dir_depth=getattr(settings, "repo_map_dir_depth", 3),
         )
 
     # ---------- LOCALIZE ----------

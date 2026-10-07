@@ -176,6 +176,8 @@ def test_provenance_carries_new_traceability_fields() -> None:
         "search_engine",
         "max_search_context_lines",
         "max_symbol_results",
+        "max_search_files",
+        "repo_map_dir_depth",
     } == set(SNAPSHOT_KEYS)
     started = datetime.fromisoformat(prov["started_at"])
     assert started.tzinfo is not None

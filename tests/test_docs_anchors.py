@@ -109,7 +109,7 @@ def test_p3_7_corrected_claims_are_pinned() -> None:
     # →496(M2 仓库骨架:_persistent_context 方法 + localize/propose 各插 extra_system)
     # →506(M3 检索工具:READ_TOOLS/WRITE_TOOLS 各加 find_symbol/describe_file)
     assert "七项门禁" in _read("app/graph/gates.py")[0]
-    assert "七项门禁" in _read("app/graph/nodes.py")[505]
+    assert "七项门禁" in _read("app/graph/nodes.py")[506]
     # ADR-0002:compose 冒烟如实表述
     adr2 = _read("docs/adr/0002-execution-backend-local-默认.md")
     assert any("无留档的实测运行" in line for line in adr2[28:34]), adr2[28:34]

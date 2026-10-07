@@ -59,14 +59,11 @@
 - [x] M3.4 `read_file` 增加 `limit`(与 offset 组合成精确窗口,且被 `max_read_lines` 夹扣);越界与二进制拒绝口径不变。
 - [x] M3.5 注册 schema + 阶段白名单(LOCALIZE/PROPOSE 可用),**消融臂 `ONE_SHOT_TOOLS` 同步**
       (两臂只差登记变量);每工具用例 + 轨迹留痕;等价性用例钉住 rg/Python 两路同输出。
-- [ ] M3.6 **检索遍历域与输出体量解耦**(新发现,证据见 PROGRESS.md D.12):`_iter_repo_files` 的
-      `MAX_LIST_FILES=500` 同时裁掉了 `search_code`/`find_symbol` 的遍历域,实测 9 题里 4 题的
-      金补丁文件排在第 500 个之后(sphinx-7590 的 `sphinx/util/cfamily.py`=631、
-      scikit-learn-12682 的两处=502/903),即**必改文件对模型不可见**。
-      改法:`list_files` 保留 500 条**输出**上限(带 truncated),`search_code`/`find_symbol`
-      改走独立的高上限(新 Settings 键,默认覆盖整仓);存量等价性用例与两臂口径不得因此改变。
-- [ ] M2.5 骨架在大仓库要出**目录级结构**(目录 + 文件数 + 深度上限)而不是"字母序前 200 个文件":
-      现口径下 sphinx/astropy 仓库拿到的是一张只画了角落的地图。
+- [x] M3.6 **检索遍历域与输出体量解耦**(证据见 PROGRESS.md D.12):`list_files` 保留 500 条**输出**
+      上限并如实标 `truncated`;`search_code`/`find_symbol` 改走独立上限
+      `Settings.max_search_files=8000`,没搜全时输出 `scope_truncated=True`。
+- [x] M2.5 骨架在大仓库改出**目录级汇总**(`pkg/  (8 files, 8 py)`,深度由 `repo_map_dir_depth` 定),
+      覆盖全部文件;小仓库形状逐字不变。
 
 ### M4 反思机制升级(廉价且高价值)
 

@@ -153,6 +153,18 @@ class Settings(BaseSettings):
             raise ValueError(f"repo_map_max_files must be >= 1, got {value}")
         return value
 
+    # M2.5:大仓库(文件数 > repo_map_max_files)的结构档改出"目录级汇总",这个键是汇总的目录深度。
+    # 深度 3 能让 sphinx/astropy 这类仓库用几十行讲完"有哪些去处",而不是把 1900 个文件裁成
+    # 字母序前 200 个的半张地图(证据见 PROGRESS.md D.12)。
+    repo_map_dir_depth: int = 3
+
+    @field_validator("repo_map_dir_depth")
+    @classmethod
+    def _check_repo_map_dir_depth(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError(f"repo_map_dir_depth must be >= 1, got {value}")
+        return value
+
     # 检索引擎与结构化检索(M3 ACI 升级)。缺陷出处(PROGRESS.md D.6):检索是 Python 子串扫描
     # (app/tools/files.py 旧 :74-103),无上下文行、无单文件上限、无排序,全仓零 AST 能力;
     # 骨架给了地图却没有查地图的工具,付费实跑因此把 LOCALIZE 的 16-19 轮全花在 read/search 上
@@ -185,6 +197,22 @@ class Settings(BaseSettings):
     def _check_max_symbol_results(cls, value: int) -> int:
         if value < 1:
             raise ValueError(f"max_symbol_results must be >= 1, got {value}")
+        return value
+
+    # M3.6:检索与符号查找的**遍历域**上限,与 `list_files` 的输出体量上限(MAX_LIST_FILES=500)
+    # 解耦。缺陷证据(PROGRESS.md D.12,用平台自己的口径在真实题面仓库上量过):两者共用 500 时,
+    # 排序第 500 个之后的文件对模型完全不可见——9 道已缓存难题里 4 道的必改文件落在范围外
+    # (sphinx-7590 的 sphinx/util/cfamily.py=631、scikit-learn-12682 的两处=502/903),
+    # 而"搜不到"会被模型读成"这里没有",于是反复重查、把额度烧光。
+    # 8000 覆盖本项目跑过的最大仓库(astropy 1924 文件)并留出余量;裁过时工具会如实给
+    # scope_truncated=True,不给假称穷尽仓库的空结论。
+    max_search_files: int = 8000
+
+    @field_validator("max_search_files")
+    @classmethod
+    def _check_max_search_files(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError(f"max_search_files must be >= 1, got {value}")
         return value
 
 

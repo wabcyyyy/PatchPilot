@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ast
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 
 from app.context.ast_outline import render_symbols
@@ -29,12 +30,18 @@ _HEADER = (
 )
 _EMPTY = "Repository is empty."
 _NOTE = "… skeleton truncated: {count} files omitted"
+# 大仓库口径:结构档是目录汇总(覆盖全部文件),只有取样集内的文件给了逐文件大纲
+_LARGE_NOTE = (
+    "… {total} files in repo; directory rollup covers all of them, "
+    "per-file outlines shown for a {sampled}-file sample ({rendered} rendered) — "
+    "use search_code / find_symbol for the rest"
+)
 
 
-def _scoped_files(workspace: Path, max_files: int) -> tuple[list[str], int]:
-    """仓库内文件的相对 POSIX 路径(排序即按目录聚组)与被 max_files 裁掉的条数。
+def _all_files(workspace: Path) -> list[str]:
+    """仓库内全部可见文件的相对 POSIX 路径(排序即按目录聚组)。
 
-    SKIP_DIRS 直接 import 自 `app.tools.files`,骨架与 list_files 对"仓库里有什么"永不两样。
+    SKIP_DIRS 直接 import 自 `app.tools.files`,骨架与 `list_files` 对"仓库里有什么"永不两样。
     排序用相对路径字符串而非 Path 对象:Windows 的 Path 比较会折叠大小写,跨平台不等价。
     """
     rels: list[str] = []
@@ -46,9 +53,29 @@ def _scoped_files(workspace: Path, max_files: int) -> tuple[list[str], int]:
             continue
         rels.append(rel)
     rels.sort()
-    if len(rels) <= max_files:
-        return rels, 0
-    return rels[:max_files], len(rels) - max_files
+    return rels
+
+
+def _dir_rollup(rels: Sequence[str], depth: int) -> list[str]:
+    """目录级汇总:`<dir>/  (N files, M py)`,按目录路径排序;根目录文件归入 `./`。
+
+    为什么需要它(M2.5,证据 PROGRESS.md D.12):超过 `max_files` 的大仓库若只列"字母序前
+    200 个文件",模型拿到的是只画了角落的半张地图,而它会当成全图来决策。目录汇总的行数由
+    **目录数**决定而不是文件数,几十行就能覆盖 1900 个文件的仓库形状,把"有哪些去处"讲完整;
+    具体文件则由 `find_symbol`/`search_code`(遍历域已与管理上限解耦)去取。
+    """
+    counts: dict[str, list[int]] = {}
+    for rel in rels:
+        segments = rel.split("/")
+        directory = "/".join(segments[:-1][:depth]) or "."
+        bucket = counts.setdefault(directory, [0, 0])
+        bucket[0] += 1
+        if rel.endswith(".py"):
+            bucket[1] += 1
+    return [
+        f"{directory}/  ({total} files{f', {py} py' if py else ''})"
+        for directory, (total, py) in sorted(counts.items())
+    ]
 
 
 def _outline_block(workspace: Path, rel: str) -> list[str]:
@@ -73,62 +100,89 @@ def _outline_block(workspace: Path, rel: str) -> list[str]:
     return [f"{rel} [lines {len(text.splitlines())}]", *entries]
 
 
-def build_repo_map(workspace: Path, *, max_chars: int, max_files: int = 200) -> str:
-    """渲染仓库骨架文本;max_chars <= 0 时返回空串(功能关闭)。
+def build_repo_map(
+    workspace: Path, *, max_chars: int, max_files: int = 200, dir_depth: int = 3
+) -> str:
+    """渲染仓库骨架文本;`max_chars <= 0` 时返回空串(功能关闭)。
 
-    两档共用同一份预算:先文件树(装多少列多少),再大纲(按文件整块进出,不发半截块)。
-    超预算时末尾必发一行 `… skeleton truncated: X files omitted`——截断对模型必须可见,
-    否则它会以为骨架是完整的。返回值长度永不超过 max_chars(放不下头部就不出骨架)。
+    两档共用同一份预算:先结构档,再符号大纲档。**小仓库**(文件数 ≤ `max_files`)结构档
+    就是文件清单,形状与 M2.5 之前逐字一致(它的用例一行未动);**大仓库**改出目录级汇总
+    (`_dir_rollup`),因为"字母序前 200 个文件"对 1900 文件的仓库是一张只画了角落的地图,
+    而模型会当成全图来决策(M2.5,证据 PROGRESS.md D.12)。
+    大纲只给取样集内的文件,取样集外的由 `search_code`/`find_symbol` 覆盖
+    (它们的遍历域已与管理上限解耦,见 M3.6)。
+    截断对模型必须可见:超预算/取样时末尾必发一行说明,返回值长度永不超过 `max_chars`
+    (放不下头部 + 说明行就不出骨架,宁缺不误导)。
     """
     if max_chars <= 0:
         return ""
-    files, capped = _scoped_files(workspace, max_files)
-    if not files:
+    all_files = _all_files(workspace)
+    if not all_files:
         empty_block = f"{_HEADER}\n{_EMPTY}"
         return empty_block if len(empty_block) <= max_chars else ""
+    large = len(all_files) > max_files
+    files = all_files[:max_files] if large else all_files
+    capped = len(all_files) - len(files)
+    tree_lines = _dir_rollup(all_files, dir_depth) if large else files
     blocks = [(rel, blk) for rel in files if (blk := _outline_block(workspace, rel))]
-    tree_cost = sum(len(rel) + 1 for rel in files)
+    tree_cost = sum(len(line) + 1 for line in tree_lines)
     outline_cost = sum(len(line) + 1 for _, blk in blocks for line in blk)
-    if capped == 0 and len(_HEADER) + tree_cost + outline_cost <= max_chars:
+    if not large and len(_HEADER) + tree_cost + outline_cost <= max_chars:
         return "\n".join([_HEADER, *files, *(line for _, blk in blocks for line in blk)])
 
-    note_worst = _NOTE.format(count=capped + len(files) + len(blocks))  # 最坏情况的宽度
+    # 说明行按最坏情况的宽度先扣预算:条数变了文案不能把行挤断
+    note_worst = (
+        _LARGE_NOTE.format(total=len(all_files), sampled=len(files), rendered=len(blocks))
+        if large
+        else _NOTE.format(count=capped + len(files) + len(blocks))
+    )
     budget = max_chars - len(note_worst) - 1
     if budget <= len(_HEADER):
-        return ""  # 连"头部 + 截断行"都放不下:宁可不发,也不发误导性的半份信息
+        return ""  # 连"头部 + 说明行"都放不下:宁可不发,也不发误导性的半份信息
 
     lines = [_HEADER]
     used = len(_HEADER)
     listed = 0
-    for rel in files:
-        if used + len(rel) + 1 > budget:
+    for line in tree_lines:
+        if used + len(line) + 1 > budget:
             break
-        lines.append(rel)
-        used += len(rel) + 1
+        lines.append(line)
+        used += len(line) + 1
         listed += 1
-    omitted = capped + len(files) - listed
-    in_tree = set(files[:listed])
+    in_tree = set(tree_lines[:listed])
+    omitted = capped + len(files) - listed  # 小档口径:没进清单的文件从这里起算
+    skipped = 0
     for rel, blk in blocks:
-        if rel not in in_tree:
+        if not large and rel not in in_tree:
             continue  # 该文件的树条目已被裁,omitted 里已计过,不重复计
         cost = sum(len(line) + 1 for line in blk)
         if used + cost > budget:
-            omitted += 1
+            skipped += 1
             continue  # 整块放不下就跳过它,继续试后面的小块
         lines.extend(blk)
         used += cost
-    lines.append(_NOTE.format(count=omitted))
+    if large:
+        lines.append(
+            _LARGE_NOTE.format(total=len(all_files), sampled=len(files), rendered=len(blocks))
+        )
+    else:
+        lines.append(_NOTE.format(count=omitted + skipped))
     return "\n".join(lines)
 
 
-def repo_map_for_workspace(workspace: Path, max_chars: int, *, max_files: int = 200) -> str:
+def repo_map_for_workspace(
+    workspace: Path, max_chars: int, *, max_files: int = 200, dir_depth: int = 3
+) -> str:
     """`build_repo_map` 的"永不致命"外壳:任何异常都退化为空骨架,不向上抛。
 
-    任务因为一个可选上下文块崩掉是可靠性的倒退;max_files 开口让 Settings 的
-    repo_map_max_files 真被接线(默认值与 build_repo_map 一致)。
+    任务因为一个可选上下文块崩掉是可靠性的倒退;`max_files`/`dir_depth` 开口让 Settings 的
+    `repo_map_max_files`/`repo_map_dir_depth` 真被接线(默认值与 `build_repo_map` 一致,
+    不留无人调用的参数)。
     """
     try:
-        return build_repo_map(workspace, max_chars=max_chars, max_files=max_files)
+        return build_repo_map(
+            workspace, max_chars=max_chars, max_files=max_files, dir_depth=dir_depth
+        )
     except Exception:
         log.warning("repo_map: 骨架生成失败,降级为无骨架 workspace=%s", workspace, exc_info=True)
         return ""
