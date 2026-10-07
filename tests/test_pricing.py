@@ -13,7 +13,7 @@ from app.api.report import render_markdown
 from app.config import get_settings
 from app.evals.pricing import PRICES, estimate_cost
 
-REQUIRED_MODELS = ("deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "gpt-4o")
+REQUIRED_MODELS = ("deepseek-chat", "deepseek-reasoner", "deepseek-flash", "gpt-4o-mini", "gpt-4o")
 
 
 def test_builtin_prices_cover_required_models() -> None:
@@ -26,6 +26,9 @@ def test_estimate_cost_exact_match() -> None:
     # 1M 输入 + 1M 输出
     assert estimate_cost("gpt-4o-mini", 1_000_000, 1_000_000) == pytest.approx(0.75)
     assert estimate_cost("deepseek-chat", 2_000_000, 0) == pytest.approx(0.54)
+    # swe-real 实际模型须可折算(peak 口径约值)
+    assert estimate_cost("deepseek-flash", 1_000_000, 0) == pytest.approx(0.30)
+    assert estimate_cost("deepseek-flash", 0, 1_000_000) == pytest.approx(1.20)
 
 
 def test_estimate_cost_unknown_model_is_none() -> None:

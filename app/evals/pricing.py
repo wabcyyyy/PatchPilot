@@ -15,9 +15,12 @@ from app.config import get_settings
 log = logging.getLogger(__name__)
 
 # (输入, 输出) USD / 1M tokens,约值:官方公布价四舍五入,报告须注明"约值"
+# deepseek-flash(V4.1 Flash)官方价分 peak/off-peak(对半),此处按 peak 高档折算,
+# 保证成本记录宁可高估;off-peak 跑批实际成本约为表值一半
 PRICES: dict[str, tuple[float, float]] = {
     "deepseek-chat": (0.27, 1.10),
     "deepseek-reasoner": (0.55, 2.19),
+    "deepseek-flash": (0.30, 1.20),
     "gpt-4o-mini": (0.15, 0.60),
     "gpt-4o": (2.50, 10.00),
 }
