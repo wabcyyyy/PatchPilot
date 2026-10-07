@@ -103,9 +103,10 @@ def test_p3_7_corrected_claims_are_pinned() -> None:
     assert "10 个" in design[90], design[90]
     assert "攻击样例 10 个拦截" in _read("docs/threat-model.md")[44]
     assert "10 个攻击样例" in _read("README.md")[19]
-    # 七项门禁 docstring(gates.py:1 / nodes.py:apply 节点;行号随 verify 复查前置而漂移)
+    # 七项门禁 docstring(gates.py:1 / nodes.py:apply 节点;行号随 nodes.py 每次插话漂移:
+    # 465→463(verify 复查前置)→466(R-2 类型标注加 TYPE_CHECKING 导入))
     assert "七项门禁" in _read("app/graph/gates.py")[0]
-    assert "七项门禁" in _read("app/graph/nodes.py")[462]
+    assert "七项门禁" in _read("app/graph/nodes.py")[465]
     # ADR-0002:compose 冒烟如实表述
     adr2 = _read("docs/adr/0002-execution-backend-local-默认.md")
     assert any("无留档的实测运行" in line for line in adr2[28:34]), adr2[28:34]
