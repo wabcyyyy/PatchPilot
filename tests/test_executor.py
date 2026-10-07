@@ -292,15 +292,13 @@ def test_run_tests_timeout_fallback_closes_pipes(monkeypatch: pytest.MonkeyPatch
 
     fake = _PipeHoggingProc()
     real_popen = real_subprocess.Popen
-    opened: list[object] = []
 
     def fake_popen(command, *args, **kwargs):  # type: ignore[no-untyped-def]
         # 被测目标:run_tests 的测试进程 → 假货;
         # _kill_tree 在 Windows 上的 taskkill → 真 Popen(taskkill 找不到 pid,
         # check=False 下静默失败,与真实"杀不到"语义一致)
-        if list(command)[0] == "taskkill":
+        if next(iter(command)) == "taskkill":
             return real_popen(command, *args, **kwargs)
-        opened.append(command)
         return fake
 
     monkeypatch.setattr(local_runner.subprocess, "Popen", fake_popen)
