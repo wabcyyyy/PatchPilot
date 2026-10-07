@@ -6,8 +6,10 @@ TaskContextFilter(往 LogRecord 上补 task_id/request_id 字段)与
 set_task_context/reset_task_context(service._execute 在工作线程首行设置);
 装配点在 app.api.app._setup_logging。
 
-如实声明:per-event request_id 的结构缺口(轨迹事件每条新 UUID,与 HTTP
-请求/LLM 调用无关联)不在本卡范围——那是另一张重构卡,本模块只提供装配面。
+复盘 P1-8 补齐:request_id 由 app.api.app 的 HTTP 中间件按请求生成并写入
+request_id_var,service.create_task 在请求上下文捕获后随任务线程下发。
+仍属已知缺口:轨迹事件(trajectory.jsonl)粒度的 request_id 关联
+(每条事件的归属请求)不在本模块范围。
 """
 
 from __future__ import annotations

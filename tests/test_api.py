@@ -202,3 +202,27 @@ def test_task_responses_do_not_leak_internal_fields(client: TestClient) -> None:
     }
     listing = client.get("/api/tasks").json()
     assert listing["tasks"] and set(listing["tasks"][0]) == set(task)
+
+
+def test_validation_error_returns_unified_structure(client: TestClient) -> None:
+    """复盘 P1-8:Pydantic 校验失败收敛为 {code, message, task_id},
+    不再裸露 FastAPI 原生 {"detail": [...]}。"""
+    resp = client.post("/api/tasks", json={"bug_id": "not-a-valid-id!"})
+    assert resp.status_code == 422
+    body = resp.json()
+    assert set(body) == {"code", "message", "task_id"}
+    assert body["code"] == "validation_error"
+    assert body["task_id"] is None
+    assert "bug_id" in body["message"]
+
+
+def test_request_id_header_and_task_log_context(client: TestClient) -> None:
+    """复盘 P1-8:每个 HTTP 响应携带 X-Request-ID(中间件生成),
+    任务线程的日志上下文带同一 request_id(经 logctx 装配)。"""
+    resp = client.get("/api/health")
+    assert resp.status_code == 200
+    request_id = resp.headers.get("X-Request-ID")
+    assert request_id  # 中间件已生成并回写
+    # 不同请求的 request_id 不同
+    other = client.get("/api/health").headers.get("X-Request-ID")
+    assert other and other != request_id

@@ -9,17 +9,48 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.datastructures import MutableHeaders
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.api.auth import UnauthorizedError
 from app.api.recycle import recycle_finished_tasks
 from app.api.routes import router
 from app.api.service import TaskService
 from app.config import Settings, get_settings
-from app.logctx import TaskContextFilter
+from app.logctx import TaskContextFilter, request_id_var
 from app.storage.repository import Repository
 
 log = logging.getLogger(__name__)
+
+
+class RequestContextMiddleware:
+    """纯 ASGI 中间件(复盘 P1-8):每个 HTTP 请求生成 request_id 注入 contextvar,
+    并回写 X-Request-ID 响应头。create_task 在请求上下文里读取并随任务线程下发
+    (service._execute 的 set_task_context),兑现 AGENTS「业务日志必须带
+    task_id 与 request_id」的约定。纯 ASGI 而非 BaseHTTPMiddleware:
+    后者把下游跑在独立 task 里,contextvar 语义依赖实现细节。"""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        request_id = uuid.uuid4().hex[:12]
+        token = request_id_var.set(request_id)
+
+        async def send_wrapper(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                MutableHeaders(scope=message).append("X-Request-ID", request_id)
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            request_id_var.reset(token)
 
 
 def _setup_logging(settings: Settings) -> None:
@@ -85,12 +116,27 @@ def create_app(
         service.shutdown()
 
     app = FastAPI(title="PatchPilot", version="0.1.0", lifespan=lifespan)
+    app.add_middleware(RequestContextMiddleware)
 
     @app.exception_handler(UnauthorizedError)
     async def unauthorized_handler(request: Request, exc: UnauthorizedError) -> JSONResponse:
         return JSONResponse(
             status_code=401,
             content={"code": "unauthorized", "message": str(exc), "task_id": None},
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+        """复盘 P1-8:Pydantic 校验失败同样收敛为统一错误结构(AGENTS 约定),
+        不再裸露 FastAPI 原生 {"detail": [...]};字段级原因留在 message,
+        task_id 此时不存在,恒 None。"""
+        details = (
+            "; ".join(f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors())
+            or "request validation failed"
+        )
+        return JSONResponse(
+            status_code=422,
+            content={"code": "validation_error", "message": details, "task_id": None},
         )
 
     @app.exception_handler(Exception)

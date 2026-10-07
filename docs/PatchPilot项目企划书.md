@@ -198,7 +198,7 @@ SQLite 起步,按仓储层(Repository)封装访问,预留 PostgreSQL 迁移空�
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/api/tasks` | 创建任务,返回 task_id;同 repo + commit + issue 幂等 |
+| POST | `/api/tasks` | 创建任务,返回 task_id;同 bug_id + engine + model 幂等(未到终态时返回原任务) |
 | GET | `/api/tasks/{task_id}` | 查询状态与进度(当前状态、轮数、耗时) |
 | GET | `/api/tasks/{task_id}/trajectory` | 分页返回轨迹事件 |
 | GET | `/api/tasks/{task_id}/report` | 下载最终报告(JSON/Markdown) |

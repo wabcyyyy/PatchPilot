@@ -1,7 +1,7 @@
 """任务锁与幂等:Redis SET NX EX 为主,进程内锁为兜底(无 Redis 时服务照常可用)。
 
 加锁/释放/超时三个时机:
-- 加锁:任务创建时(同 repo+commit+issue 幂等键);
+- 加锁:任务创建时(同 bug_id|engine|model 幂等键,见 service.create_task);
 - 释放:任务到达终态时主动释放;
 - 超时:TTL 兜底,进程崩溃后锁自动过期,不会死锁。
 """
@@ -66,7 +66,14 @@ class RedisLock(BaseLock):
 
 
 class InMemoryLock(BaseLock):
-    """进程内兜底锁:单进程部署(测试/开发)时与 Redis 语义一致。"""
+    """进程内兜底锁:单进程部署(测试/开发)时与 Redis 语义一致。
+
+    已知残余(复盘 P2 复核后如实记录,不加无效护栏):release(key) 接口不带
+    调用者身份,单实例内 token 比对形同虚设(共享 _tokens 会被最新 acquire
+    覆盖)——TTL 过期后被他方抢锁、原持有者迟到的 release 仍可能误删。
+    实际不可达:同进程内 DB 幂等检查(非终态同键任务直接返回原任务)阻断了
+    "同键并发两持有者"的入场路径;跨进程场景应使用 RedisLock(token 校验有效)。
+    """
 
     def __init__(self) -> None:
         self._expiry: dict[str, float] = {}

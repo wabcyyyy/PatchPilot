@@ -61,11 +61,15 @@ API 响应(TaskOut)刻意收敛:不含 idem_key/repo_path/内部主键,但**保�
 真实调用有三重闸:`PATCHPILOT_LLM_ENABLED` 总开关(默认关)、单请求
 max_tokens/超时/重试、单任务 token 预算门禁(BUDGET_EXCEEDED)。
 
-### R6 docker.sock 挂载 = 宿主守护进程等价权限
+### R6 docker.sock 挂载与无密码 redis = 宿主等价权限(复盘 P1-8 补记)
 
 `execution_backend=docker` 的 compose 部署需挂载 `/var/run/docker.sock`,
-能操作守护进程≈能操作宿主。这是把执行隔离从"进程"升级为"容器"的代价,
-仅在信任 API 调用方的前提下使用(见 docs/docker-backend-notes.md)。
+能操作守护进程≈能操作宿主(API 进程沦陷即宿主 root);同 compose 内 redis
+未设密码,API 沦陷时锁状态可被任意篡改。这是把执行隔离从"进程"升级为
+"容器"的代价,仅在信任 API 调用方的前提下使用(见 docs/docker-backend-notes.md)。
+缓解建议(按性价比):compose 绑回环 + 必设 `PATCHPILOT_API_TOKEN`;
+redis 仅本机回环监听、不跨机暴露;更高隔离要求时改用 docker socket proxy
+(白名单化 docker API)或独立执行机,而不是直接挂 sock。
 
 ### R3a 软链残余风险(2026-09-26 实证补记;2026-10-06 门禁层收口)
 

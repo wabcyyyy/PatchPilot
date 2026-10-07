@@ -25,7 +25,7 @@ from app.api.recycle import recycle_run_dir
 from app.config import get_settings
 from app.errors import InvalidRequestError, PatchPilotError, TaskCancelled, TaskError
 from app.evals.bugset import BUGS_ROOT, build_custom_bug, load_bug, load_replay_script
-from app.logctx import reset_task_context, set_task_context
+from app.logctx import request_id_var, reset_task_context, set_task_context
 from app.storage.locks import BaseLock, build_lock
 from app.storage.repository import TERMINAL_STATUSES, Repository
 
@@ -170,6 +170,9 @@ class TaskService:
             # 池内排队在 DB 不可见;现在排队中如实保持 QUEUED
             # 提交前先注册取消事件,保证 create 返回后的任何 cancel 都不会丢失
             cancel_event = self._cancels.register(task_id)
+            # 复盘 P1-8:请求上下文里的 request_id 随任务下发(HTTP 中间件生成),
+            # 线程池线程不继承请求 contextvar,必须在提交前捕获
+            request_id = request_id_var.get()
             future = self._pool.submit(
                 self._execute,
                 task_id,
@@ -180,6 +183,7 @@ class TaskService:
                 lock_key,
                 cancel_event,
                 replay_script,
+                request_id,
             )
             # N-21 整改:登记 future,停机时可识别"已受理但从未开始"的任务
             self._futures[task_id] = (future, lock_key)
@@ -220,10 +224,12 @@ class TaskService:
         lock_key: str,
         cancel_event,
         replay_script: list[dict[str, Any]] | None = None,
+        request_id: str = "",
     ) -> None:
         # P3-9:工作线程首行设置日志上下文——本任务在此线程内产生的业务日志
-        # 都带 task_id(AGENTS 约定的装配面);线程复用,finally 必须 reset
-        context_tokens = set_task_context(task_id)
+        # 都带 task_id(AGENTS 约定的装配面);线程复用,finally 必须 reset。
+        # 复盘 P1-8:request_id 在提交前于请求上下文捕获并传入,日志 req= 随之生效
+        context_tokens = set_task_context(task_id, request_id)
         try:
             self._execute_inner(
                 task_id,
