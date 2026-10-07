@@ -23,6 +23,7 @@ from typing import Any
 from app.adapters.pytest_adapter import run_pytest
 from app.config import get_settings
 from app.errors import BudgetError, TaskCancelled, TaskError
+from app.evals.bugset import BugTask
 from app.evals.pricing import estimate_cost
 from app.evals.provenance import (
     build_provenance,
@@ -113,7 +114,7 @@ def _write_report(result: TaskResult, run_dir: Path) -> None:
 
 
 def run_task(
-    bug,  # BugTask
+    bug: BugTask,
     model: Model,
     *,
     runs_root: Path,

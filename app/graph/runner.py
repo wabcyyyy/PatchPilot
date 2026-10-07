@@ -9,7 +9,7 @@ import uuid
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.errors import TaskCancelled, TaskError
 from app.gitops.differ import working_tree_diff
@@ -20,11 +20,14 @@ from app.graph.state import TaskState
 from app.llm.base import Model
 from app.tools.tracker import Tracker
 
+if TYPE_CHECKING:  # 复盘 R-2:运行时零导入成本,类型标注兑现 AGENTS"全量标注"
+    from app.evals.bugset import BugTask
+
 log = logging.getLogger(__name__)
 
 
 def run_task_graph(
-    bug,
+    bug: BugTask,
     model: Model,
     *,
     runs_root: Path,

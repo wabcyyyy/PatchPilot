@@ -13,13 +13,16 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.adapters.pytest_adapter import run_pytest
 from app.config import get_settings
 from app.errors import BudgetError, TaskCancelled, TaskError
 from app.gitops.differ import working_tree_diff
 from app.gitops.patcher import apply_patch as git_apply_patch
+
+if TYPE_CHECKING:  # 复盘 R-2:兑现 AGENTS"全量类型标注",运行时零导入成本
+    from app.evals.bugset import BugTask
 from app.gitops.testing import materialize_repo
 from app.graph.gates import ensure_budget, run_gates
 from app.graph.plain_loop import LoopOutcome, run_plain_loop
@@ -122,7 +125,7 @@ VARIANT_HINTS: dict[int, str] = {
 class TaskNodes:
     """一个任务一次图执行的节点集合(闭包状态,不进 LangGraph state)。"""
 
-    bug: Any  # BugTask
+    bug: BugTask
     model: Model
     workspace: Path
     tracker: Tracker
