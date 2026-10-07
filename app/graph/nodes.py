@@ -989,6 +989,7 @@ class TaskNodes:
         # 必须先取下——否则 runner 落盘的 diff.patch 是回滚后的空 diff,取证现场被毁
         from app.gitops.differ import working_tree_diff
         from app.gitops.rollback import reset_workspace
+        from app.graph.reflection import with_discarded_patch
 
         preserved = working_tree_diff(self.workspace).diff_text
         reset_workspace(self.workspace, self.baseline_commit)
@@ -1013,6 +1014,11 @@ class TaskNodes:
             "round_no": state["round_no"] + 1,
             "verify_failed_ok": False,
             "verify_regression_ok": False,
+            # M4 失败反思:工作区已被复位,下一轮 PROPOSE 是新会话,除了失败用例还得知道
+            # "上一轮到底改了什么、那条路已经不通"——否则 repeat_streak(同一组失败连续多轮)
+            # 只会以"再写一遍同样的假设"的形式重现。只给形状(文件/增删行数/hunk 上下文),
+            # 不给补丁正文:正文会诱导模型逐字重放上一版。
+            "feedback": with_discarded_patch(state.get("feedback", ""), preserved),
         }
 
     def route_rollback(self, state: TaskState) -> str:

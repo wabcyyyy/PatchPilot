@@ -173,7 +173,33 @@
   同类);② 它实现了一个无人调用的 `hard_cap_tokens` 参数,已删除——本项目对死键的既有口径是
   删(`round_timeout_seconds`、`run_tests_by_backend` 都是先例)。
 
+## M4 失败反思带上"上一轮改了什么"(2026-10-07,主代理自写)
+
+- 缺陷:verify 失败后 rollback 把工作区硬复位到基线,而下一轮 PROPOSE 是**全新会话**,
+  只拿到失败用例的签名与堆栈——"我上一轮到底改了什么"随工作区一起消失了。现有的
+  `repeat_streak`(同一组失败连续多轮完全一致)就是原地打转的实测信号,而处置只是加一句
+  "请换思路"的文字提示,没有任何事实支撑。
+- 新增 `app/graph/reflection.py`:`diff_digest(diff_text, max_files, max_chars)` 从回滚前
+  **已保真的 diff** 里只取形状(文件名 / 各文件 +/- 行数 / 第一个 hunk 的上下文),
+  `with_discarded_patch(feedback, diff)` 负责追加。
+  **刻意不给补丁正文**:正文会诱导模型逐字重放上一版,而形状信息才是"这条路过不通"的证据。
+- 接线只在 `nodes.py` 的 rollback 返回体上加一行 `feedback`(用局部 import,
+  与该节点既有的 `from app.gitops... ` 同风格,因此不触碰 506 行锚、门禁/预算逻辑一字未动);
+  摘要为空时**逐字返回原反馈**——没有回滚过就不许多出一段噪声,这条是回归钉子。
+- 用例 `tests/test_reflection.py` 10 例:增删计数不含 `+++`/`---` 头、按 diff 出现顺序、
+  `max_files` 裁切并如实标"另有 N 个未列出"、`max_chars` 只按整行裁(断言每行都出现在完整版里)、
+  空/非 diff 文本/`max_chars=0` 出空串、追加位置与空反馈两种入口、
+  **节点级行为验证**(真 `materialize_repo` 的工作区:回滚后反馈带形状行且工作区确已复位)、
+  末轮耗尽仍是 `BUDGET_EXCEEDED` 且 `preserved_diff` 照旧保全(反思不得改变终止判定)。
+- 测试自身踩到本机既有坑一次:第一版把形状行写死成 `+2 -0`,实际是 `+19 -17`——
+  `core.autocrlf=true` 下追加一行 LF 会让整文件按 CRLF→LF 重写([[env-local-verify-gotchas]] 0d)。
+  断言改成 `+N -M` 正则而不是写死数字;顺带一个事实:摘要**如实暴露了换行符改写这件事**,
+  这对模型是有用信息(它的"一行修改"实际动了整文件)。
+- 证据:`ruff check .` 全过;定向 `59 passed`
+  (`test_reflection + test_graph + test_branching + test_docs_anchors`,行锚未漂移)。
+
 ## M3.6 + M2.5 检索遍历域解耦与大仓库骨架目录汇总(2026-10-07,主代理自写)
+
 
 - `app/tools/files.py`:拆成两件事——
   `collect_repo_files(workspace, glob, limit) -> (files, capped)` 是唯一遍历实现,
