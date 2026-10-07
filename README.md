@@ -26,9 +26,12 @@
   另有候选 1 道待审(`bugs/candidates/`),
   七项指标自动判定;T10.1 起报告自带批次 provenance 与自动归并的复现命令
   (已入库的两份报告快照早于该特性,读数前先看 `docs/README.md` 的口径补注);
-- **外部基准接入(v1)**:SWE-bench jsonl 数据格式适配(`app/evals/swebench.py`),
-  映射为内部任务后复用同一套基线/验证/门禁判定。v1 只做数据接入与本地执行
-  (checkout 需人工准备),不含官方 docker 评估架构建;联网下载与真实模型运行均人工触发。
+- **外部基准接入(v2)**:SWE-bench Verified 元数据 → 本地任务(`app/evals/swebench.py` +
+  `scripts/import_swebench.py`),每题可自带执行环境(`env: python/image/workdir/network`,
+  用官方评测镜像),复用**同一套**基线/验证/门禁判定;导入期从镜像回捞构建产物。
+  真实模型批次与"有循环 vs 无执行反馈"的两臂消融对照均已实跑,口径、负面结果与瓶颈定位
+  见 `docs/swe-ablation-evidence-2026-10-07.md`。**不声称 SWE-bench 官方跑分**:样本、
+  判定规则与提交形态均为自定,任何解决率数字都必须带着该文第 2 节的局限一起读。
 
 ## 快速开始
 
@@ -94,6 +97,8 @@ tests/          # 项目自身测试(全离线,模型交互用 FakeLLM 回放;�
 | `docs/audit-2026-09-19.md` | 全量自检:死代码/冗余架构、安全与逻辑漏洞、承诺落地核查,按 P0–P3 分级 |
 | `docs/eval-report.md` | fake 回放批次快照(混合引擎;读数前先读文首口径补注) |
 | `docs/eval-report-real.md` | 真实模型批次快照(缺模型名/成本;读数前先读文首口径补注) |
+| `docs/swe-ablation-evidence-2026-10-07.md` | 真实 SWE-bench 批次 + 两臂消融对照:预登记题单与判据、负面结果、瓶颈定位与协议边界 |
+| `docs/interview-evidence-2026-10-07.md` | 同一批实测的"能写 / 不能写"清单:每条主张附证据路径与强度上限 |
 | `docs/postmortems/` | 失败复盘(6 篇) |
 | `docs/docker-isolation-notes.md` / `docs/docker-backend-notes.md` | 容器隔离边界实验 / 执行后端与部署闭环 |
 | 《PatchPilot开发计划书.md》 / 《PatchPilot学习计划.md》 | 里程碑任务卡 / 学习路线 |
