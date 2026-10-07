@@ -194,7 +194,11 @@ def apply_patch(workspace: Path | str, diff_text: str) -> PatchApplyResult:
     if post_violation is not None:
         rel, reason = post_violation
         rc_r, _, err_r = run_git(
-            ws, "apply", "-R", "--whitespace=nowarn", check=False,
+            ws,
+            "apply",
+            "-R",
+            "--whitespace=nowarn",
+            check=False,
             input_bytes=diff_text.encode("utf-8"),
         )
         detail = (
