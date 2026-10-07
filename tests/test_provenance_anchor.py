@@ -142,6 +142,21 @@ def test_build_provenance_carries_worktree_fields(monkeypatch: pytest.MonkeyPatc
     assert prov["worktree_dirty"] is True and len(prov["dirty_fingerprint"]) == 16
 
 
+def test_build_provenance_carries_reproduction_knobs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """复盘 P0-3:max_turns/temperature/seed 三键必须在场——缺席即复现口径断裂;
+    客户端不设置采样参数时显式 None(不可重放),不猜测数值。"""
+    _stub_git(monkeypatch, {("rev-parse", "HEAD"): "a" * 40, ("status", "--porcelain"): ""})
+    prov = provenance.build_provenance("fake-replay", "m", "plain", max_turns=7)
+    assert prov["max_turns"] == 7
+    assert prov["temperature"] is None
+    assert prov["seed"] is None
+    # 不传 max_turns(历史调用方)时也必须有键,值为 None
+    prov_default = provenance.build_provenance("fake-replay", "m", "graph")
+    assert prov_default["max_turns"] is None
+
+
 def test_manifest_records_anchor_check_and_dirty_state(tmp_path: Path) -> None:
     """端到端:fake 批 manifest 带工作树状态与锚点反查结果;本仓库 HEAD 上
     BUG-001 必然存在 → checked=True 且 missing 为空(真实 git,非 stub)。"""

@@ -120,8 +120,8 @@ def missing_inputs_at_commit(commit: str, bug_ids: list[str]) -> list[str] | Non
 #   verify_double_run 经 git 考古证实是漏,此处补上);
 # - SECRET_KEYS:任何情况下不得进快照(report.json 会被汇编进 docs 随仓库分发);
 # - EXEMPT_KEYS:声明为与复现判定无关/机器相关,缺席是设计使然。
-# 已知结构性缺口(如实记录,不装已修):max_turns 不是 Settings 键,
-# 升格属结构变更,另行评审。
+# max_turns 不是 Settings 键(批次级参数):复盘 P0-3 起作为独立字段随
+# build_provenance 记录,不再依赖 config_snapshot 覆盖。
 SNAPSHOT_KEYS: tuple[str, ...] = (
     "llm_model",
     "llm_enabled",
@@ -189,7 +189,11 @@ def require_model_name(model_name: str | None, llm_enabled: bool) -> None:
 
 
 def build_provenance(
-    model_provider: str, model_name: str, engine: str, arm: str = "agent"
+    model_provider: str,
+    model_name: str,
+    engine: str,
+    arm: str = "agent",
+    max_turns: int | None = None,
 ) -> dict[str, Any]:
     """任务开始时取证:同样配置能否复跑,取决于这里的字段是否被记录。
 
@@ -198,6 +202,10 @@ def build_provenance(
 
     arm 记录的是"执行体"(agent 循环 / 消融对照臂);它不是 engine 的一部分,
     因为两臂跑的是同一个引擎,区别只在循环形状。
+
+    复盘 P0-3:max_turns 是批次级参数(非 Settings 键),由调用方传入运行时
+    实际值;temperature/seed 当前客户端从不设置(走提供方默认),显式记 None
+    表明"采样不可重放"这一事实,不猜测数值。
     """
     settings = get_settings()
     return {
@@ -206,6 +214,9 @@ def build_provenance(
         "model_name": model_name,
         "engine": engine,
         "arm": arm,
+        "max_turns": max_turns,
+        "temperature": None,
+        "seed": None,
         "execution_backend": settings.execution_backend,
         "llm_enabled": settings.llm_enabled,
         "llm_thinking": settings.llm_thinking,

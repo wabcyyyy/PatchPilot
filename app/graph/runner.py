@@ -72,7 +72,9 @@ def run_task_graph(
         run_dir=str(run_dir),
     )
     # 批次溯源:与 plain 引擎同口径,任务开始即取证
-    result.provenance = build_provenance(result.model_provider, model_name, "graph")
+    result.provenance = build_provenance(
+        result.model_provider, model_name, "graph", max_turns=max_turns
+    )
     tracker = Tracker(run_dir / "trajectory.jsonl", task_id=task_id)
     started = time.monotonic()
     checkpointer = None

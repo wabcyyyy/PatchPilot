@@ -160,7 +160,9 @@ def run_task(
         run_dir=str(run_dir),
     )
     # 批次溯源:任务开始即取证,后续任何崩溃路径的 report.json 都带复现口径
-    result.provenance = build_provenance(result.model_provider, model_name, engine, arm)
+    result.provenance = build_provenance(
+        result.model_provider, model_name, engine, arm, max_turns=max_turns
+    )
     tracker = Tracker(run_dir / "trajectory.jsonl", task_id=task_id)
     started = time.monotonic()
     ctx: ToolContext | None = None  # materialize 失败时 finally 仍可安全引用
