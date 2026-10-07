@@ -89,10 +89,16 @@ class OpenAICompatModel:
             calls.append(ToolCall(id=item.id or f"call_{len(calls)}", name=fn.name, arguments=args))
 
         text = getattr(message, "content", None)
+        if choice.finish_reason == "length" and calls:
+            # R2 整改:截断的 tool arguments 多半是废补丁,早失败好过假进行
+            # (复盘 P2 对齐注释与行为:此前只告警,坏参数仍会流进 apply);
+            # 纯文本截断无工具调用时维持告警——文本被截不必然致命
+            raise TaskError(
+                "llm completion truncated by max_tokens while tool calls were pending;"
+                " increase llm_max_tokens or reduce prompt size"
+            )
         if choice.finish_reason == "length":
-            # R2 整改:截断的 tool arguments 多半是废补丁,早失败好过假进行;
-            # 至少留痕,排查"模型补丁行为怪异"时有据可查
-            log.warning("llm completion truncated by max_tokens; tool args may be broken")
+            log.warning("llm completion truncated by max_tokens (text only)")
         # R2 整改:usage 缺失时此前 prompt/completion 恒 0,成本核算系统性失真;
         # 改为字符估算拆分(与 plain_loop 的预算口径同源)
         if not tokens:

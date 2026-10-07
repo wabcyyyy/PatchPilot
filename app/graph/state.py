@@ -35,8 +35,8 @@ class TaskState(TypedDict, total=False):
     repeat_streak: int
     # 自适应分支(卡5):实时计数在 ctx.patch_fail_streak(工具层 apply_patch 写),
     # `_should_branch` 也读 ctx——只有工具层知道每次应用结果。这里的同名字段是
-    # 计划书面要求的 state 形态(检查点/轨迹留痕用),**当前无写入方**:要让它真正
-    # 进轨迹得改 rollback 的返回载荷,那属于禁区且不在卡5a 规格内,未擅自动。
+    # 计划书面要求的 state 形态(检查点/轨迹留痕用),由分支合流节点写回
+    # (nodes.py 的 patch_fail_streak 返回载荷)。
     # branching_used 置真后本任务不再分支(至多一次),branch_selected 记胜者序号(卡5b 写)。
     patch_fail_streak: int
     branching_used: bool

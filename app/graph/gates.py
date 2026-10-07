@@ -173,12 +173,14 @@ def run_gates(
         if forbid_test_files and is_test_file(rel):
             violations.append(GateViolation("files", f"modifying test file is forbidden: {rel}"))
         # 3. 路径门禁:穿越/绝对路径/.git 内部文件;以及 allowed_paths 白名单
+        # 冒号只按 Windows 盘符形态拒绝(复盘 P2:C:);POSIX 合法文件名
+        # 如 weird:name.py 不再被误判为越界
         parts = normalize_rel(rel).split("/")
         if (
             ".." in parts
             or ".git" in parts
             or rel.startswith(("/", "\\"))
-            or ":" in rel.split("/")[0]
+            or re.fullmatch(r"[A-Za-z]:", parts[0])
         ):
             violations.append(GateViolation("paths", f"path escapes workspace: {rel}"))
             continue

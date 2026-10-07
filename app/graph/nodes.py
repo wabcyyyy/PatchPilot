@@ -744,8 +744,10 @@ class TaskNodes:
                 state_label=f"BRANCH-{index}",
                 extra_system=VARIANT_HINTS.get(index, ""),
                 allowed_tools=WRITE_TOOLS,
-                # 候选各拿任务级余量的一半:两个候选合计不超一轮双倍开销
-                token_budget=reserve // 2 if reserve else reserve,
+                # 候选各拿任务级余量的一半:两个候选合计不超一轮双倍开销。
+                # max(…, 1):余量极小时 0 会被 plain_loop 当"不限制",
+                # 脚枪式语义(复盘 P2);至少给 1,让候选在首个 turn 边界即被预算拦下
+                token_budget=max(reserve // 2, 1) if reserve else reserve,
                 started_monotonic=self.started_monotonic,
                 time_budget_seconds=settings.task_timeout_seconds,
                 cancel_event=self.cancel_event,

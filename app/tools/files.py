@@ -21,7 +21,9 @@ def _iter_repo_files(workspace: Path, glob: str | None) -> list[str]:
         if not path.is_file():
             continue
         rel = path.relative_to(workspace).as_posix()
-        if any(part in SKIP_DIRS for part in path.parts):
+        # 只按仓库内相对段匹配(复盘 P2):path.parts 含 workspace 绝对路径段,
+        # workspace 落在 node_modules/.venv 等目录下时会全量误伤
+        if any(part in SKIP_DIRS for part in rel.split("/")):
             continue
         if glob and not fnmatch.fnmatch(rel, glob):
             continue
