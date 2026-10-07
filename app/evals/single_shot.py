@@ -31,9 +31,6 @@ from app.tools.registry import FINISH_TOOL
 # reset_workspace 一并去掉:没有执行反馈时"回滚重来"没有判据,留着只会掩盖消融点。
 ONE_SHOT_TOOLS = ["list_files", "search_code", "read_file", "git_diff", "apply_patch", FINISH_TOOL]
 
-# 补丁阶段只给一次成型的机会(读文件核对上下文 + 提交 + finish 的余量)
-_PROPOSE_TURNS = 6
-
 
 def _budget_for(spent: int) -> int | None:
     """本阶段可用的 token 余量(与 graph 的 N-11 口径一致:任务级共享一份预算)。
@@ -57,11 +54,12 @@ def one_shot_agent(
     time_budget_seconds: int = 0,
     cancel_event: threading.Event | None = None,
 ) -> LoopOutcome:
-    """定位 → 一次成型补丁;无执行反馈,无第二轮。
+    """定位 → 提交补丁;无执行反馈,无第二轮。
 
-    两个阶段各自开一个全新会话(与 graph 的 LOCALIZE/PROPOSE 同形),
-    补丁阶段能看到的东西只有 Bug 描述 + 定位阶段自己写下的结论——
-    它拿不到任何"测试跑出来是什么"的信息。
+    两个阶段各自开一个全新会话(与 graph 的 LOCALIZE/PROPOSE 同形),轮次上界与
+    真实臂的对应阶段取同一个值——臂与臂只能差"有没有测试反馈、有没有重试",
+    轮次差会把结论变成实验参数的函数。补丁阶段内仍可因协议/门禁拒绝而自纠多次,
+    但模型看到的东西只有 Bug 描述 + 定位阶段自己写下的结论,永远看不到测试结果。
     """
     localize = run_plain_loop(
         ctx,
@@ -88,7 +86,7 @@ def one_shot_agent(
             ctx,
             model,
             prompt,
-            max_turns=_PROPOSE_TURNS,
+            max_turns=max_turns,
             state_label="PROPOSE_ONE_SHOT",
             allowed_tools=ONE_SHOT_TOOLS,
             started_monotonic=started_monotonic,

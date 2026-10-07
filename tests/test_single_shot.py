@@ -147,7 +147,9 @@ def test_one_shot_agent_tool_sets_and_budget_wiring(monkeypatch: pytest.MonkeyPa
     assert calls[0]["max_turns"] == 9
     assert "run_tests" not in calls[1]["allowed_tools"]
     assert calls[1]["allowed_tools"] == ONE_SHOT_TOOLS
-    assert calls[1]["max_turns"] < calls[0]["max_turns"]
+    # 两阶段与真实臂各段的轮次上界必须相同:消融变量只有"无 run_tests + 无重试",
+    # 私自削短补丁段会把臂变成"残臂"(2026-10-07 的 0/7 空结果就是这么造出来的)
+    assert calls[1]["max_turns"] == calls[0]["max_turns"] == 9
     # 定位阶段的用量必须从补丁阶段的余量里扣掉
     assert get_settings().token_budget == 50000
     assert calls[1]["token_budget"] == 50000 - 1200
