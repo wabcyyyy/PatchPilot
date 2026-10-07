@@ -251,13 +251,12 @@ class TaskNodes:
             #   的结论当暂定 findings 进补丁阶段。实测难题档 4 次失败全是"只读调查花光额度、
             #   apply_patch 一次都没发生",终止等于必然 0 产出。
             # N-11 整改:两种情形都把循环已烧的 token/turns 记回任务级账本,不蒸发
-            spent = getattr(exc, "tokens_spent", 0)
+            spent = exc.tokens_spent
             usage = {
-                "turns": state.get("turns", 0) + getattr(exc, "turns", 0),
+                "turns": state.get("turns", 0) + exc.turns,
                 "tokens_used": state.get("tokens_used", 0) + spent,
-                "tokens_prompt": state.get("tokens_prompt", 0) + getattr(exc, "tokens_prompt", 0),
-                "tokens_completion": state.get("tokens_completion", 0)
-                + getattr(exc, "tokens_completion", 0),
+                "tokens_prompt": state.get("tokens_prompt", 0) + exc.tokens_prompt,
+                "tokens_completion": state.get("tokens_completion", 0) + exc.tokens_completion,
             }
             budget = get_settings().token_budget
             if budget > 0 and usage["tokens_used"] >= budget:
@@ -268,7 +267,7 @@ class TaskNodes:
                     "error": f"localize: {exc}",
                 }
 
-            provisional = self._provisional_findings(str(getattr(exc, "last_content", "") or ""))
+            provisional = self._provisional_findings(exc.last_content or "")
             self.tracker.record(
                 tool="localize_degraded",
                 state="LOCALIZE",
@@ -429,11 +428,10 @@ class TaskNodes:
                 "status": "BUDGET_EXCEEDED",
                 "outcome": "failed",
                 "error": f"propose: {exc}",
-                "turns": state.get("turns", 0) + getattr(exc, "turns", 0),
-                "tokens_used": state.get("tokens_used", 0) + getattr(exc, "tokens_spent", 0),
-                "tokens_prompt": state.get("tokens_prompt", 0) + getattr(exc, "tokens_prompt", 0),
-                "tokens_completion": state.get("tokens_completion", 0)
-                + getattr(exc, "tokens_completion", 0),
+                "turns": state.get("turns", 0) + exc.turns,
+                "tokens_used": state.get("tokens_used", 0) + exc.tokens_spent,
+                "tokens_prompt": state.get("tokens_prompt", 0) + exc.tokens_prompt,
+                "tokens_completion": state.get("tokens_completion", 0) + exc.tokens_completion,
             }
         except TaskCancelled:
             raise  # 交给 runner 收敛为 CANCELLED,不得吞成 NEEDS_REVIEW
@@ -511,8 +509,29 @@ class TaskNodes:
 
     # ---------- VERIFY ----------
 
+    def _deadline_overrun(self) -> str | None:
+        """任务级 deadline 复查(复盘 P1-6):verify 双跑最多 4 次 pytest,单次各有
+        test_timeout,但都不查任务级 task_timeout_seconds——不复查则可整体越界。
+        started_monotonic 未接线(直连 TaskNodes 的测试场景)不查,与 R2 同口径;
+        verify 无模型调用不耗 token,任务级 token 预算由 propose/apply 段守卫。"""
+        settings = get_settings()
+        if self.started_monotonic is None or settings.task_timeout_seconds <= 0:
+            return None
+        elapsed = time.monotonic() - self.started_monotonic
+        if elapsed > settings.task_timeout_seconds:
+            return (
+                f"verify: task exceeded time budget {settings.task_timeout_seconds}s"
+                f" (elapsed {elapsed:.0f}s)"
+            )
+        return None
+
     def verify(self, state: TaskState) -> dict[str, Any]:
         assert self.ctx is not None
+        # 复盘 P1-6:每次测试执行前复查任务级 deadline,超限以 BUDGET_EXCEEDED
+        # 终态收尾(与 localize/propose 段同语义),不得越过 task_timeout_seconds;
+        # 已拿到的部分结果随状态带回,供事后复盘
+        if (overrun := self._deadline_overrun()) is not None:
+            return {"status": "BUDGET_EXCEEDED", "outcome": "failed", "error": overrun}
         failed_report, _ = run_pytest(
             self.ctx.python_exe,
             self.workspace,
@@ -520,6 +539,13 @@ class TaskNodes:
             self.report_dir / "verify-failed.xml",
             env=self.ctx.env,
         )
+        if (overrun := self._deadline_overrun()) is not None:
+            return {
+                "status": "BUDGET_EXCEEDED",
+                "outcome": "failed",
+                "error": overrun,
+                "verify_failed_ok": failed_report.all_passed,
+            }
         regression_report, _ = run_pytest(
             self.ctx.python_exe,
             self.workspace,
@@ -560,6 +586,16 @@ class TaskNodes:
             and regression_report.all_passed
             and get_settings().verify_double_run
         ):
+            # 双跑前再查一次:这是 verify 段最贵的追加开销(2 次全量 pytest),
+            # 任务级 deadline 已到时不为复核越过 task_timeout_seconds
+            if (overrun := self._deadline_overrun()) is not None:
+                return {
+                    "status": "BUDGET_EXCEEDED",
+                    "outcome": "failed",
+                    "error": overrun,
+                    "verify_failed_ok": failed_report.all_passed,
+                    "verify_regression_ok": regression_report.all_passed,
+                }
             rerun_failed, _ = run_pytest(
                 self.ctx.python_exe,
                 self.workspace,
@@ -615,6 +651,9 @@ class TaskNodes:
 
     def route_verify(self, state: TaskState) -> str:
         if state["status"] == "NEEDS_REVIEW":
+            return "end"
+        if state["status"] == "BUDGET_EXCEEDED":
+            # 复盘 P1-6:verify 中途撞任务级 deadline → 终点(与 localize 的 end 同构)
             return "end"
         ok = state["verify_failed_ok"] and state["verify_regression_ok"]
         return "finish" if ok else "rollback"
@@ -719,12 +758,12 @@ class TaskNodes:
             outcome = LoopOutcome(
                 success=False,
                 summary=note,
-                turns=getattr(exc, "turns", 0),
-                tokens_used=getattr(exc, "tokens_spent", 0),
+                turns=exc.turns,
+                tokens_used=exc.tokens_spent,
                 patch_applied=False,
                 finish_declared=False,
-                tokens_prompt=getattr(exc, "tokens_prompt", 0),
-                tokens_completion=getattr(exc, "tokens_completion", 0),
+                tokens_prompt=exc.tokens_prompt,
+                tokens_completion=exc.tokens_completion,
             )
         except Exception as exc:  # 候选失败不拖垮主流程:按"未修好"计分
             note = f"{type(exc).__name__}: {exc}"

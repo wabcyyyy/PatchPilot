@@ -616,3 +616,77 @@ def test_repeat_gate_rejection_streak_prompts_new_direction(
     assert [c["streak"] for c in gate_feedback[:2]] == [1, 2]
     assert "连续 2 轮" in gate_feedback[1]["text"]
     assert result.verdict != "resolved"
+
+
+def test_verify_deadline_overrun_returns_budget_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """复盘 P1-6:任务级 deadline 已过时,verify 入口即以 BUDGET_EXCEEDED 终态收尾,
+    不再发起 pytest(双跑最多 4 次,不得越过 task_timeout_seconds)。"""
+    import time
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "app.graph.nodes.get_settings",
+        lambda: SimpleNamespace(task_timeout_seconds=900, verify_double_run=False),
+    )
+
+    def _no_pytest(*args: object, **kwargs: object) -> None:
+        raise AssertionError("deadline 已到,verify 不得再发起 pytest")
+
+    monkeypatch.setattr("app.graph.nodes.run_pytest", _no_pytest)
+
+    nodes = TaskNodes(
+        bug=SimpleNamespace(failed_tests=[], regression_tests=[]),
+        model=None,  # type: ignore[arg-type]
+        workspace=tmp_path,
+        tracker=Tracker(None, task_id="T-DL"),
+        report_dir=tmp_path,
+        max_rounds=3,
+        max_turns=5,
+        started_monotonic=time.monotonic() - 10_000,  # 早已超 900s
+    )
+    nodes.ctx = SimpleNamespace(python_exe="python", env=None)  # type: ignore[assignment]
+
+    update = nodes.verify({"round_no": 1})  # type: ignore[arg-type]
+    assert update["status"] == "BUDGET_EXCEEDED"
+    assert "time budget" in update["error"]
+    # 终态必须路由到终点,不得落进 finish/rollback 的标志位判断
+    assert nodes.route_verify({"status": "BUDGET_EXCEEDED"}) == "end"  # type: ignore[arg-type]
+
+
+def test_verify_deadline_hits_midway_keeps_partial_flags(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """复盘 P1-6:failed 集跑完、regression 之前撞 deadline——部分结果随终态带回。"""
+    from types import SimpleNamespace
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr("app.graph.nodes.time", SimpleNamespace(monotonic=lambda: clock["now"]))
+    monkeypatch.setattr(
+        "app.graph.nodes.get_settings",
+        lambda: SimpleNamespace(task_timeout_seconds=900, verify_double_run=False),
+    )
+    partial = SimpleNamespace(all_passed=True, failed_cases=[], failed=0, errors=0)
+
+    def _advance_after_first(*args: object, **kwargs: object) -> object:
+        clock["now"] = 1001.0  # 第一次 pytest 之后时间越过 deadline(100+900)
+        return (partial, None)
+
+    monkeypatch.setattr("app.graph.nodes.run_pytest", _advance_after_first)
+
+    nodes = TaskNodes(
+        bug=SimpleNamespace(failed_tests=[], regression_tests=[]),
+        model=None,  # type: ignore[arg-type]
+        workspace=tmp_path,
+        tracker=Tracker(None, task_id="T-DL2"),
+        report_dir=tmp_path,
+        max_rounds=3,
+        max_turns=5,
+        started_monotonic=100.0,  # deadline = 100 + 900 = 1000
+    )
+    nodes.ctx = SimpleNamespace(python_exe="python", env=None)  # type: ignore[assignment]
+
+    update = nodes.verify({"round_no": 1})  # type: ignore[arg-type]
+    assert update["status"] == "BUDGET_EXCEEDED"
+    assert update["verify_failed_ok"] is True
