@@ -83,3 +83,18 @@ export PATCHPILOT_DOCKER_IMAGE=patchpilot-executor:latest   # 默认 python:3.11
 - `tests/test_docker.py::test_run_pytest_docker_backend_end_to_end`:真实容器回归,
   守护进程不可用时自动 skip(与该文件既有约定一致);
 - 全量 pytest 套件在 backend 默认 local 下运行,不依赖 docker。
+
+## 报告目录权限与 uid 1000(复盘 2026-10-07 实测补记)
+
+`docker_runner.py` 对宿主报告目录 `chmod(0o755)`(R2 整改:0o777 → 0o755,
+junit 不可被无关用户改写),容器以 uid 1000 写 junit 回传。真机实证
+(`docker run alpine`,uid 1000 对 root 属主 0755 目录 `touch` →
+`Permission denied`,exit=1):
+
+- **Docker Desktop(本仓当前开发/评测形态)**:文件共享层不按宿主 uid 强校验,
+  实测批次(swe-real 等 5+25 题)junit 全部正常落盘——无问题;
+- **原生 Linux 宿主(潜在部署形态)**:若运行 API 的服务用户 uid ≠ 1000,
+  0755 下 other 无写权 → "docker_available 通过、每次执行必败"。
+  缓解选项(按侵入性排序):服务进程以 uid 1000 运行;部署前置
+  `chown 1000` runs 目录;或接受该边界、仅在有 Docker Desktop/同 uid 的环境
+  用 docker 后端。改回 0o777 已被 R2 以安全理由否决,不重开。
