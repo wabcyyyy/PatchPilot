@@ -690,3 +690,43 @@ def test_verify_deadline_hits_midway_keeps_partial_flags(
     update = nodes.verify({"round_no": 1})  # type: ignore[arg-type]
     assert update["status"] == "BUDGET_EXCEEDED"
     assert update["verify_failed_ok"] is True
+
+
+def test_checkpointer_init_failure_degrades_to_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """复盘 R-4:checkpoint.py 的两条降级路径(依赖缺失/初始化失败)必须返回 None
+    而不是抛出——任务照常执行,只是不可恢复。"""
+    import sys
+
+    from app.graph.checkpoint import make_sqlite_checkpointer
+
+    # 初始化失败:父路径是普通文件,mkdir 必然抛 OSError 系
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x", encoding="utf-8")
+    assert make_sqlite_checkpointer(blocker / "sub" / "cp.sqlite") is None
+
+    # 依赖缺失:import 命中 sys.modules 的 None 占位 → ImportError
+    monkeypatch.setitem(sys.modules, "langgraph.checkpoint.sqlite", None)
+    assert make_sqlite_checkpointer(tmp_path / "cp.sqlite") is None
+
+
+def test_graph_crash_still_writes_diff_patch_and_report(tmp_path: Path) -> None:
+    """复盘 R-4:runner 崩溃路径(NEEDS_REVIEW 收敛)的 finally 取证必须落盘——
+    diff.patch 与 report.json 缺失会让崩溃任务无从复盘。"""
+    bug = load_bug("BUG-001", BUG_ROOT)
+
+    class _BoomModel:
+        provider = "fake-replay"
+
+        def complete(self, *args: object, **kwargs: object) -> None:
+            raise RuntimeError("model exploded (实现缺陷模拟)")
+
+    result = run_task_graph(bug, _BoomModel(), runs_root=tmp_path / "runs")  # type: ignore[arg-type]
+    assert result.status == "NEEDS_REVIEW"
+    assert "model exploded" in (result.error or "")
+
+    run_dir = Path(result.run_dir)
+    assert (run_dir / "diff.patch").exists()
+    report = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "NEEDS_REVIEW" and report["verdict"] == "needs_review"

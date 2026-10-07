@@ -260,3 +260,55 @@ def test_run_tests_strips_inherited_secrets_from_env(tmp_path: Path) -> None:
         os.environ.update(original)
     assert "CLEAN" in result.stdout_tail and "LEAKED" not in result.stdout_tail
     assert "HASPATH" in result.stdout_tail
+
+
+def test_run_tests_timeout_fallback_closes_pipes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """复盘 R-4(N-15 兜底路径):逃逸的分离孙子进程持有管道写端时,
+    kill 后最后一次 communicate 仍超时 → 关管道回收,不永久挂死。"""
+    import io
+    import subprocess as real_subprocess
+
+    from app.executor import local_runner
+    from app.executor.local_runner import TestRunResult, run_tests
+
+    class _PipeHoggingProc:
+        """模拟:kill 杀不到的孙子进程仍持有 stdout 写端,communicate 永远超时。"""
+
+        def __init__(self) -> None:
+            self.pid = 4242
+            self.returncode = -9  # TestRunResult 组装时读取
+            self.stdout = io.BytesIO(b"partial")
+            self.stderr = io.BytesIO(b"")
+            self.killed = False
+
+        def communicate(self, input=None, timeout=None):  # type: ignore[no-untyped-def]
+            raise real_subprocess.TimeoutExpired("cmd", timeout)
+
+        def kill(self) -> None:
+            self.killed = True
+
+        def wait(self, timeout=None):  # type: ignore[no-untyped-def]
+            raise real_subprocess.TimeoutExpired("cmd", timeout)
+
+    fake = _PipeHoggingProc()
+    real_popen = real_subprocess.Popen
+    opened: list[object] = []
+
+    def fake_popen(command, *args, **kwargs):  # type: ignore[no-untyped-def]
+        # 被测目标:run_tests 的测试进程 → 假货;
+        # _kill_tree 在 Windows 上的 taskkill → 真 Popen(taskkill 找不到 pid,
+        # check=False 下静默失败,与真实"杀不到"语义一致)
+        if list(command)[0] == "taskkill":
+            return real_popen(command, *args, **kwargs)
+        opened.append(command)
+        return fake
+
+    monkeypatch.setattr(local_runner.subprocess, "Popen", fake_popen)
+
+    result = run_tests(["python", "x"], cwd=".", timeout_seconds=1)
+
+    assert isinstance(result, TestRunResult)
+    assert result.timed_out is True
+    assert fake.killed  # proc.kill 已尝试
+    assert fake.stdout.closed  # 管道已关闭回收
+    assert result.stdout_tail == ""  # 未永久挂死,按超时口径返回
