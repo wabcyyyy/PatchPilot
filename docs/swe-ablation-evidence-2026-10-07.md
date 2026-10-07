@@ -13,7 +13,7 @@
 | 入口 | `run_single --engine graph` | `run_single --engine plain --arm one_shot` |
 | 批次目录 | `runs/swe-real` | `runs/swe-oneshot-1` |
 | 定位阶段 | `LOCALIZE_PROMPT` + `READ_TOOLS`,max_turns 12 | **完全相同**(同一份提示与工具集) |
-| 补丁阶段 | `run_tests` 可用,VERIFY 失败可回滚重试(最多 5 轮) | **无 `run_tests`**,单发即终局(≤6 次工具调用) |
+| 补丁阶段 | `run_tests` 可用,VERIFY 失败可回滚重试(最多 5 轮) | **无 `run_tests`**,VERIFY 失败即终局 |
 | 基线 / 验证 / 门禁 / 判定 | `run_task` 与 `run_task_graph` 的既有路径 | **同一条代码路径**(靠 `run_task` 的 `agent` 执行体插槽复用) |
 
 刻意只消融两处,且判定不分叉:两臂之差才可以说成机制贡献,而不是口径差异。
@@ -123,6 +123,58 @@ matplotlib__matplotlib-24870        matplotlib/matplotlib     15 min - 1 hour   
   下一步该改的是机制或样本定义,而不是再多跑几轮;
 - 若真实臂比消融臂多 resolved ≥ 2 题 → 才算拿到"循环有净贡献"的证据,并同时报告 token 代价;
 - 任一臂出现"补丁触碰期望文件却没修好"或"修好但引入回归"都要单列,不许合并成一个百分比。
+
+## 难样本第一轮结果:消融臂 0/7,但这是臂的缺陷,不是能力结论
+
+第一档付费跑(`runs/swe-hard-oneshot`,7 题,约 777k tokens)全部未 resolved,`changed_files` 为空。
+逐题轨迹给出的原因是三类,没有一类说明"模型修不出":
+
+| 失败签名 | 题数 | 事实依据(`trajectory.jsonl` 按 state 数 `tool=="llm"` 事件) |
+| --- | --- | --- |
+| LOCALIZE 恰好打满 12 轮、从未调用 `finish` | 5 | 模型一直在 `search_code`/`read_file`,被轮次上界切断,根本没进补丁阶段 |
+| 过了定位,补丁段打满 6 轮 | 2 | 6 轮上界是**本臂私加的 handicap**(真实臂同阶段是 12 轮);astropy 一题试了 2 次 `apply_patch` 未落地 |
+| 端点 400 崩溃 | 1 | `reasoning_content ... must be passed back to the API`,见下 |
+
+两条由此暴露的缺陷,均已修(带零网络用例):
+
+1. **臂的形状不公平**:`_PROPOSE_TURNS = 6` 不在预登记的两个消融变量里。消融实验里任何未登记的
+   额外限制都会把结论变成实验参数的函数。已改为两阶段与真实臂同轮次上界
+   (`app/evals/single_shot.py`,不变量钉在 `tests/test_single_shot.py`)。
+2. **思考模式的思维链没有回传**:`app/llm/openai_client.py` 丢弃端点返回的 `reasoning_content`,
+   而 DeepSeek 类端点要求后续请求原样带回,缺了就 400。更糟的是 400 走崩溃分支
+   (`NEEDS_REVIEW`),该任务的 `turns/tokens` 记 0——**花了钱不入账**。
+   修复:`AssistantTurn.reasoning_content` 字段 + `run_plain_loop` 组装 assistant 消息时带上
+   (`tests/test_llm.py`、`tests/test_plain_loop.py` 各钉一例,含"非思考端点消息形态不变")。
+3. **`--max-turns 12` 在真实多文件题上是硬约束**:第一批 5 题定位只用 3–9 轮,这批 7 题里 5 题
+   直接打满 12 轮。也就是说这个参数本身在限制模型表现,不放宽它就无法测出能力上限。
+   第二档两臂统一放宽到 **24 轮/段、`token_budget` 400k、`task_timeout` 1800s**(三个值两臂完全
+   同口径,并由 `provenance.config_snapshot` 逐题记录);先跑 3 题真实臂试水,确认平台+模型在这档
+   难度上至少能修出一题,再补齐两臂。
+
+金补丁冒烟(零成本)另给出可用题集:预登记 10 → 可证 8 → **金补丁在平台里可修 7**
+(`scikit-learn-12682` 回放后 `diff is empty`,属夹具问题,排除;`astropy-13398` 容器基线不符;
+`matplotlib-24870` 未导入)。分母仍按 10 报告。
+
+## 顺带查出的块协议真实边界:有些上游金补丁在本协议下无法表示
+
+`scikit-learn-12682` 金补丁冒烟失败(`PATCH_REJECTED / [format] diff is empty`)追到的根因不是夹具写坏,
+而是块协议的锚定规则撞上了真实补丁:
+
+```text
+BlockPatchError: [context] ambiguous_anchor:
+  sklearn/decomposition/dict_learning.py 的上下文行在文件中出现 2 次
+```
+
+- 协议要求上下文行**全文件唯一**(卡 1 的设计:靠内容定位,不靠行号)。而这段上游补丁只带 3 行上下文,
+  在那个 1600 行文件里正好重复出现 → `git apply` 能靠行号应用,块协议不能。
+- **对模型不成问题**:拒因里带了"出现 2 次"和补救指令(补充更多上下文行),模型下一轮可以自己加宽上下文。
+- **对机械转换是硬限制**:把固定金补丁逐字转成块文本时,转换器无权编造额外上下文行。
+  所以这类题**不能进题目集**——`expected/reference.diff` 与回放语料都无法过 round-trip 不变量。
+
+处置:该题目录隔离到 `runs/swe-hard-2026-10-07/quarantine/SWE-scikit-learn__scikit-learn-12682/`
+(证据保留,不进 `bugs/`,`tests/test_blockpatch.py` 的语料口径一行未改,复跑 90 通过)。
+如果以后要接这类题,方向是给转换器加"自动向上下文两侧扩行直到唯一"的能力——
+那是 `app/gitops/blockpatch.py` 的语义变更,属禁区,需要先讨论。
 
 ## 复现
 
