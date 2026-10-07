@@ -39,6 +39,29 @@
   (16-19 轮、417,894 tok 撞 400k 份额顶,`apply_patch` 0 次);降级续跑后 PROPOSE 仍
   13 次 search / 10 次 read 且 `apply_patch` 两次均 0 次 ⇒ 上下文只增不减 + 无骨架先验 = 烧穿预算。
   这条是 M1/M2 排最前的唯一依据,不是凭感觉。
+- D.12 **检索/列举的可见范围被 500 条上限截断(2026-10-07 复核 M3 时实测发现,已量化)**:
+  `app/tools/files.py:_iter_repo_files` 走 `rglob("*")` 排序后 `len(out) >= MAX_LIST_FILES(500)` 就
+  break,而 `search_code` 与 `find_symbol` 都以这份清单为遍历域——也就是说**仓库按路径排序后
+  第 500 个之后的文件,模型搜不到、列不出、符号也查不到**。这个上限本是为 `list_files` 的
+  *输出体量*设的,却顺带裁掉了 *搜索的遍历域*(搜索结果另有 `max_search_results=50` 控制)。
+  用平台自己的口径在 9 个已缓存的真实题面仓库上量了一遍(金补丁改动文件在清单里的下标):
+
+  | instance | 仓库文件数 | 金补丁文件位置 | 可见性 |
+  |---|---|---|---|
+  | sphinx-doc__sphinx-7590 | 1472 | c.py=204, cpp.py=207, **util/cfamily.py=631** | 部分不可见 |
+  | sphinx-doc__sphinx-9461 | 1472 | python.py=211, autodoc/__init__.py=230, **util/inspect.py=640** | 部分不可见 |
+  | scikit-learn__scikit-learn-12682 | 1416 | **plot_sparse_coding.py=502, dict_learning.py=903** | 全部不可见 |
+  | astropy__astropy-13398 | 1924 | 三处在 90/111/112,另一处不在 base 树内 | 部分不可见 |
+  | sphinx-doc__sphinx-7748 / 8593 / 8548 | 1472 | 230/233/211 等 | 可见 |
+  | astropy__astropy-8707 | 1924 | 409, 427 | 可见 |
+  | pydata__xarray-3095 | 233 | 155, 170 | 可见(小仓库) |
+
+  **9 题里 4 题的必改文件根本落在搜索可见范围之外**,而且 sphinx-7590 正是两道死在 LOCALIZE
+  (16-19 轮、0 次 apply_patch)的题之一:模型反复 search 拿不到证据,与"目标文件不可见"直接吻合。
+  同一条上限也套在 M2 骨架上(`repo_map_max_files=200`,再叠 `repo_map_max_chars=4000`
+  ≈ 130 行),所以大仓库的骨架实际只渲染出"字母序最前的一小片",对 sphinx/astropy 这类
+  仓库等于给了半张地图。⇒ 拆出 M3.6(遍历域与输出体量两个概念必须分开)与 M2.5
+  (骨架在大仓库要出目录级结构而不是字母序文件清单)。
 
 ## 0. 开工基线
 
@@ -149,4 +172,50 @@
   实际它们会**整段丢弃历史**、改变轨迹形状,已改判 `SNAPSHOT_KEYS`(与 `localize_budget_share`
   同类);② 它实现了一个无人调用的 `hard_cap_tokens` 参数,已删除——本项目对死键的既有口径是
   删(`round_timeout_seconds`、`run_tests_by_backend` 都是先例)。
+
+## M3 ACI 检索升级(2026-10-07)
+
+- 新增 `app/context/ast_outline.py`(130 行):把 M2 骨架用的 AST 助手抽成单一口径
+  (`parse_source` / `symbol_entries` / `SYMBOL_KINDS`),`repo_map` 与 `describe_file`/`find_symbol`
+  共用——**同一个文件在骨架里看到的符号集合,必须与 describe_file 给出的完全一致**,否则两份
+  互相矛盾的地图比没有地图更坏。`repo_map` 的渲染形状逐字未变(它的 12 例用例一行未动)。
+- 新增 `app/tools/search.py`(326 行):`search_code` 的取数引擎。**rg 在这里不是第二种语义,
+  只是文件级预筛**——这是子代理做差分探针探出来的结论,我复核后认同并保留:rg 剥 BOM、只按
+  `\n` 断行,而 Python 的 `splitlines()` 还按 `\r`/`\x0b`/`\x0c`/`\x1c`-`\x1e`/`\x85`/`\u2028`/
+  `\u2029` 断行(`\x0c` 分页符在真实 Python 源码里很常见),行号错一位补丁就贴错位置。
+  所以行级文本/行号/上下文/裁剪**只有 Python 一条实现**,rg 用 `--files-with-matches` 只回答
+  "哪些文件可能含有这个关键词";显式传文件参数(而非目录遍历)既保证遍历域与 `_iter_repo_files`
+  完全一致,又避免 rg 走穿 `runs/`、`.pytest-tmp*` 等产物目录(实测一次目录遍历就撞 20s 超时)。
+  四条回落:rg 缺席 / 任一批失败或超时 / `regex=True`(Rust 方言 ≠ Python `re`,不给第二套答案)
+  / 范围内含符号链接。还有一条方向性护栏:rg 预筛报的文件被 Python 扫出一行都没命中 →
+  **整仓复扫**,宁可慢也不少给模型证据。
+- `_cap_matches` 复刻了旧实现一个反直觉口径:命中数**刚好**等于上限时 `truncated` 取决于
+  "最后一个命中文件之后还有没有文件",而不是"是否存在第 N+1 条匹配"——等价性用例把这条钉住,
+  否则换引擎会静默改变 `truncated` 位。
+- 新增 `app/tools/symbols.py`(119 行):`find_symbol(name, kind?)` 定义跳转(精确同名优先,
+  无精确命中才给前缀匹配——否则搜 `parse_date` 会被 `parse_datetime` 淹掉;按路径排序、
+  `max_symbol_results` 裁顶)+ `describe_file(path)` 单文件大纲(顶层类/函数 + 类内方法、
+  真实行区间、签名;解析失败是**可用结果**,带 `parse_error` 而不是报错)。
+  边界与 `read_file` 同口径:`relpath_within` 拒越界、`looks_like_text` 拒二进制、
+  符号链接条目直接跳过(解析一次指向仓库外的软链就等于把外部文件的大纲引进来)。
+- `app/tools/files.py`:`read_file` 增 `limit`,与 `ctx.max_read_lines` **取小**——天花板由 Settings
+  定,模型传更大的数只会拿到更少;不传 limit 时逐字同旧行为。`search_code` 增
+  `context_lines`(夹扣到 `max_search_context_lines=5`,不报错,免得模型为多要 5 行而整查询失败)、
+  `per_file_cap`、`regex`(非法模式 → 失败文案点名该模式,模型能自纠)。
+- 两臂对照同步:`app/evals/single_shot.py` 的 `ONE_SHOT_TOOLS` 一并加上两个新工具。
+  消融变量是"有无测试反馈/有无重试",不是"有无检索工具"——少一边给一边就把对照臂做成残臂
+  ([[ablation-experiment-parity]])。
+- 新 Settings 三键 `search_engine`/`max_search_context_lines`/`max_symbol_results` 全部进
+  provenance `SNAPSHOT_KEYS`(它们决定模型每轮检索看到什么内容),`tests/test_driver.py`
+  的字面键集合同步扩列。
+- 复核时发现的**新缺陷**已量化并拆卡:见 D.12(500 条清单上限把搜索遍历域也裁掉了,
+  9 题里 4 题的必改文件落在可见范围外)→ M3.6 / M2.5。
+- 两处不如规矩的地方,如实记:① 子代理生成了 826 行的 `tests/test_search_tools.py`,
+  超 AGENTS.md「单次生成不超过 300 行」的上限(代码文件本身没超),覆盖是好的,
+  体积是违规——不重写以免掉覆盖,但记在这里;② 该卡在 150 个子代理回合上被打断,
+  中断点是 rg 预筛的重构,我复核时它已落到"显式文件参数"这条正确路线上,故直接续验未回滚。
+- 证据(本条 commit 前跑):`ruff check .` 全过;定向 `148 passed, 1 skipped`
+  (skip 是 Windows 无创建符号链接权限,符号链接拒绝用例在 Linux/CI 才真跑);
+  全量见 commit 前的 `pytest -q` 汇总行。
+
 

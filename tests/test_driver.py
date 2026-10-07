@@ -172,6 +172,10 @@ def test_provenance_carries_new_traceability_fields() -> None:
         "repo_map_enabled",
         "repo_map_max_chars",
         "repo_map_max_files",
+        # M3 检索引擎与结构化检索:三键都改变模型每轮看到的检索内容,故进快照
+        "search_engine",
+        "max_search_context_lines",
+        "max_symbol_results",
     } == set(SNAPSHOT_KEYS)
     started = datetime.fromisoformat(prov["started_at"])
     assert started.tzinfo is not None

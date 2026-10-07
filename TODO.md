@@ -50,12 +50,23 @@
 
 ### M3 工具链与 ACI 升级
 
-- [ ] M3.1 `search_code` 重写:可用 ripgrep 则走外部二进制(带超时与二进制缺失回退),否则纯 Python 加速路径;
-      增加上下文行、单文件上限、确定性排序(文件名/深度加权)、`regex` 开关;总结果仍受 `max_search_results`。
-- [ ] M3.2 新工具 `find_symbol(name, kind?)`:AST 定义跳转,返回 `file:line:kind:signature`,上限保护。
-- [ ] M3.3 新工具 `describe_file(path)`:单文件 AST 大纲(符号 + 行区间),让模型按区间精读而非整文件灌。
-- [ ] M3.4 `read_file` 增加 `limit`(与 offset 组合成精确窗口);越界与二进制拒绝口径不变。
-- [ ] M3.5 注册 schema + 阶段白名单(LOCALIZE/PROPOSE 可用;APPLY 侧不改);每工具用例 + 轨迹留痕。
+- [x] M3.1 `search_code` 重写:可用 ripgrep 则走外部二进制(带超时与二进制缺失回退),否则纯 Python 路径;
+      增加上下文行、单文件上限、`regex` 开关;总结果仍受 `max_search_results`。
+      **实现口径比原计划更严**:rg 只做"文件级预筛"(`--files-with-matches` + 显式文件参数),
+      行号/文本/裁剪只有 Python 一条实现——差分探针证明 rg 的断行与 BOM 处理会让行号错一位。
+- [x] M3.2 新工具 `find_symbol(name, kind?)`:AST 定义跳转,返回 `file:line:kind:signature`,上限保护。
+- [x] M3.3 新工具 `describe_file(path)`:单文件 AST 大纲(符号 + 行区间),让模型按区间精读而非整文件灌。
+- [x] M3.4 `read_file` 增加 `limit`(与 offset 组合成精确窗口,且被 `max_read_lines` 夹扣);越界与二进制拒绝口径不变。
+- [x] M3.5 注册 schema + 阶段白名单(LOCALIZE/PROPOSE 可用),**消融臂 `ONE_SHOT_TOOLS` 同步**
+      (两臂只差登记变量);每工具用例 + 轨迹留痕;等价性用例钉住 rg/Python 两路同输出。
+- [ ] M3.6 **检索遍历域与输出体量解耦**(新发现,证据见 PROGRESS.md D.12):`_iter_repo_files` 的
+      `MAX_LIST_FILES=500` 同时裁掉了 `search_code`/`find_symbol` 的遍历域,实测 9 题里 4 题的
+      金补丁文件排在第 500 个之后(sphinx-7590 的 `sphinx/util/cfamily.py`=631、
+      scikit-learn-12682 的两处=502/903),即**必改文件对模型不可见**。
+      改法:`list_files` 保留 500 条**输出**上限(带 truncated),`search_code`/`find_symbol`
+      改走独立的高上限(新 Settings 键,默认覆盖整仓);存量等价性用例与两臂口径不得因此改变。
+- [ ] M2.5 骨架在大仓库要出**目录级结构**(目录 + 文件数 + 深度上限)而不是"字母序前 200 个文件":
+      现口径下 sphinx/astropy 仓库拿到的是一张只画了角落的地图。
 
 ### M4 反思机制升级(廉价且高价值)
 

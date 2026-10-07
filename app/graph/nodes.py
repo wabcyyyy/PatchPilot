@@ -37,10 +37,20 @@ from app.tools.tracker import Tracker
 
 log = logging.getLogger(__name__)
 
-READ_TOOLS = ["list_files", "search_code", "read_file", "git_diff", FINISH_TOOL]
+READ_TOOLS = [
+    "list_files",
+    "search_code",
+    "find_symbol",
+    "describe_file",
+    "read_file",
+    "git_diff",
+    FINISH_TOOL,
+]
 WRITE_TOOLS = [
     "list_files",
     "search_code",
+    "find_symbol",
+    "describe_file",
     "read_file",
     "git_diff",
     "apply_patch",

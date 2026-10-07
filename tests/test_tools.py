@@ -105,6 +105,50 @@ def test_search_code_matches_and_requires_keyword(task_ctx: ToolContext) -> None
     assert not search_code(task_ctx, "  ").ok
 
 
+def test_search_code_new_params_dispatch_from_registry(task_ctx: ToolContext) -> None:
+    """M3 的新参数从 registry 一路到引擎:形状如实,引擎归属如实标注。"""
+    via = execute(task_ctx, "search_code", {"keyword": "parse_date", "context_lines": 1})
+    assert via.ok, via.error
+    assert via.output["engine"] in ("rg", "python")
+    assert all(set(m) == {"path", "line", "text", "before", "after"} for m in via.output["matches"])
+    # 默认口径的键集合不变(存量轨迹与两臂对照都按这个形状解析)
+    plain = execute(task_ctx, "search_code", {"keyword": "parse_date"})
+    assert all(set(m) == {"path", "line", "text"} for m in plain.output["matches"])
+
+    spread = execute(task_ctx, "search_code", {"keyword": "def", "per_file_cap": 1})
+    assert (
+        spread.ok and len({m["path"] for m in spread.output["matches"]}) == spread.output["total"]
+    )
+
+    bad = execute(task_ctx, "search_code", {"keyword": "(", "regex": True})
+    assert not bad.ok and "(" in (bad.error or "")
+
+
+def test_symbol_tools_dispatch_from_registry(task_ctx: ToolContext) -> None:
+    """find_symbol/describe_file 走同一道边界:registry 是唯一入口,越界照旧拒。"""
+    found = execute(task_ctx, "find_symbol", {"name": "parse_date"})
+    assert found.ok, found.error
+    assert [m["path"] for m in found.output["matches"]] == ["src/dateparse.py"]
+    assert found.output["matches"][0]["line"] == 16
+
+    outlined = execute(task_ctx, "describe_file", {"path": "src/dateparse.py"})
+    assert outlined.ok and outlined.output["total_lines"] > 0
+    assert {m["name"] for m in outlined.output["symbols"]} >= {"parse_date"}
+
+    assert not execute(task_ctx, "describe_file", {"path": "../outside.py"}).ok
+    missing_name = execute(task_ctx, "find_symbol", {})
+    assert not missing_name.ok and "bad arguments" in (missing_name.error or "")  # 缺 name
+
+
+def test_read_file_limit_is_bounded_by_the_settings_ceiling(task_ctx: ToolContext) -> None:
+    """limit 只会更小,不会更大:模型举不起 max_read_lines 这块天花板。"""
+    task_ctx.max_read_lines = 5
+    small = read_file(task_ctx, "src/dateparse.py", 1, 2)
+    assert small.ok and small.output["returned_lines"] == 2
+    assert read_file(task_ctx, "src/dateparse.py", 1, 500).output["returned_lines"] == 5
+    assert not read_file(task_ctx, "src/dateparse.py", 1, -1).ok
+
+
 # ---------- 变更工具 ----------
 
 

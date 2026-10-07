@@ -16,6 +16,7 @@ import ast
 import logging
 from pathlib import Path
 
+from app.context.ast_outline import render_symbols
 from app.tools.files import SKIP_DIRS
 from app.tools.paths import looks_like_text
 
@@ -28,7 +29,6 @@ _HEADER = (
 )
 _EMPTY = "Repository is empty."
 _NOTE = "… skeleton truncated: {count} files omitted"
-_NESTED_CLASS_DEPTH = 1  # 顶层类内再嵌一层类为限;函数体内的局部函数一律不出
 
 
 def _scoped_files(workspace: Path, max_files: int) -> tuple[list[str], int]:
@@ -51,64 +51,19 @@ def _scoped_files(workspace: Path, max_files: int) -> tuple[list[str], int]:
     return rels[:max_files], len(rels) - max_files
 
 
-def _line_range(node: ast.AST) -> str:
-    end = getattr(node, "end_lineno", None) or node.lineno
-    return f"L{node.lineno}-L{end}"
-
-
-def _decorator_prefix(node: ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef) -> str:
-    return "".join(f"@{ast.unparse(dec)} " for dec in node.decorator_list)
-
-
-def _params(args: ast.arguments) -> str:
-    """ast.arguments → 紧凑签名:posonly `/`、默认值、*args、bare `*`、kwonly、**kwargs。"""
-    positional = [a.arg for a in args.posonlyargs] + [a.arg for a in args.args]
-    first_default = len(positional) - len(args.defaults)
-    parts: list[str] = []
-    for index, name in enumerate(positional):
-        slot = index - first_default
-        parts.append(name if slot < 0 else f"{name}={ast.unparse(args.defaults[slot])}")
-    if args.posonlyargs:
-        parts.insert(len(args.posonlyargs), "/")
-    if args.vararg:
-        parts.append(f"*{args.vararg.arg}")
-    elif args.kwonlyargs:
-        parts.append("*")  # 无 *args 时的裸 * 决定 kwonly 边界,不能省
-    for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=True):
-        parts.append(arg.arg if default is None else f"{arg.arg}={ast.unparse(default)}")
-    if args.kwarg:
-        parts.append(f"**{args.kwarg.arg}")
-    return ", ".join(parts)
-
-
-def _signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
-    keyword = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
-    returns = "" if node.returns is None else f" -> {ast.unparse(node.returns)}"
-    return f"{_decorator_prefix(node)}{keyword} {node.name}({_params(node.args)}){returns}"
-
-
-def _symbols(body: list[ast.stmt], indent: int, depth: int) -> list[str]:
-    """模块级与类内符号。类嵌套最多一层;函数体整体不进(局部函数不是仓库结构)。"""
-    out: list[str] = []
-    for child in body:
-        if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
-            out.append(f"{' ' * indent}{_signature(child)} ({_line_range(child)})")
-        elif isinstance(child, ast.ClassDef) and depth <= _NESTED_CLASS_DEPTH:
-            header = f"{_decorator_prefix(child)}class {child.name} ({_line_range(child)})"
-            out.append(f"{' ' * indent}{header}")
-            out.extend(_symbols(child.body, indent + 2, depth + 1))
-    return out
-
-
 def _outline_block(workspace: Path, rel: str) -> list[str]:
-    """一个 .py 的大纲块:`rel [lines N]` + 缩进条目;不合格或解析失败 → 空列表。"""
+    """一个 .py 的大纲块:`rel [lines N]` + 缩进条目;不合格或解析失败 → 空列表。
+
+    符号渲染助手(`render_symbols` 及其签名/行区间实现)住在 `app/context/ast_outline.py`:
+    M3 起 describe_file / find_symbol 用同一套口径,骨架的形状与迁移前逐字一致。
+    """
     path = workspace / rel
     if not rel.endswith(".py") or path.is_symlink() or not looks_like_text(path):
         return []  # 非 Python / 符号链接(目标可能在 workspace 外) / 二进制:只进树
     try:
         text = path.read_text(encoding="utf-8")  # 非 UTF-8 抛错,同样只进树
         tree = ast.parse(text, filename=rel)
-        entries = _symbols(tree.body, 0, 0)
+        entries = render_symbols(tree.body, 0, 0)
     except Exception:
         # 一个坏文件不得带走整份骨架:SyntaxError(半截文件)、RecursionError(超深嵌套)、
         # ValueError/OSError(渲染与读盘异常)都只让该文件降级为"只进树"。

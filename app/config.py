@@ -153,6 +153,40 @@ class Settings(BaseSettings):
             raise ValueError(f"repo_map_max_files must be >= 1, got {value}")
         return value
 
+    # 检索引擎与结构化检索(M3 ACI 升级)。缺陷出处(PROGRESS.md D.6):检索是 Python 子串扫描
+    # (app/tools/files.py 旧 :74-103),无上下文行、无单文件上限、无排序,全仓零 AST 能力;
+    # 骨架给了地图却没有查地图的工具,付费实跑因此把 LOCALIZE 的 16-19 轮全花在 read/search 上
+    # (runs/swe-hard-graph*:417,894 tokens、apply_patch 0 次)。
+    # 三条路径的输出形状与顺序由 tests/test_search_tools.py 的等价性用例钉住,rg 缺席/失败/超时
+    # 一律回落 Python(见 app/tools/search.py),故 rg 只是加速,不是第二种语义。
+    search_engine: str = "auto"  # auto=有 rg 就用 rg | python=只用内置扫描 | rg=优先 rg(缺席仍回落)
+    # 模型可见上下文的最大长度,不是性能参数:context_lines 传 10000 时必须被夹扣而不是照给
+    # (夹扣不报错——模型不会因为只拿到 5 行就崩,拿到 5000 行才会把整个额度吃掉)
+    max_search_context_lines: int = 5
+    # find_symbol 的返回条数上限:同名符号在前端仓库能出上百条,不裁就是一次上下文尖峰
+    max_symbol_results: int = 30
+
+    @field_validator("search_engine")
+    @classmethod
+    def _check_search_engine(cls, value: str) -> str:
+        if value not in {"auto", "python", "rg"}:
+            raise ValueError(f"search_engine must be 'auto', 'python' or 'rg', got {value!r}")
+        return value
+
+    @field_validator("max_search_context_lines")
+    @classmethod
+    def _check_max_search_context_lines(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"max_search_context_lines must be >= 0, got {value}")
+        return value
+
+    @field_validator("max_symbol_results")
+    @classmethod
+    def _check_max_symbol_results(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError(f"max_symbol_results must be >= 1, got {value}")
+        return value
+
 
 @lru_cache
 def get_settings() -> Settings:
