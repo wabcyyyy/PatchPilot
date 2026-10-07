@@ -232,8 +232,8 @@ L0—L2 支撑阶段二开工,L3 与项目阶段一同步进行,L4 对应阶段�
 
 **动手练习**
 
-1. 设计 `task / trajectory_event / patch / test_run / evaluation` 五张表,写出建表 SQL,插入真实数据并练习查询;
-2. 用 Redis 实现"同一仓库 + commit 的重复任务直接返回已有任务";
+1. 设计 `tasks / trajectory_events / patches` 三张表(实际 schema;test_runs、evaluations 两表经审计裁撤),写出建表 SQL,插入真实数据并练习查询;
+2. 用 Redis 实现"同一 bug + 引擎 + 模型的重复任务直接返回已有任务"(实际幂等键口径);
 3. 写一条 CI:push 时跑 pytest + ruff,评测脚本产出报告 artifact。
 
 **自查标准**

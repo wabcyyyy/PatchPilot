@@ -241,9 +241,9 @@
 ### M7 服务化:API + SQLite(第 6—7 周,3—4 天)—— AI 写,自己审
 
 - [ ] **T7.1 建表与仓储** `app/storage/`
-  功能:企划书第 6 节五张表 + Repository 层;trajectory 从 JSONL 改为入库(文件副本保留)。
+  功能:企划书第 6 节三张表(tasks / trajectory_events / patches;原设计的 test_runs、evaluations 已裁撤,理由见 db.py 模块注释)+ Repository 层;trajectory 从 JSONL 改为入库(文件副本保留)。
   AI:AI 写 + 自己审 schema(索引、事务边界)
-  验收:五张表 CRUD 单测;`trajectory_events` 插入 1 万条的查询走索引(EXPLAIN 验证)
+  验收:三张表 CRUD 单测;`trajectory_events` 插入 1 万条的查询走索引(EXPLAIN 验证)
 - [ ] **T7.2 API 端点** `app/api/`
   功能:企划书第 7 节六个端点 + Pydantic schema + 统一错误结构。
   AI:AI

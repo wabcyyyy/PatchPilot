@@ -189,8 +189,11 @@ PatchPilot:面向研发流程的开发者 Agent,重点是仓库理解、命令�
 | tasks | id, repo_path, commit, issue_text, max_rounds, budget, status, created_at, finished_at | 任务主表 |
 | trajectory_events | id, task_id, round, state, tool, request_id, input, output_summary, duration_ms, error, timestamp | 按第 5 节格式追加 |
 | patches | id, task_id, round, diff_text, changed_files, gate_result, applied | 每轮补丁与门禁结论 |
-| test_runs | id, task_id, round, kind(baseline/regression/verify), passed, failed, report_path, exit_code, duration_ms | 每次测试执行 |
-| evaluations | id, task_id, bug_id, localized, patch_applied, final_resolved, regression_introduced, security_blocked, rounds, tokens, duration_ms | 评测汇总,一行一任务 |
+
+原设计的 `test_runs` 与 `evaluations` 两表已裁撤:前者零生产读方(每次 pytest
+完整结果落在 run_dir/reports/*.xml,库里只会是空表),后者与 tasks/report.json
+三处分裂(读口径:tasks=服务生命周期真相,report.json=引擎判定取证)。
+沿革与理由见 `app/storage/db.py` 模块注释(P1-5/P3-8 整改)。
 
 SQLite 起步,按仓储层(Repository)封装访问,预留 PostgreSQL 迁移空间。
 
