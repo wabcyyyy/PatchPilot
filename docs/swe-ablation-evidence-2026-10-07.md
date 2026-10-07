@@ -79,6 +79,51 @@
 3. 判定规则的边界(第 4 条)若要强化,方向是"与 gold 补丁做结构对比并报告偏差",
    但这属于新的判定语义,须先讨论再动 `app/evals/metrics.py`(禁区)。
 
+## 下一步的预登记(在导入与跑批之前写死,git 时间戳即证据)
+
+本节的题单与判据先于任何运行结果提交。跑批后不得增删题目、不得改判据。
+
+**题源**:SWE-bench Verified 全 500 题元数据(HF datasets-server,`princeton-nlp/SWE-bench_Verified`,
+本地缓存 `runs/swe-hard-2026-10-07/verified_rows.json`)。
+
+**入选规则(静态、与模型无关)**:
+
+- R1 `difficulty` ≠ `<15 min fix`;
+- R2 补丁增删行数 > 50 **或** 触碰文件数 ≥ 2;
+- R3 触碰文件数 ≤ 5(超出 `max_patch_files` 属门禁按设计拦截,不是能力差异);
+- R4 `1 ≤ |PASS_TO_PASS| ≤ 300` 且 `1 ≤ |FAIL_TO_PASS| ≤ 30`(必须有绿灯探针;单次 pytest 预算跑得完。
+  导入器仍按 `--max-p2p 50` 保留上限,与第一批 5 题同口径);
+- R5 F2P ∪ P2P 每一条都过平台测试 id 白名单且路径锚定(含 `::`)——即复用 `app/evals/bugset.py`
+  的那一套护栏作为**选择**条件,而不是事后发现被拒。
+
+排序键 `(-补丁行数, instance_id)`,取前 10:
+
+```text
+astropy__astropy-13398              astropy/astropy           1-4 hours        215 行 / 4 文件
+sphinx-doc__sphinx-7590             sphinx-doc/sphinx         >4 hours         107 行 / 3 文件
+scikit-learn__scikit-learn-12682    scikit-learn/scikit-learn 15 min - 1 hour   90 行 / 2 文件
+sphinx-doc__sphinx-7748             sphinx-doc/sphinx         15 min - 1 hour   90 行 / 1 文件
+astropy__astropy-8707               astropy/astropy           15 min - 1 hour   75 行 / 2 文件
+sphinx-doc__sphinx-8593             sphinx-doc/sphinx         15 min - 1 hour   60 行 / 2 文件
+sphinx-doc__sphinx-9461             sphinx-doc/sphinx         1-4 hours         52 行 / 3 文件
+sphinx-doc__sphinx-8548             sphinx-doc/sphinx         1-4 hours         50 行 / 2 文件
+pydata__xarray-3095                 pydata/xarray             15 min - 1 hour   49 行 / 2 文件
+matplotlib__matplotlib-24870        matplotlib/matplotlib     15 min - 1 hour   33 行 / 2 文件
+```
+
+500 题的静态账目:R1 排除 194、R2 排除 234、R3 排除 2、R4 排除 13、R5 排除 40,合格 17(取前 10)。
+对照组形状:第一批 5 题补丁 14–20 行、全部单文件、100% `<15 min fix`;本批 33–215 行、9/10 多文件、0 题属最易档。
+
+**协议**:两臂(`graph` 真实臂 / `plain + --arm one_shot` 消融臂)在同一批题上各跑;
+环境不可证的题**留在分母里并报拒绝原因**,不许悄悄剔除。
+
+**预先写死的判据**:
+
+- 若消融臂与真实臂的 resolved 数相差 ≤ 1 → 结论仍是"循环在本项目证据集内无净增贡献",
+  下一步该改的是机制或样本定义,而不是再多跑几轮;
+- 若真实臂比消融臂多 resolved ≥ 2 题 → 才算拿到"循环有净贡献"的证据,并同时报告 token 代价;
+- 任一臂出现"补丁触碰期望文件却没修好"或"修好但引入回归"都要单列,不许合并成一个百分比。
+
 ## 复现
 
 ```text
