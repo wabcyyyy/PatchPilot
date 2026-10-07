@@ -39,11 +39,14 @@
 
 ### M2 持久记忆:仓库骨架注入
 
-- [ ] M2.1 `app/context/repo_map.py`:stdlib `ast` 出 Python 符号大纲(class/function/async/装饰器 + 行区间 + 签名),
+- [x] M2.1 `app/context/repo_map.py`:stdlib `ast` 出 Python 符号大纲(class/function/async/装饰器 + 行区间 + 签名),
       加截断后的文件树;渲染成 `<repo_skeleton>` 文本块,受 `repo_map_max_chars` 约束。
-- [ ] M2.2 工作区边界复用现有校验(只读、不得越出 workspace、拒绝符号链接逃逸);非 Python 只列不解析。
-- [ ] M2.3 注入 LOCALIZE 与 PROPOSE 的持久记忆区(与 system 同层,不参与压缩)。
-- [ ] M2.4 用例:大纲正确性(嵌套类/方法/async/decorator/条件定义)、截断口径、越界路径拒绝、空仓库。
+- [x] M2.2 工作区边界复用现有校验(`SKIP_DIRS` 直接 import 自 `app.tools.files`、符号链接与非 UTF8 只进树不解析);
+      单文件解析失败只降级该文件,外壳异常降级为"无骨架"。
+- [x] M2.3 注入 LOCALIZE 与 PROPOSE 的持久记忆区(追加到 `extra_system`,与 system 同层,不参与压缩);
+      **默认开启**(`repo_map_enabled=True`),关闭时系统提示逐字不变。
+- [x] M2.4 用例 13 例:大纲行号正确性、嵌套一层、局部函数不出、签名重建、坏文件降级、
+      非 Python/二进制只进树、`SKIP_DIRS`、截断可见且无半截行、空仓库、外壳异常降级、开关两态形状。
 
 ### M3 工具链与 ACI 升级
 
@@ -81,6 +84,9 @@
 ### M7 证据、文档与收口
 
 - [ ] M7.1 零成本对照回放:M1(压缩开/关)、M2(骨架开/关)、M5(plan 开/关)各自的 avg_tokens/turns 差异报告。
+      测量工具已就位:`scripts/compare_batches.py <基线批> <对照批> [--tools]`
+      (判定字段逐题不等即退出码 1;成本字段只报差异;`--tools` 出逐阶段工具调用直方图与
+      `context_compact` 事件数)。基线批 = `runs/graph35-v2`(35 题,合计 turns 249 / tokens 6917)。
 - [ ] M7.2 ADR:上下文分层与压缩策略、检索工具从子串到 AST/ripgrep、续跑语义与"闸必须重跑"。
 - [ ] M7.3 `docs/design.md` 与 README 对齐实际实现;PROGRESS.md 记录每个 commit 的机器证据。
 - [ ] M7.4 全量 `ruff check . && ruff format --check . && pytest -q` 收绿 + graph 35 题回放对基线零回归。

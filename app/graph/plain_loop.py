@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass
 
 from app.config import get_settings
+from app.context.token_window import compact_messages
 from app.errors import BudgetError, TaskCancelled
 from app.gitops.differ import working_tree_diff
 from app.llm.base import AssistantTurn, Model, messages_tokens
@@ -116,6 +117,45 @@ def _assistant_payload(response: AssistantTurn) -> dict[str, object]:
     return payload
 
 
+def _compact_working_memory(
+    ctx: ToolContext,
+    messages: list[dict[str, object]],
+    *,
+    threshold: int,
+    keep_recent_turns: int,
+    round_no: int,
+    state_label: str,
+    turn_no: int,
+) -> tuple[list[dict[str, object]], int]:
+    """工作记忆超阈值时压缩一档,返回 (新消息列表, 压缩后 token 估算)。
+
+    只缩小"发给模型的内容",不动预算口径:压缩后的 context_tokens 仍要过下面那条
+    一字未改的 BudgetError 门禁(压缩救不回来就该终止还是得终止)。存根保留工具名与
+    关键入参,模型才知道"这条已经查过"——实测死因正是只读调查原地重复烧额度
+    (runs/swe-hard-graph*:16-19 轮、417,894 tokens、apply_patch 0 次)。
+    """
+    result = compact_messages(
+        messages,
+        max_context_tokens=threshold,
+        keep_recent_turns=keep_recent_turns,
+    )
+    if not result.already_within and (result.stubbed or result.dropped):
+        ctx.tracker.record(
+            tool="context_compact",
+            round_no=round_no,
+            state=state_label,
+            input_payload={"before_tokens": result.before_tokens, "threshold": threshold},
+            output_summary={
+                "after_tokens": result.after_tokens,
+                "stubbed": result.stubbed,
+                "dropped": result.dropped,
+                "state": state_label,
+                "turn": turn_no,
+            },
+        )
+    return result.messages, result.after_tokens
+
+
 def run_plain_loop(
     ctx: ToolContext,
     model: Model,
@@ -130,6 +170,8 @@ def run_plain_loop(
     started_monotonic: float | None = None,
     time_budget_seconds: int = 0,
     cancel_event: threading.Event | None = None,
+    context_window_tokens: int = 0,
+    context_keep_recent_turns: int = 6,
 ) -> LoopOutcome:
     """工具循环:模型输出 → 解析工具调用 → 执行 → 结果回填 → 直到 finish。
 
@@ -141,6 +183,9 @@ def run_plain_loop(
     锁 TTL 会早于任务结束——现在每个 turn 边界都复查。
     cancel_event 在每个 turn 开头(model.complete 之前)检查:已 set → 抛 TaskCancelled,
     即中断在下个 turn 边界生效,正在跑的一次 pytest/LLM 调用会先完成。
+    context_window_tokens 是工作记忆的**软阈值**(0 = 关闭,行为与此前逐字一致):超过它
+    就在 turn 边界压缩历史(见 app/context/token_window.py),然后再走既有预算门禁。
+    压缩只让"发出去的内容"变小,不放宽任何额度——压完仍超预算照样 BudgetError。
     """
     settings = get_settings()
     budget = settings.token_budget if token_budget is None else token_budget
@@ -171,6 +216,18 @@ def run_plain_loop(
                 last_content=last_content,
             )
         context_tokens = messages_tokens(messages)
+        if context_window_tokens > 0 and context_tokens > context_window_tokens:
+            # 压缩必须排在预算检查**之前**:先给工作记忆一个公平的机会变小,
+            # 再用同一条门禁判定(见下),否则"能压下来也照旧死"
+            messages, context_tokens = _compact_working_memory(
+                ctx,
+                messages,
+                threshold=context_window_tokens,
+                keep_recent_turns=context_keep_recent_turns,
+                round_no=round_no,
+                state_label=state_label,
+                turn_no=turn_no,
+            )
         if budget > 0 and tokens_spent + context_tokens > budget:
             raise _budget_error(
                 f"agent loop tokens {tokens_spent + context_tokens} exceed budget {budget}",

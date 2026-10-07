@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.adapters.pytest_adapter import run_pytest
 from app.config import get_settings
+from app.context.repo_map import repo_map_for_workspace
 from app.errors import BudgetError, TaskCancelled, TaskError
 from app.gitops.differ import working_tree_diff
 from app.gitops.patcher import apply_patch as git_apply_patch
@@ -224,6 +225,28 @@ class TaskNodes:
     def route_baseline(self, state: TaskState) -> str:
         return "end" if state["status"] == "INVALID_TASK" else "continue"
 
+    # ---------- 持久记忆(M2 仓库骨架) ----------
+
+    def _persistent_context(self, workspace: Path) -> str:
+        """LOCALIZE/PROPOSE 共用的仓库骨架:纯本地 ast 生成、零 LLM 请求、每阶段一次。
+
+        缺陷证据(PROGRESS.md D.4/D.11):结构从未进过提示,模型只能自己 list_files 现场
+        重建——真实多文件题光靠 read/search 就烧穿定位段份额(runs/swe-hard-graph*:
+        16-19 轮、417,894 tokens、apply_patch 0 次)。骨架先验把"重新发现仓库"换成"直接精读"。
+        返回值只作为 extra_system 附加文本:allowed_tools/token_budget/BudgetError/
+        TaskCancelled 的路径一律不碰;生成失败退化为空串,可选上下文不得带走任务。
+        getattr 兜底让只构造部分字段的调用方与测试桩落在"关闭"一侧,
+        此时 extra_system 与本改动前逐字一致(回归钉子见 tests/test_repo_map.py)。
+        """
+        settings = get_settings()
+        if not getattr(settings, "repo_map_enabled", False):
+            return ""
+        return repo_map_for_workspace(
+            workspace,
+            max_chars=getattr(settings, "repo_map_max_chars", 0),
+            max_files=getattr(settings, "repo_map_max_files", 200),
+        )
+
     # ---------- LOCALIZE ----------
 
     def localize(self, state: TaskState) -> dict[str, Any]:
@@ -239,12 +262,16 @@ class TaskNodes:
                 max_turns=self.max_turns,
                 round_no=state["round_no"],
                 state_label="LOCALIZE",
+                # 主线 localize 无阶段提示,故 extra_system 即骨架(候选点未接,见 _run_candidate)
+                extra_system=self._persistent_context(self.workspace),
                 allowed_tools=READ_TOOLS,
                 started_monotonic=self.started_monotonic,
                 time_budget_seconds=get_settings().task_timeout_seconds,
                 token_budget=self._token_budget_for(
                     state, share=get_settings().localize_budget_share
                 ),
+                context_window_tokens=get_settings().context_window_tokens,
+                context_keep_recent_turns=get_settings().context_keep_recent_turns,
                 cancel_event=self.cancel_event,
             )
         except BudgetError as exc:
@@ -417,10 +444,13 @@ class TaskNodes:
                 max_turns=self.max_turns,
                 round_no=state["round_no"],
                 state_label="PROPOSE_PATCH",
+                extra_system=self._persistent_context(self.workspace),
                 allowed_tools=WRITE_TOOLS,
                 started_monotonic=started,
                 time_budget_seconds=get_settings().task_timeout_seconds,
                 token_budget=self._token_budget_for(state),
+                context_window_tokens=get_settings().context_window_tokens,
+                context_keep_recent_turns=get_settings().context_keep_recent_turns,
                 cancel_event=self.cancel_event,
             )
         except BudgetError as exc:
@@ -753,6 +783,8 @@ class TaskNodes:
                 token_budget=max(reserve // 2, 1) if reserve else reserve,
                 started_monotonic=self.started_monotonic,
                 time_budget_seconds=settings.task_timeout_seconds,
+                context_window_tokens=settings.context_window_tokens,
+                context_keep_recent_turns=settings.context_keep_recent_turns,
                 cancel_event=self.cancel_event,
             )
         except TaskCancelled:

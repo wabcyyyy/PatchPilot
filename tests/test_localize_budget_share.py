@@ -32,6 +32,10 @@ def _settings(**kw: object) -> SimpleNamespace:
         "task_timeout_seconds": 900,
         "max_patch_files": 5,
         "test_timeout_seconds": 120,
+        # M1 接线后 localize/propose 会读这两键;保持默认值(0 = 关闭 = 压缩前行为),
+        # 本文件的份额/降级语义不受影响
+        "context_window_tokens": 0,
+        "context_keep_recent_turns": 6,
     }
     values.update(kw)
     return SimpleNamespace(**values)

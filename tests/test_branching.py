@@ -39,6 +39,9 @@ def _fake_settings(**kw: object) -> SimpleNamespace:
         "max_patch_files": 5,
         "test_timeout_seconds": 120,
         "task_timeout_seconds": 900,
+        # M1 接线后候选循环会读这两键;默认值即"关闭压缩 = 此前行为"
+        "context_window_tokens": 0,
+        "context_keep_recent_turns": 6,
     }
     values.update(kw)
     return SimpleNamespace(**values)

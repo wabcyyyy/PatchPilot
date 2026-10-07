@@ -111,6 +111,48 @@ class Settings(BaseSettings):
             raise ValueError(f"localize_budget_share must be in (0, 1], got {value}")
         return value
 
+    # 工作记忆软阈值(M1 滑动窗口压缩,占位给 context.token_window):该段的 token 估算
+    # 此前只增不减,真实多文件题光靠只读调查就把份额烧穿(runs/swe-hard-graph:16-19 轮、
+    # 417,894 tok 撞 400k 顶、apply_patch 0 次)。超过此阈值时在 turn 边界压缩旧历史,
+    # 而不是中止任务;**不放宽任何额度**——压完仍超预算照旧 BudgetError。
+    # 0 = 关闭(默认),即与此前行为逐字一致,便于零成本对照回放(M7.1)。
+    context_window_tokens: int = 0
+    # 尾部钉住最近多少个回合组不参与压缩:低于此值会把"模型正在用的观察"也压掉,
+    # 表现为补丁阶段反复重读同一文件;高于此值则软阈值形同抬高
+    context_keep_recent_turns: int = 6
+
+    @field_validator("context_keep_recent_turns")
+    @classmethod
+    def _check_context_keep_recent_turns(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError(f"context_keep_recent_turns must be >= 1, got {value}")
+        return value
+
+    # 持久记忆(M2 仓库骨架):文件树 + Python 符号大纲由本地 ast 生成,零请求,注入
+    # LOCALIZE/PROPOSE 的系统提示。缺陷证据(PROGRESS.md D.4/D.11):仓库结构**从未**进过
+    # 提示,模型只能自己 list_files 现场重建;付费实跑 runs/swe-hard-graph* 的 sphinx 两题
+    # 在 LOCALIZE 花 16-19 轮纯 read/search、417,894 tokens(撞 400k 份额顶)且 apply_patch
+    # 0 次。骨架把"重新发现仓库"从模型的 turn 里拿走,让额度花在 bug 上。
+    repo_map_enabled: bool = True
+    # 骨架的字符预算(两档共用):0 = 不出骨架,与关闭等价
+    repo_map_max_chars: int = 4000
+    # 参与渲染的文件数上限(树与大纲共用同一批文件),超出部分计入 truncated 行
+    repo_map_max_files: int = 200
+
+    @field_validator("repo_map_max_chars")
+    @classmethod
+    def _check_repo_map_max_chars(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"repo_map_max_chars must be >= 0, got {value}")
+        return value
+
+    @field_validator("repo_map_max_files")
+    @classmethod
+    def _check_repo_map_max_files(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError(f"repo_map_max_files must be >= 1, got {value}")
+        return value
+
 
 @lru_cache
 def get_settings() -> Settings:

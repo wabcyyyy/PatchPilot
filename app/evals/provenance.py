@@ -140,6 +140,18 @@ SNAPSHOT_KEYS: tuple[str, ...] = (
     "branching_min_token_reserve",
     # 定位段份额同样决定轨迹形状(份额小→更早降级取暂定结论),跨批次必须可比
     "localize_budget_share",
+    # M1 上下文压缩:软阈值与尾部钉住轮数直接决定"模型第 k 轮看到多少历史",
+    # 同题开/关压缩的轨迹不可比(与 localize_budget_share 同类,而非 refine_* 同类——
+    # 后者只截单条工具回执,前者会整段丢弃历史),故进快照而非豁免
+    "context_window_tokens",
+    "context_keep_recent_turns",
+    # M2 仓库骨架:这三键决定"模型在第一轮就看到哪些文件与符号",同题开/关骨架的轨迹
+    # 不可比(与 context_window_tokens 同类:改变的是模型可见上下文本身,不是单条回执);
+    # 缺省即"结构从未注入"(PROGRESS.md D.4),付费实跑因此把额度花在重新发现仓库上
+    "repo_map_enabled",
+    "repo_map_max_chars",
+    # 文件数上限同样改变可见内容(裁掉的文件模型就看不见),且成本可忽略,一并进快照
+    "repo_map_max_files",
 )
 SECRET_KEYS: frozenset[str] = frozenset({"llm_api_key", "api_token"})
 EXEMPT_KEYS: frozenset[str] = frozenset(
