@@ -284,10 +284,10 @@ def run_task(
     except BudgetError as exc:
         # N-11 整改:plain 引擎同样把循环已耗的 token/turns 记回账本
         result.status, result.verdict, result.error = "BUDGET_EXCEEDED", "failed", str(exc)
-        result.turns = getattr(exc, "turns", 0)
-        result.tokens_used = getattr(exc, "tokens_spent", 0)
-        result.tokens_prompt = getattr(exc, "tokens_prompt", 0)
-        result.tokens_completion = getattr(exc, "tokens_completion", 0)
+        result.turns = exc.turns
+        result.tokens_used = exc.tokens_spent
+        result.tokens_prompt = exc.tokens_prompt
+        result.tokens_completion = exc.tokens_completion
     except TaskCancelled as exc:
         # 协作式取消:保留现场落盘;DB 状态由 cancel_task 置 CANCELLED,回写时让位
         result.status, result.verdict, result.error = "CANCELLED", "cancelled", str(exc)

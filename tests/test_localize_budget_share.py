@@ -69,13 +69,14 @@ def _state(**kw: object) -> dict[str, object]:
 
 def _raise_budget(message: str, spent: int, last_content: str = "") -> LoopOutcome:
     """用作 side_effect:模拟定位循环抛出的 BudgetError(带 N-11 携带字段)。"""
-    exc = BudgetError(message)
-    exc.tokens_spent = spent  # type: ignore[attr-defined]
-    exc.tokens_prompt = spent  # type: ignore[attr-defined]
-    exc.tokens_completion = 0  # type: ignore[attr-defined]
-    exc.turns = 4  # type: ignore[attr-defined]
-    exc.last_content = last_content  # type: ignore[attr-defined]
-    raise exc
+    raise BudgetError(
+        message,
+        tokens_spent=spent,
+        tokens_prompt=spent,
+        tokens_completion=0,
+        turns=4,
+        last_content=last_content,
+    )
 
 
 def test_localize_gets_only_its_share_of_remaining(

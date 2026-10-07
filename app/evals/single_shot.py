@@ -97,12 +97,10 @@ def one_shot_agent(
     except BudgetError as exc:
         # N-11 同源:补丁阶段超预算时,定位阶段已烧的用量必须记回任务级账本,
         # 否则对照臂的 token 代价被系统性低估
-        exc.tokens_spent = getattr(exc, "tokens_spent", 0) + localize.tokens_used  # type: ignore[attr-defined]
-        exc.tokens_prompt = getattr(exc, "tokens_prompt", 0) + localize.tokens_prompt  # type: ignore[attr-defined]
-        exc.tokens_completion = (  # type: ignore[attr-defined]
-            getattr(exc, "tokens_completion", 0) + localize.tokens_completion
-        )
-        exc.turns = getattr(exc, "turns", 0) + localize.turns  # type: ignore[attr-defined]
+        exc.tokens_spent += localize.tokens_used
+        exc.tokens_prompt += localize.tokens_prompt
+        exc.tokens_completion += localize.tokens_completion
+        exc.turns += localize.turns
         raise
 
     return LoopOutcome(

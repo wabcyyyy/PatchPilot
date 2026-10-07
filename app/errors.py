@@ -38,9 +38,31 @@ class GateError(PatchPilotError):
 
 
 class BudgetError(PatchPilotError):
-    """超过轮数/时间/token 预算(BUDGET_EXCEEDED)。"""
+    """超过轮数/时间/token 预算(BUDGET_EXCEEDED)。
+
+    具名耗用量字段(N-11/复盘 P1-5):上层把异常翻译成终态时,循环已烧掉的
+    token/turns 不蒸发;字段带默认值,不携带用量的抛出点无需逐个赋值。
+    last_content 是模型最后一轮的实质文本,供降级路径当暂定结论使用。
+    """
 
     code = "budget"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        tokens_spent: int = 0,
+        tokens_prompt: int = 0,
+        tokens_completion: int = 0,
+        turns: int = 0,
+        last_content: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.tokens_spent = tokens_spent
+        self.tokens_prompt = tokens_prompt
+        self.tokens_completion = tokens_completion
+        self.turns = turns
+        self.last_content = last_content
 
 
 class TaskCancelled(PatchPilotError):

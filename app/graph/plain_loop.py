@@ -62,13 +62,14 @@ def _budget_error(
     last_content 是模型最后一轮的实质文本:调用方据此判断"定位段额度用完了但任务级
     还有余量"时可以拿它当暂定结论继续,而不是把整个任务判死。
     """
-    exc = BudgetError(message)
-    exc.tokens_spent = tokens_spent  # type: ignore[attr-defined]
-    exc.tokens_prompt = tokens_prompt  # type: ignore[attr-defined]
-    exc.tokens_completion = tokens_completion  # type: ignore[attr-defined]
-    exc.turns = turns  # type: ignore[attr-defined]
-    exc.last_content = last_content  # type: ignore[attr-defined]
-    return exc
+    return BudgetError(
+        message,
+        tokens_spent=tokens_spent,
+        tokens_prompt=tokens_prompt,
+        tokens_completion=tokens_completion,
+        turns=turns,
+        last_content=last_content,
+    )
 
 
 def _record_thought(
