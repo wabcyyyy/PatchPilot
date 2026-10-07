@@ -89,14 +89,19 @@ def collect_runs(runs_root: Path | str) -> list[RunRow]:
 
 
 def latest_per_bug(rows: list[RunRow]) -> list[RunRow]:
-    """同一 bug 多次运行时取最新一次(按 report.json 的 mtime,见 RunRow.finished_stamp)。"""
+    """同一 bug 多次运行时取最新一次(按 report.json 的 mtime,见 RunRow.finished_stamp)。
 
-    def sort_key(row: RunRow) -> tuple[str, float]:
-        return row.bug_id, row.finished_stamp
+    复盘 R-1:去重键含消融臂(provenance.arm,缺省 agent)——同一根目录混入
+    agent/one_shot 两臂时,此前按 bug_id 静默丢一臂,指标分母失真。引擎混批
+    (m9 的 plain/graph)维持既有"每题取最新"披露口径,不在此扩展。
+    """
 
-    latest: dict[str, RunRow] = {}
+    def sort_key(row: RunRow) -> tuple[str, str, float]:
+        return row.bug_id, str(row.provenance.get("arm") or "agent"), row.finished_stamp
+
+    latest: dict[tuple[str, str], RunRow] = {}
     for row in sorted(rows, key=sort_key):
-        latest[row.bug_id] = row
+        latest[(row.bug_id, str(row.provenance.get("arm") or "agent"))] = row
     return list(latest.values())
 
 

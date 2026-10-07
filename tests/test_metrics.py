@@ -90,6 +90,30 @@ def test_metrics_on_mixed_rows(tmp_path: Path) -> None:
     assert bug1.run_dir.name.endswith("bbbb")
 
 
+def test_latest_per_bug_keeps_both_arms(tmp_path: Path) -> None:
+    """复盘 R-1:同一 bug 的 agent 臂与 one_shot 臂是两条独立记录,
+    按 bug_id 静默丢一臂会让指标分母失真;同臂多次运行仍取最新。"""
+    _write_report(
+        tmp_path / "BUG-001-20260916-000007-aaaa", changed_files=["src/dateparse.py"]
+    )
+    oneshot_dir = _write_report(
+        tmp_path / "BUG-001-20260916-000008-bbbb", changed_files=["src/dateparse.py"]
+    )
+    _write_report(
+        tmp_path / "BUG-001-20260916-000009-cccc", changed_files=["src/dateparse.py"]
+    )
+    rep_path = oneshot_dir / "report.json"
+    payload = json.loads(rep_path.read_text(encoding="utf-8"))
+    payload["provenance"] = {"arm": "one_shot"}
+    rep_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    rows = [annotate(r, Path("bugs")) for r in collect_runs(tmp_path)]
+    per_bug = latest_per_bug(rows)
+    assert len(per_bug) == 2
+    arms = {str(r.provenance.get("arm") or "agent") for r in per_bug}
+    assert arms == {"agent", "one_shot"}
+
+
 def test_empty_runs_give_none_rates(tmp_path: Path) -> None:
     metrics = compute_metrics([])
     assert metrics["total_runs"] == 0
