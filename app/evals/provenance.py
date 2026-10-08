@@ -170,6 +170,11 @@ SNAPSHOT_KEYS: tuple[str, ...] = (
     # 同题开/关计划阶段的两次跑法不可比
     "plan_stage_enabled",
     "plan_budget_share",
+    # M6 崩溃恢复:loop_snapshot_enabled 决定"续跑的那次运行看到哪些工作记忆与累计量",
+    # resume_on_restart 决定僵尸任务被收敛成 NEEDS_REVIEW 还是重新入队续跑——两者都改变
+    # 复现口径与终态,与 context_window_tokens 同族(改变运行看到什么),不进豁免
+    "loop_snapshot_enabled",
+    "resume_on_restart",
 )
 SECRET_KEYS: frozenset[str] = frozenset({"llm_api_key", "api_token"})
 EXEMPT_KEYS: frozenset[str] = frozenset(

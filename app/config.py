@@ -111,12 +111,16 @@ class Settings(BaseSettings):
             raise ValueError(f"localize_budget_share must be in (0, 1], got {value}")
         return value
 
-    # 工作记忆软阈值(M1 滑动窗口压缩,占位给 context.token_window):该段的 token 估算
-    # 此前只增不减,真实多文件题光靠只读调查就把份额烧穿(runs/swe-hard-graph:16-19 轮、
+    # 工作记忆软阈值(M1 滑动窗口压缩):该段的 token 估算此前只增不减,
+    # 真实多文件题光靠只读调查就把份额烧穿(runs/swe-hard-graph:16-19 轮、
     # 417,894 tok 撞 400k 顶、apply_patch 0 次)。超过此阈值时在 turn 边界压缩旧历史,
     # 而不是中止任务;**不放宽任何额度**——压完仍超预算照旧 BudgetError。
-    # 0 = 关闭(默认),即与此前行为逐字一致,便于零成本对照回放(M7.1)。
-    context_window_tokens: int = 0
+    # 默认 16000 的推导语义(不是实测结论,见 ADR-0004 的反方条目):
+    # 一条 read_file 回执折叠后约 800-1000 tokens,`context_keep_recent_turns=6` 的
+    # 不可压尾部约 6-7k,16k 意味着"超出在用尾巴约 9k 的历史"才开始让位——
+    # 正好罩住实测那种 16-19 轮只读调查的形态,又不至于压掉模型当前正在看的东西。
+    # 置 0 = 关闭,回到与压缩前逐字一致的行为(零成本对照口径)。
+    context_window_tokens: int = 16_000
     # 尾部钉住最近多少个回合组不参与压缩:低于此值会把"模型正在用的观察"也压掉,
     # 表现为补丁阶段反复重读同一文件;高于此值则软阈值形同抬高
     context_keep_recent_turns: int = 6
@@ -127,6 +131,17 @@ class Settings(BaseSettings):
         if value < 1:
             raise ValueError(f"context_keep_recent_turns must be >= 1, got {value}")
         return value
+
+    # M6 崩溃恢复(A 级:循环工作记忆快照)。缺陷出处:`run_plain_loop` 的 messages/token
+    # 计数是函数局部变量,一次 superstep 内跑到第 19 轮崩溃时 SqliteSaver 只有阶段边界的
+    # 检查点,重放等于整个阶段冷启动重跑——已烧的 19 轮全部作废。置 true 时每个 turn 边界
+    # 原子写一份 run_dir/loop_state.json,恢复从下一个 turn 续跑(轮次上限不重授)。
+    # 它改变"恢复后的运行看到什么",故属 SNAPSHOT_KEYS(见 app/evals/provenance.py)。
+    loop_snapshot_enabled: bool = True
+    # M6 崩溃恢复(B 级):服务启动时,若僵尸任务留有可用快照则**重新入队续跑**,
+    # 而不是按旧行为收敛 NEEDS_REVIEW。无快照/非 graph 引擎时行为与今日逐字相同。
+    # 同样属 SNAPSHOT_KEYS:开与关得到的是两种任务终态,跨批次不可比。
+    resume_on_restart: bool = True
 
     # 持久记忆(M2 仓库骨架):文件树 + Python 符号大纲由本地 ast 生成,零请求,注入
     # LOCALIZE/PROPOSE 的系统提示。缺陷证据(PROGRESS.md D.4/D.11):仓库结构**从未**进过

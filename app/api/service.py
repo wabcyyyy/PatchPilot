@@ -3,7 +3,9 @@
 设计:
 - 幂等键 = bug_id + engine + model(同键任务未到终态时直接返回原任务);
 - 锁:Redis(可用时)或进程内兜底,防止同键任务并发执行;
-- 崩溃恢复:服务启动时把 RUNNING/QUEUED 僵尸任务标记 NEEDS_REVIEW;
+- 崩溃恢复:服务启动时处理 RUNNING/QUEUED 僵尸任务——留有可用循环快照(M6)的 graph 任务
+  **重新入队按检查点续跑**,其余仍按旧行为标记 NEEDS_REVIEW(Settings.resume_on_restart
+  关闭时全部走旧行为);
 - cancel:先置 CANCELLED,再经 CancelRegistry 通知执行线程在 turn 边界协作式中断
   (正在跑的一次 pytest/LLM 调用先完成),终态回写时让位于 CANCELLED,保留现场。
 """
@@ -18,7 +20,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.api.cancellation import CancelRegistry
 from app.api.recycle import recycle_run_dir
@@ -28,6 +30,9 @@ from app.evals.bugset import BUGS_ROOT, build_custom_bug, load_bug, load_replay_
 from app.logctx import request_id_var, reset_task_context, set_task_context
 from app.storage.locks import BaseLock, build_lock
 from app.storage.repository import TERMINAL_STATUSES, Repository
+
+if TYPE_CHECKING:  # 仅标注用:BugTask 已在运行时导入面之外,避免给服务层加导入负担
+    from app.evals.bugset import BugTask
 
 log = logging.getLogger(__name__)
 
@@ -225,6 +230,7 @@ class TaskService:
         cancel_event,
         replay_script: list[dict[str, Any]] | None = None,
         request_id: str = "",
+        resume: bool = False,
     ) -> None:
         # P3-9:工作线程首行设置日志上下文——本任务在此线程内产生的业务日志
         # 都带 task_id(AGENTS 约定的装配面);线程复用,finally 必须 reset。
@@ -240,6 +246,7 @@ class TaskService:
                 lock_key,
                 cancel_event,
                 replay_script,
+                resume,
             )
         finally:
             reset_task_context(context_tokens)
@@ -254,6 +261,7 @@ class TaskService:
         lock_key: str,
         cancel_event,
         replay_script: list[dict[str, Any]] | None = None,
+        resume: bool = False,
     ) -> None:
         # P3-10 整改:置 RUNNING 挪到执行线程首行——DB 的 RUNNING = 真正开始执行
         # (受理但排队中保持 QUEUED)。条件写让位于并发取消/回滚:返回 False
@@ -287,6 +295,7 @@ class TaskService:
                     run_dir=run_dir,
                     model_name=real_model_name,
                     cancel_event=cancel_event,
+                    resume=resume,
                 )
             else:
                 from app.evals.driver import run_task
@@ -381,18 +390,124 @@ class TaskService:
         return self.repo.get_task(task_id)  # type: ignore[return-value]
 
     def recover_stale(self) -> int:
-        """启动恢复:僵尸任务收敛为 NEEDS_REVIEW,并同步清掉残留任务锁(N-20 整改)。
+        """启动恢复:僵尸任务分两路收敛,并同步清掉残留任务锁(N-20 整改)。
 
         此前只修状态不清锁——崩溃重启后同键重试会被 409 卡死到 TTL(约 16 分钟),
         且报错语义错误("already running"而任务已是 NEEDS_REVIEW)。
+
+        M6 分流(返回值 = 本次处理掉的僵尸行数,含两条路):
+        - **有可用循环快照的 graph 任务** → 重新入队,按检查点 + 工作记忆续跑
+          (不再判死;这是"跑了 19 轮崩溃后从零开始"这条真实代价的修法);
+        - **其余(含快照损坏/版本不符/非 graph 引擎/抢不到锁)** → 与分流引入前逐字相同:
+          recover_stale_running 收敛 NEEDS_REVIEW + force_release 旧锁。
         """
-        stale_keys = self.repo.recover_stale_running()
+        stale_rows = self.repo.list_stale_running()
+        resumable = [row for row in stale_rows if self._resumable_row(row)]
+        stale_keys = self.repo.recover_stale_running([str(row["task_id"]) for row in resumable])
         for idem_key in stale_keys:
             try:
                 self.lock.force_release(f"task:{idem_key}")
             except Exception:  # 单把锁清理失败不得打断其余恢复
                 log.exception("failed to force-release stale lock task:%s", idem_key)
-        return len(stale_keys)
+
+        requeued = 0
+        for row in resumable:
+            task_id = str(row["task_id"])
+            if self._requeue_for_resume(row):
+                requeued += 1
+                continue
+            # 退回旧路径:抢不到锁(已有恢复方)或题面无法重建时,宁可判死也不要
+            # 留一行"既不跑也没判"的僵尸
+            self.repo.finalize_task(task_id, "NEEDS_REVIEW", "needs_review")
+        if requeued:
+            log.warning("requeued %d stale task(s) for checkpoint resume", requeued)
+        # 语义与分流引入前一致:本次"处理掉"的僵尸行数(判死 + 重新入队两条路都算)
+        return len(stale_rows)
+
+    def _resumable_row(self, row: dict[str, Any]) -> bool:
+        """僵尸行是否值得续跑:开关开着、graph 引擎、run_dir 里有**通过校验**的快照。
+
+        这里用 load_loop_snapshot 而不是只看文件存在——损坏/版本不符的快照必须退回
+        判死路径,不能把一份错乱的工作记忆当真(读侧宁缺勿信,见 app/graph/loop_state.py)。
+        """
+        if not get_settings().resume_on_restart:
+            return False
+        if row.get("engine") != "graph":
+            # plain 引擎没有图检查点,B 级恢复无从定位"下一个该跑的节点"(如实限制)
+            return False
+        run_dir = row.get("run_dir")
+        if not run_dir:
+            return False
+        from app.graph.loop_state import load_loop_snapshot
+
+        return load_loop_snapshot(Path(run_dir), task_id=str(row.get("task_id") or "")) is not None
+
+    def _requeue_for_resume(self, row: dict[str, Any]) -> bool:
+        """把僵尸行重新入队续跑;返回 False = 调用方须按旧路径判死。
+
+        双恢复拦截用的是**既有任务锁**(app/storage/locks.py),不新造锁:
+        先 `acquire` 成功才入队——同一 idem_key 已被别的恢复方持有(前进程的锁
+        还没过期、或另一个实例同时重启)时直接放弃,由调用方收敛 NEEDS_REVIEW。
+        注意这里刻意不做 force_release:强制清锁正是"两个进程同时续跑同一任务"的入口。
+        """
+        task_id = str(row["task_id"])
+        run_dir_value = str(row.get("run_dir") or "")
+        idem_key = str(row.get("idem_key") or "")
+        lock_key = f"task:{idem_key}"
+        if not self.lock.acquire(lock_key, ttl_seconds=get_settings().task_timeout_seconds + 60):
+            log.warning("task %s: resume lock already held; not requeued", task_id)
+            return False
+        try:
+            bug = self._bug_from_row(row)
+            run_dir = Path(run_dir_value)
+            run_dir.mkdir(parents=True, exist_ok=True)
+            cancel_event = self._cancels.register(task_id)
+            request_id = request_id_var.get()
+            future = self._pool.submit(
+                self._execute,
+                task_id,
+                bug,
+                str(row.get("engine") or "graph"),
+                str(row.get("model_provider") or ""),
+                run_dir,
+                lock_key,
+                cancel_event,
+                None,
+                request_id,
+                True,
+            )
+            self._futures[task_id] = (future, lock_key)
+        except Exception as exc:
+            log.exception("task %s: failed to requeue for resume", task_id)
+            self._cancels.unregister(task_id)
+            self.lock.release(lock_key)
+            _ = exc
+            return False
+        log.info("task %s requeued for resume (run_dir=%s)", task_id, run_dir_value)
+        return True
+
+    def _bug_from_row(self, row: dict[str, Any]) -> BugTask:
+        """从任务行重建 BugTask:正式题按 bug_id 回读 manifest(题面与首轮逐字一致)。
+
+        已知边界(如实声明,不做假):自定义仓库任务的 failed/regression 测试集**不在
+        tasks 表里**(只有 issue_text 且截到 500 字符),无从忠实重建 → 抛 TaskError,
+        调用方按旧路径判死。恢复是加速器,不是靠猜题面换来的"看起来能续"。
+        """
+        bug_id = str(row.get("bug_id") or "")
+        if not bug_id:
+            raise TaskError(f"task {row.get('task_id')}: empty bug_id, resume impossible")
+        try:
+            bug = load_bug(bug_id, self.bugs_root)
+        except TaskError as exc:
+            raise TaskError(
+                f"task {row.get('task_id')}: bug {bug_id!r} not reloadable from bugs_root"
+                f" (custom repo task carries no test sets in DB); resume impossible"
+            ) from exc
+        max_rounds = row.get("max_rounds")
+        if max_rounds:
+            # 与 create_task 同口径:轮数上限只落库不生效是假活键(N-9),续跑同样要覆写
+            bug.max_rounds = int(max_rounds)
+        return bug
 
     def shutdown(self) -> None:
         """优雅停机(N-21 整改):向在途任务传播协作式取消,收敛未开始的任务。

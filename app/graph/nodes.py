@@ -26,6 +26,7 @@ if TYPE_CHECKING:  # 复盘 R-2:兑现 AGENTS"全量类型标注",运行时零�
     from app.evals.bugset import BugTask
 from app.gitops.testing import materialize_repo
 from app.graph.gates import ensure_budget, run_gates
+from app.graph.loop_state import LoopSnapshot
 from app.graph.plain_loop import LoopOutcome, run_plain_loop
 from app.graph.state import TaskState
 from app.llm.base import Model
@@ -158,8 +159,52 @@ class TaskNodes:
     # 卡5 自适应分支:第 i 个候选用哪个模型。None = 不分支(单线,与 V1 同行为)。
     # 带默认值,runner/service 的关键字构造不受影响;由调用方注入,graph 层不 import 测试替身。
     branch_model_factory: Callable[[int], Model] | None = None
+    # M6 崩溃恢复:被打断阶段的循环快照(仅当 stage/round 与该阶段本次执行匹配时消费一次,
+    # 取走即清空——同一份快照不得被后续阶段或后续轮次再回放一遍)。默认 None = 冷启动,
+    # 与引入恢复能力之前的行为逐字一致。
+    resume_snapshot: LoopSnapshot | None = None
+
+    def _take_resume_snapshot(self, stage: str, round_no: int) -> LoopSnapshot | None:
+        """按"当前阶段+当前轮次"领取快照;不匹配返回 None(冷启动)。"""
+        snapshot = self.resume_snapshot
+        if snapshot is None:
+            return None
+        if snapshot.stage != stage or snapshot.round_no != round_no:
+            return None
+        self.resume_snapshot = None  # 一次性:领取后不再出现在任何后续循环里
+        return snapshot
 
     # ---------- CREATED ----------
+
+    def _build_ctx(self, state: TaskState) -> ToolContext:
+        """ToolContext 的唯一构造口径(prepare 与崩溃恢复共用,防两份实现漂移)。"""
+        settings = get_settings()
+        return ToolContext(
+            task_id=state["bug_id"],
+            workspace=self.workspace,
+            baseline_commit=self.baseline_commit,
+            tracker=self.tracker,
+            report_dir=self.report_dir,
+            env=self.bug.env,
+            test_sets=self.bug.test_sets,
+            allowed_paths=self.bug.allowed_paths,
+            max_patch_files=settings.max_patch_files,
+            test_timeout_seconds=settings.test_timeout_seconds,
+            # P1-4 整改:资源上限此前只落在硬编码默认值上,settings 改了不生效
+            max_read_lines=settings.max_read_lines,
+            max_search_results=settings.max_search_results,
+        )
+
+    def restore_runtime(self, state: TaskState, baseline_commit: str) -> None:
+        """M6 崩溃恢复:重建 prepare 造出的闭包对象(ctx / baseline_commit)。
+
+        恢复时图从 checkpoint 的 `next` 节点起跑,prepare/baseline 不会重跑,而这两个
+        对象按设计**不进 state**(不可序列化)——不重建它们,第一个节点就会
+        `assert self.ctx is not None` 判死。基线取 state 里的完整 sha,缺失(旧检查点)
+        时由调用方回退工作区 HEAD。
+        """
+        self.baseline_commit = baseline_commit
+        self.ctx = self._build_ctx(state)
 
     def prepare(self, state: TaskState) -> dict[str, Any]:
         """物化题目仓库为 git 工作区,固定基线 commit。"""
@@ -167,28 +212,18 @@ class TaskNodes:
             self.baseline_commit = materialize_repo(
                 self.bug.repo_dir, self.workspace, extra_commit=False
             )
-            settings = get_settings()
-            self.ctx = ToolContext(
-                task_id=state["bug_id"],
-                workspace=self.workspace,
-                baseline_commit=self.baseline_commit,
-                tracker=self.tracker,
-                report_dir=self.report_dir,
-                env=self.bug.env,
-                test_sets=self.bug.test_sets,
-                allowed_paths=self.bug.allowed_paths,
-                max_patch_files=settings.max_patch_files,
-                test_timeout_seconds=settings.test_timeout_seconds,
-                # P1-4 整改:资源上限此前只落在硬编码默认值上,settings 改了不生效
-                max_read_lines=settings.max_read_lines,
-                max_search_results=settings.max_search_results,
-            )
+            self.ctx = self._build_ctx(state)
             self.tracker.record(
                 tool="create_workspace",
                 state="BASELINE",
                 input_payload={"baseline": self.baseline_commit[:12]},
             )
-            return {"status": "BASELINE", "baseline_regression_ok": False}
+            # M6:基线 sha 进 state(SqliteSaver 可序列化),恢复方据此复位工作区
+            return {
+                "status": "BASELINE",
+                "baseline_regression_ok": False,
+                "baseline_commit": self.baseline_commit,
+            }
         except TaskError as exc:
             return {"status": "INVALID_TASK", "error": str(exc), "outcome": "invalid"}
 
@@ -290,6 +325,7 @@ class TaskNodes:
                 context_window_tokens=get_settings().context_window_tokens,
                 context_keep_recent_turns=get_settings().context_keep_recent_turns,
                 cancel_event=self.cancel_event,
+                resume_snapshot=self._take_resume_snapshot("LOCALIZE", state["round_no"]),
             )
         except BudgetError as exc:
             # 两种"耗尽"要分开看,否则会毁掉任务:
@@ -472,6 +508,7 @@ class TaskNodes:
                 context_window_tokens=settings.context_window_tokens,
                 context_keep_recent_turns=settings.context_keep_recent_turns,
                 cancel_event=self.cancel_event,
+                resume_snapshot=self._take_resume_snapshot("PLAN", state["round_no"]),
             )
         except BudgetError as exc:
             # 两类"耗尽"的处置与 localize 同构:任务级总额已超 → 终点;
@@ -580,6 +617,7 @@ class TaskNodes:
                 context_window_tokens=get_settings().context_window_tokens,
                 context_keep_recent_turns=get_settings().context_keep_recent_turns,
                 cancel_event=self.cancel_event,
+                resume_snapshot=self._take_resume_snapshot("PROPOSE_PATCH", state["round_no"]),
             )
         except BudgetError as exc:
             # N-5 整改:超预算必须终止(route_propose 会 end),不得带着已应用

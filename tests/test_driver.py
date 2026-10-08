@@ -181,6 +181,9 @@ def test_provenance_carries_new_traceability_fields() -> None:
         # M5 PLAN 阶段:开关与份额改变"动手前模型看到什么、多做什么",跨批次不可比
         "plan_stage_enabled",
         "plan_budget_share",
+        # M6 崩溃恢复:快照开关决定续跑看到的工作记忆,重启开关决定僵尸任务的终态走向
+        "loop_snapshot_enabled",
+        "resume_on_restart",
     } == set(SNAPSHOT_KEYS)
     started = datetime.fromisoformat(prov["started_at"])
     assert started.tzinfo is not None

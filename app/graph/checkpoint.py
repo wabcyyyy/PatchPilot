@@ -1,8 +1,14 @@
-"""checkpoint:SqliteSaver 封装,仅作轨迹留档/调试。
+"""checkpoint:SqliteSaver 封装,按 superstep 留档 + 崩溃恢复的位置权威。
 
-如实声明(R2 整改):当前没有崩溃恢复路径——recover_stale 只把僵尸任务标为
-NEEDS_REVIEW,从不按 thread_id 重放;且闭包持有的 ToolContext 等运行时对象
-不进 state,跨进程恢复在结构上不可行。连接由调用方(runner)在任务结束时关闭。
+如实声明(R2 写下、M6 改写本段):恢复分两级——A 级是 Agent 循环的工作记忆
+(见 app/graph/loop_state.py,按 turn 边界落 run_dir/loop_state.json),B 级是图状态与
+"下一个该跑的节点"(读侧见 app/graph/resume.py,按 thread_id=task_id 取回检查点)。
+R2 时代本模块只写不读,所以当时"僵尸任务只能靠 recover_stale 判死"是事实;M6 起该
+声明作废。仍然成立的两条边界:
+①闭包持有的 ToolContext 等运行时对象不进 state,恢复时按留档产物**重建**
+  (TaskNodes.restore_runtime),不是跨进程反序列化对象;
+②没有可用循环快照、或题面无法重建的僵尸任务,照旧由 recover_stale 收敛 NEEDS_REVIEW。
+连接由调用方(runner)在任务结束时关闭。
 """
 
 from __future__ import annotations

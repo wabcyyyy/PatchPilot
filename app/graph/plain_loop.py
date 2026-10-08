@@ -16,6 +16,7 @@ from app.config import get_settings
 from app.context.token_window import compact_messages
 from app.errors import BudgetError, TaskCancelled
 from app.gitops.differ import working_tree_diff
+from app.graph.loop_state import LoopSnapshot, delete_loop_snapshot, save_loop_snapshot
 from app.llm.base import AssistantTurn, Model, messages_tokens
 from app.prompts import SYSTEM_PROMPT
 from app.tools.base import ToolContext, ToolResult
@@ -170,8 +171,9 @@ def run_plain_loop(
     started_monotonic: float | None = None,
     time_budget_seconds: int = 0,
     cancel_event: threading.Event | None = None,
-    context_window_tokens: int = 0,
-    context_keep_recent_turns: int = 6,
+    context_window_tokens: int | None = None,
+    context_keep_recent_turns: int | None = None,
+    resume_snapshot: LoopSnapshot | None = None,
 ) -> LoopOutcome:
     """工具循环:模型输出 → 解析工具调用 → 执行 → 结果回填 → 直到 finish。
 
@@ -183,12 +185,31 @@ def run_plain_loop(
     锁 TTL 会早于任务结束——现在每个 turn 边界都复查。
     cancel_event 在每个 turn 开头(model.complete 之前)检查:已 set → 抛 TaskCancelled,
     即中断在下个 turn 边界生效,正在跑的一次 pytest/LLM 调用会先完成。
-    context_window_tokens 是工作记忆的**软阈值**(0 = 关闭,行为与此前逐字一致):超过它
+    context_window_tokens 是工作记忆的**软阈值**(None = 跟随 Settings.context_window_tokens;
+    显式传 0 = 关闭,行为与此前逐字一致):超过它
     就在 turn 边界压缩历史(见 app/context/token_window.py),然后再走既有预算门禁。
     压缩只让"发出去的内容"变小,不放宽任何额度——压完仍超预算照样 BudgetError。
+    resume_snapshot(M6 A 级恢复):崩溃前某个 turn 边界的 LoopSnapshot。阶段与轮次
+    匹配时用它作种子——messages、三个 token 计数、last_content 全部续接,循环从
+    `turn_no + 1` 起跑。**轮次上限不重授**:仍按同一个 max_turns 判定,恢复只是
+    接着跑完剩下的轮次,不是再给一次完整额度(否则一个任务能靠反复崩溃刷出 N 倍轮次)。
+    不匹配(或为 None)即冷启动,与既有行为逐字一致。
+    快照写入受 Settings.loop_snapshot_enabled 控制,落在 run_dir/loop_state.json,
+    每个 turn 边界写一次(工具结果全部回填后才是一致切点);阶段正常 finish 时删除。
     """
     settings = get_settings()
+    snapshot_enabled = bool(getattr(settings, "loop_snapshot_enabled", False))
     budget = settings.token_budget if token_budget is None else token_budget
+    # None = 跟随 Settings(与 token_budget 同一约定)。这样"压缩口径"不会因为某个调用方
+    # 忘了传参就悄悄不一致——两臂对照尤其吃这条:少一边压缩就是多一个未登记的消融变量。
+    window = (
+        settings.context_window_tokens if context_window_tokens is None else context_window_tokens
+    )
+    keep_recent = (
+        settings.context_keep_recent_turns
+        if context_keep_recent_turns is None
+        else context_keep_recent_turns
+    )
     system = SYSTEM_PROMPT + (f"\n\n{extra_system}" if extra_system else "")
     messages: list[dict[str, object]] = [
         {"role": "system", "content": system},
@@ -198,8 +219,61 @@ def run_plain_loop(
     tokens_prompt = 0
     tokens_completion = 0
     last_content = ""  # 最近一次有实质文本的模型输出,供上层在额度耗尽时降级取用
+    start_turn = 1
 
-    for turn_no in range(1, max_turns + 1):
+    if resume_snapshot is not None:
+        if (
+            resume_snapshot.stage == state_label
+            and resume_snapshot.round_no == round_no
+            and resume_snapshot.messages
+        ):
+            # 续接的是**累计量**:恢复后 token 继续累加、轮次继续计数,不重置也不重授
+            messages = [dict(m) for m in resume_snapshot.messages]
+            tokens_spent = resume_snapshot.tokens_spent
+            tokens_prompt = resume_snapshot.tokens_prompt
+            tokens_completion = resume_snapshot.tokens_completion
+            last_content = resume_snapshot.last_content
+            start_turn = resume_snapshot.turn_no + 1
+            ctx.tracker.record(
+                tool="loop_resume",
+                round_no=round_no,
+                state=state_label,
+                input_payload={"from_turn": start_turn, "snapshot_turn": resume_snapshot.turn_no},
+                output_summary={
+                    "messages": len(messages),
+                    "tokens_spent": tokens_spent,
+                    "max_turns": max_turns,
+                },
+            )
+        else:
+            # 阶段/轮次不符或消息为空:宁可冷启动重跑,也不把别处的历史灌进本阶段
+            log.warning(
+                "task %s: resume snapshot mismatched (stage=%s round=%s), cold start",
+                ctx.task_id,
+                resume_snapshot.stage,
+                resume_snapshot.round_no,
+            )
+
+    def _write_snapshot(turn_no: int) -> None:
+        """落一份当前 turn 边界的工作记忆;失败只记日志(见 loop_state 模块边界)。"""
+        if not snapshot_enabled:
+            return
+        save_loop_snapshot(
+            ctx,
+            LoopSnapshot(
+                stage=state_label,
+                round_no=round_no,
+                turn_no=turn_no,
+                messages=messages,
+                tokens_spent=tokens_spent,
+                tokens_prompt=tokens_prompt,
+                tokens_completion=tokens_completion,
+                last_content=last_content,
+                task_id=ctx.task_id,
+            ),
+        )
+
+    for turn_no in range(start_turn, max_turns + 1):
         if cancel_event is not None and cancel_event.is_set():
             raise TaskCancelled(f"cancelled at turn {turn_no} boundary")
         if (
@@ -216,14 +290,14 @@ def run_plain_loop(
                 last_content=last_content,
             )
         context_tokens = messages_tokens(messages)
-        if context_window_tokens > 0 and context_tokens > context_window_tokens:
+        if window > 0 and context_tokens > window:
             # 压缩必须排在预算检查**之前**:先给工作记忆一个公平的机会变小,
             # 再用同一条门禁判定(见下),否则"能压下来也照旧死"
             messages, context_tokens = _compact_working_memory(
                 ctx,
                 messages,
-                threshold=context_window_tokens,
-                keep_recent_turns=context_keep_recent_turns,
+                threshold=window,
+                keep_recent_turns=keep_recent,
                 round_no=round_no,
                 state_label=state_label,
                 turn_no=turn_no,
@@ -257,6 +331,7 @@ def run_plain_loop(
         if not response.is_tool_call:
             messages.append(_assistant_payload(response))
             log.debug("turn %s: plain content, continuing", turn_no)
+            _write_snapshot(turn_no)
             continue
 
         assistant_payload = _assistant_payload(response)
@@ -301,6 +376,10 @@ def run_plain_loop(
                     success,
                     turn_no,
                 )
+                # M6:阶段正常收尾 → 作废快照。已完成过的阶段再被续跑会把同一阶段
+                # 重放第二遍(轮次/token 双计),所以"finish 即删"是恢复路径的前提,
+                # 与 loop_snapshot_enabled 开关无关(关掉开关也可能留有上一次开的残档)
+                delete_loop_snapshot(ctx, task_id=ctx.task_id)
                 return outcome
 
             if allowed_tools is not None and call.name not in allowed_tools:
@@ -327,6 +406,9 @@ def run_plain_loop(
                 tail=settings.refine_tail_lines,
             )
             messages.append({"role": "tool", "tool_call_id": call.id, "content": content})
+
+        # turn 边界:本轮所有工具结果都已回填,这是唯一可安全续跑的切点
+        _write_snapshot(turn_no)
 
     raise _budget_error(
         f"agent loop exceeded max_turns={max_turns}",

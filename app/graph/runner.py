@@ -16,6 +16,7 @@ from app.gitops.differ import working_tree_diff
 from app.graph.builder import build_graph
 from app.graph.checkpoint import make_sqlite_checkpointer
 from app.graph.nodes import TaskNodes
+from app.graph.resume import prepare_resume
 from app.graph.state import TaskState
 from app.llm.base import Model
 from app.tools.tracker import Tracker
@@ -39,12 +40,23 @@ def run_task_graph(
     model_name: str = "",
     cancel_event: threading.Event | None = None,
     branch_model_factory: Callable[[int], Model] | None = None,
+    resume: bool = False,
 ) -> Any:
     """执行一个任务(状态机引擎);返回与 plain 引擎一致的 TaskResult。
 
     task_id/run_dir 可由调用方(API 服务)指定,保证产物目录与服务记录一致。
     branch_model_factory(卡5b):第 i 个候选用哪个模型。由调用方注入——graph 层
     不 import 测试替身,fake 回放的分支脚本读取留在 eval 入口;不传即恒不分支。
+
+    resume=True(M6 崩溃恢复):按 `thread_id = task_id` 读回 SqliteSaver 检查点,
+    从检查点记录的 `next` 节点续跑,并把被打断阶段的 LoopSnapshot 交给该阶段
+    (见 app/graph/resume.py 与 app/graph/loop_state.py 的分工)。三个前提:
+    ①可写阶段续跑前工作区必须先复位到基线补丁锚点才算数(resume_reset_workspace 事件);
+    ②**门禁一律重跑**——恢复只回升阶时的"工作记忆",绝不复用崩溃前的任何判断:
+      apply 门禁 / verify 双测试集 / E3 双跑一致性 / 最终 verdict 全部在本次续跑里
+      真实执行一遍(测试按轨迹事件计数钉住这一条);
+    ③token 与轮次不双计:累计量随快照与检查点带回,阶段轮次上限不重授。
+    无可续位置(无检查点/无快照且图已终态)时如实回退冷启动,并记 resume_unavailable。
     """
     # P3-3 整改:第四入口(run_task_graph)此前零守卫——与 driver.run_task 同口径,
     # 真实模型(llm_enabled=True 且非 fake-replay)缺 model_name 时在物化任何
@@ -124,7 +136,17 @@ def run_task_graph(
             "configurable": {"thread_id": task_id},
             "recursion_limit": 5 * nodes.max_rounds + 8,
         }
-        final: TaskState = graph.invoke(initial, config=config)  # type: ignore[assignment]
+        # M6 恢复分支:检查点里有被打断的节点 → 从那里 invoke(None) 续跑;
+        # prepare_resume 返回 None(无检查点/已终态/复位失败)→ 如实回退冷启动
+        resume_config = (
+            prepare_resume(nodes, graph, run_dir=run_dir, config=config, task_id=task_id)
+            if resume
+            else None
+        )
+        if resume_config is not None:
+            final: TaskState = graph.invoke(None, config=resume_config)  # type: ignore[assignment]
+        else:
+            final = graph.invoke(initial, config=config)  # type: ignore[assignment]
 
         result.status = final.get("status", "NEEDS_REVIEW")
         outcome = final.get("outcome")

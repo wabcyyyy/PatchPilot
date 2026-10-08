@@ -93,12 +93,14 @@ def test_p3_7_false_claims_are_gone() -> None:
 def test_p3_7_corrected_claims_are_pinned() -> None:
     """修正后的如实表述钉在原位(行号级,独立于 ADR 锚点节)。"""
     # ADR-0001:两处「崩溃恢复」假命题改为 checkpoint 仅留档
+    # (M6 改写:该表述在恢复接线落地后再次过期,现钉"按 superstep 留档 + 位置权威"与
+    #  "无可用快照仍由 recover_stale 判死"——文案变了是因为事实变了,不是放松断言)
     adr1 = _read("docs/adr/0001-langgraph-编排.md")
-    assert any("仅作轨迹留档" in line for line in adr1[22:26]), adr1[22:26]
-    assert any("崩溃恢复由 recover_stale" in line for line in adr1[27:32]), adr1[27:32]
+    assert any("按 superstep 留档" in line for line in adr1[22:26]), adr1[22:26]
+    assert any("仍由 recover_stale 收敛 NEEDS_REVIEW" in line for line in adr1[27:32]), adr1[27:32]
     # design.md 第三副本(design.md:62)
     design = _read("docs/design.md")
-    assert "仅作轨迹留档" in design[61], design[61]
+    assert "按 superstep 留档" in design[61], design[61]
     # 攻击样例 10 个 ×3(design.md:91 / threat-model.md:45 / README.md:20)
     assert "10 个" in design[90], design[90]
     assert "攻击样例 10 个拦截" in _read("docs/threat-model.md")[44]
@@ -111,10 +113,13 @@ def test_p3_7_corrected_claims_are_pinned() -> None:
     # →621(M5 PLAN 阶段:plan/route_plan 节点插在 _token_budget_for 与 PROPOSE 之间,
     #        另加 build_plan_prompt 的导入块)
     # →623(M5 复核:plan 也接仓库骨架——计划要能点名文件与符号,只靠单薄的定位结论写不出可执行计划)
+    # →661(M6 崩溃恢复:TaskNodes 新增 resume_snapshot 字段与领取方法、prepare 的
+    #        ToolContext 构造抽成 _build_ctx 供恢复侧重建,apply 节点整体下移)
     assert "七项门禁" in _read("app/graph/gates.py")[0]
-    assert "七项门禁" in _read("app/graph/nodes.py")[623]
+    assert "七项门禁" in _read("app/graph/nodes.py")[661]
     # ADR-0002:compose 冒烟如实表述
     adr2 = _read("docs/adr/0002-execution-backend-local-默认.md")
     assert any("无留档的实测运行" in line for line in adr2[28:34]), adr2[28:34]
-    # 事实基准:checkpoint.py 自述「当前没有崩溃恢复路径」仍在原位
-    assert "当前没有崩溃恢复路径" in _read("app/graph/checkpoint.py")[2]
+    # 事实基准:checkpoint.py 自述「恢复分两级」仍在原位(M6:读侧已接线,
+    # 此前的「当前没有崩溃恢复路径」随该事实改变而作废,见 ADR-0001 同步修订)
+    assert "恢复分两级" in _read("app/graph/checkpoint.py")[2]

@@ -22,6 +22,10 @@ class TaskState(TypedDict, total=False):
     regression_tests: list[str]
     allowed_paths: list[str] | None
     max_rounds: int
+    # M6 崩溃恢复:基线 commit 必须是**普通 str** 才能进 checkpoint。恢复方要把工作区
+    # 复位到基线(reset_workspace 需完整 sha),而轨迹里的 create_workspace 事件只存了
+    # 12 位前缀——只有 state 里的这份是权威的。
+    baseline_commit: str
 
     # 运行时进度
     status: str

@@ -206,7 +206,11 @@ def test_phase_tool_restriction(tmp_path: Path) -> None:
 
 
 def test_checkpoint_roundtrip(tmp_path: Path) -> None:
-    """带 SqliteSaver 全程执行任务无异常(仅轨迹留档;无跨进程恢复路径,见 checkpoint.py)。"""
+    """带 SqliteSaver 全程执行任务无异常,且 state 每档都可序列化。
+
+    M6 起检查点不再只是留档:恢复侧按 thread_id 读回它(见 app/graph/resume.py),
+    所以"可序列化"从注释承诺升为可测属性;跨进程续跑的行为证明在 tests/test_resume.py。
+    """
     from app.graph.checkpoint import make_sqlite_checkpointer
     from app.graph.state import TaskState
 
@@ -245,6 +249,10 @@ def test_checkpoint_roundtrip(tmp_path: Path) -> None:
     assert final["status"] == "FINISHED"
     # M5:state 新增的 plan 必须是普通 str——它要能被 SqliteSaver 原样序列化进上面这个检查点库
     assert isinstance(final.get("plan"), str) and final["plan"]
+    # M6:恢复侧从同一个检查点读回 TaskState,新增的 baseline_commit 同样必须是普通 str
+    # (reset_workspace 需完整 sha;轨迹里的 12 位前缀不足以复位工作区)
+    assert isinstance(final.get("baseline_commit"), str)
+    assert len(final["baseline_commit"]) == 40
 
     resumed: TaskState = graph.invoke(None, config=thread)
     assert resumed["status"] == "FINISHED" and resumed["outcome"] == "resolved"

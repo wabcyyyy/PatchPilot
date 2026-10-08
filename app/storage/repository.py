@@ -6,6 +6,7 @@ import json
 import logging
 import sqlite3
 import threading
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -167,21 +168,43 @@ class Repository:
             ).fetchall()
         return [_task_out(r) for r in rows]
 
-    def recover_stale_running(self) -> list[str]:
+    def list_stale_running(self) -> list[dict[str, Any]]:
+        """RUNNING/QUEUED 的整行(M6 启动恢复的读方)。
+
+        恢复要按行决定去向(有可用快照 → 重新入队续跑;没有 → 判死),所以需要的不只是
+        idem_key。只读方法,不改状态——写仍集中在 `recover_stale_running`。
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM tasks WHERE status IN ('RUNNING','QUEUED')"
+            ).fetchall()
+        return [_task_out(r) for r in rows if r is not None]
+
+    def recover_stale_running(self, exclude_task_ids: Sequence[str] = ()) -> list[str]:
         """服务启动时把 RUNNING/QUEUED 的僵尸任务标记为 NEEDS_REVIEW。
 
         N-20 整改:返回被恢复行的 idem_key,调用方(service)据此同步清掉
         Redis 里的残留任务锁——否则重启后同键重试会被 409 卡死到 TTL。
+        M6:`exclude_task_ids` 里的任务**不判死**(将由 service 重新入队续跑),
+        因此既不出现在返回值里、也不被 UPDATE 命中;传空元组时与本方法引入以来
+        的行为逐字相同(既有测试钉住那条路径)。
         """
+        excluded = list(exclude_task_ids)
+        clause = ""
+        params: tuple[Any, ...] = ()
+        if excluded:
+            clause = f" AND id NOT IN ({','.join('?' * len(excluded))})"
+            params = tuple(excluded)
         with self._lock, self._conn:
             rows = self._conn.execute(
-                "SELECT idem_key FROM tasks WHERE status IN ('RUNNING','QUEUED')"
+                "SELECT idem_key FROM tasks WHERE status IN ('RUNNING','QUEUED')" + clause,
+                params,
             ).fetchall()
             stale_keys = [r["idem_key"] for r in rows if r["idem_key"]]
             self._conn.execute(
                 "UPDATE tasks SET status='NEEDS_REVIEW', finished_at=?"
-                " WHERE status IN ('RUNNING','QUEUED')",
-                (_now(),),
+                " WHERE status IN ('RUNNING','QUEUED')" + clause,
+                (_now(), *params),
             )
         if stale_keys:
             log.warning("recovered %d stale running task(s) as NEEDS_REVIEW", len(stale_keys))

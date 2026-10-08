@@ -507,9 +507,21 @@ def test_loop_still_raises_budget_error_when_compaction_cannot_help(ctx: ToolCon
 def test_loop_context_window_zero_reproduces_old_message_sequence(
     ctx: ToolContext, tmp_path: Path
 ) -> None:
-    """回归钉子:context_window_tokens=0(默认)时历史只增不减,行为与此前逐字一致。"""
+    """回归钉子:**显式关闭**(context_window_tokens=0)时历史只增不减,行为与此前逐字一致。
+
+    M1.5 之后 Settings 的生产默认不再是 0(见 test_loop_context_defaults_follow_settings),
+    所以这条钉子必须自己传 0,不能再借"默认值"的名义——它钉的是"关掉压缩时不能有任何差异",
+    而"关"现在是一个需要显式选择的档位。
+    """
     model = _RecordingFakeLLM(_read_script(6))
-    outcome = run_plain_loop(ctx, model, ISSUE, max_turns=20)
+    outcome = run_plain_loop(
+        ctx,
+        model,
+        ISSUE,
+        max_turns=20,
+        context_window_tokens=0,
+        context_keep_recent_turns=2,
+    )
     explicit_zero = _RecordingFakeLLM(_read_script(6))
     run_plain_loop(
         _readonly_ctx(ctx, "T-EXPLICIT-ZERO", tmp_path),
@@ -532,8 +544,15 @@ def test_loop_context_window_zero_reproduces_old_message_sequence(
             assert "[compacted]" not in str(message.get("content", ""))
 
 
-def test_loop_context_defaults_match_settings(ctx: ToolContext) -> None:
-    """循环默认值与 Settings 同口径:调用方只负责把 Settings 的值传下来(默认必须关闭)。"""
+def test_loop_context_defaults_follow_settings(ctx: ToolContext) -> None:
+    """阈值默认 None = 跟随 Settings(与 `token_budget` 同一约定),Settings 默认是生产值。
+
+    M1.5 的决定与理由:上下文"只增不减"是实测主死因
+    (runs/swe-hard-graph*:16-19 轮只读调查、417,894 tok 撞 400k 份额顶、apply_patch 0 次),
+    默认 0 = 关闭等于机制没上线。约定用 None 而不是把 16000 抄进签名:
+    任何调用方不传参就跟平台配置走,**不会出现"graph 臂压缩、消融臂不压缩"这种未登记的消融变量**
+    (这类缺陷本仓库已为此作废过一次付费实验)。
+    """
     import inspect
 
     from app.config import Settings, get_settings
@@ -544,12 +563,11 @@ def test_loop_context_defaults_match_settings(ctx: ToolContext) -> None:
         for name, param in inspect.signature(run_plain_loop).parameters.items()
         if name in {"context_window_tokens", "context_keep_recent_turns"}
     }
-    assert defaults == {
-        "context_window_tokens": settings.context_window_tokens,
-        "context_keep_recent_turns": settings.context_keep_recent_turns,
-    }
-    assert settings.context_window_tokens == 0, "默认必须是关闭(旧行为)"
+    assert defaults == {"context_window_tokens": None, "context_keep_recent_turns": None}
+    assert settings.context_window_tokens == 16_000
     assert settings.context_keep_recent_turns == 6
+    # 0 仍是"关闭"档,且 Settings 可以整体退回旧行为
+    assert Settings(context_window_tokens=0).context_window_tokens == 0
 
     with pytest.raises(ValueError, match="context_keep_recent_turns"):
         Settings(context_keep_recent_turns=0)
