@@ -95,9 +95,34 @@ regression 必须绿)由生成器与测试双重把关——回归集在基线�
 - **协作式取消粒度**:取消只在工具循环的 turn 边界生效,正在执行的一次
   pytest/LLM 调用(各至多 test_timeout/llm_timeout 秒)会先完成再退出;
   `task_timeout` 是预算检查点而非强杀;
+- **`run_pytest(report_path=None)` 的默认值只给测试用,生产调用方必须传报告目录(M11.7,已裁决"不改签名")**:
+  传 None 时 junit 与临时根会落进**工作区**(`cwd/.patchpilot_junit.xml[.basetemp-xxxx]`),
+  而 `app/gitops/differ.py:30` 用 `git add -A -N` 取 diff(未跟踪文件进 diff)。
+  今天它不兑现,靠的是两道**恰好成立**的遮挡:①`.patchpilot_junit.xml` 在物化仓库强制注入的
+  忽略清单里(`app/gitops/testing.py` 的 `REQUIRED_GITIGNORE_LINES`);②临时根由
+  `finally` 里的 `_discard_basetemp` 回收(git 只报文件不报空目录)。**剩下的真实缺口只有一条**:
+  平台进程在 pytest 期间死掉 ⇒ 回收没跑、目录里有文件 ⇒ 续跑后的"修改范围"视图可能带上它们。
+  把它改成必填属于签名变更,裁决结果是不改、只在此写明(账目见 TODO 的 M11.7.1);
 - **recursion_limit 与 max_rounds 的组合**:graph 引擎的 recursion_limit
   随 max_rounds 推导(M5 引入 PLAN 阶段后为 5N+8——每轮多出计划这一步;此前是 4N+8),
   正常轮数内不会触限;此前硬编码 80 在 max_rounds=20 时会提前误抛。
+- **上一条"token 统计在回放模式下是字符估算"只讲了半句,真实批次的完整口径是混单位的
+  (2026-10-08 M15 实测,不再是推断)**:累计已耗用走 provider 返回的真值
+  (`app/llm/openai_client.py:77-80`,仅当 usage 缺失时才退回估算),而"下一次请求会不会超预算"
+  用的是 `app/llm/base.py:47` 的 `len(text)//4` —— 于是 `plain_loop.py:305` 那条门禁
+  把**真值累计**和**估算的单次请求**加在一起比。拿 25 份真实模型 run 标定:该估算在真实语料上
+  **低估约 1.47 倍**(逐实例 1.263~1.897;`scripts/context_replay.py`,锚点见
+  `scripts/measure_context_counterfactual.py` 的 V1 —— 与代码自己算出的估算值对撞,差 0.8~0.9%)。
+  后果有界但不为零:门禁因此**晚**判死,误差量级 = 单个请求估算值的 47%(不随轮数累积)。
+  要不要统一成纯真值口径属于预算语义变更,**待裁决**,本卡不改;
+- **`context_window_tokens` 与 `context_keep_recent_turns` 是联动的,不能单独调**:被钉住的最近 N 回合
+  本身就构成一个下限——真实语料上把阈值降到 8000 时,keep=6 有 86%、keep=4 有 52% 的压缩回合
+  "压不到位"(调用过压缩但结果仍超阈值;分母取"调用过压缩的回合",含"压到底也没变小"的那些)。
+  当前生产默认那组合(16000/6)压得到位率 96%,代价是**额度只省 6%(触发实例中位)**;
+  它的锚点代价是 42 个"金补丁文件全文可见"项里 **1 项连路径都不剩**(降到 8000 变 3 丢 + 1 降级)。
+  压缩后的请求形态在真实轨迹上 0 条孤儿 tool 消息(扫过 12 个压缩单元格 = 4 阈值 × 3 keep)。
+  ⇒ 这两条合起来读:**"阈值 16000"的实际含义是"几乎不动的杠杆"**,不是"省一半";
+  账目见 TODO 的 M15 卡与 `docs/evidence/2026-10-08-context-*.txt`。
   崩溃续跑只顺延**剩余额度**(原上限减去检查点已烧步数),已烧完则拒绝续跑并按旧路径判死
   (见 app/graph/resume.py),恢复不换来更多循环余地;
 - **停机窗口的受理语义**:服务关停瞬间已受理(create 返回 201)但未起跑的任务,
