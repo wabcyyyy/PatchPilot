@@ -58,10 +58,10 @@ regression 必须绿)由生成器与测试双重把关——回归集在基线�
   - 因此**防双执行的第一道防线是幂等行读取**(同键在途任务直接返回原任务),
     不是锁——锁过期后同键 create_task 命中幂等分支,根本走不到加锁;
     锁只是"极小窗口内查不到行"时的兜底。多进程共库部署前必须重审本节。
-- 崩溃恢复:服务启动把 RUNNING/QUEUED 僵尸任务标记 NEEDS_REVIEW;
-- LangGraph checkpoint(SqliteSaver)仅作轨迹留档,不提供崩溃恢复
-  (P3-7 如实化,与 app/graph/checkpoint.py:3-5 自述一致)——
-  恢复=recover_stale 收敛 NEEDS_REVIEW,从不按 thread_id 重放。
+- 崩溃恢复(M6 两级):僵尸任务留有可用循环快照 → 按检查点重新入队续跑;否则判 NEEDS_REVIEW;
+- LangGraph checkpoint(SqliteSaver)按 superstep 留档,并作为崩溃恢复的位置权威
+  (读侧 `get_state(thread_id)` 见 app/graph/resume.py,A 级工作记忆见 loop_state.py;
+  与 app/graph/checkpoint.py 自述一致——无可用快照时仍由 recover_stale 判死)。
 - **评测数据读口径(P3-8)**:`tasks` 表 = 服务生命周期真相(状态机/取消/恢复
   都以它为准),`report.json` = 引擎判定取证(逐任务结论/token/门禁明细);
   平台口径以 tasks 为准。evaluations 表已裁删(P1-5 test_runs 同先例:唯一
@@ -96,8 +96,10 @@ regression 必须绿)由生成器与测试双重把关——回归集在基线�
   pytest/LLM 调用(各至多 test_timeout/llm_timeout 秒)会先完成再退出;
   `task_timeout` 是预算检查点而非强杀;
 - **recursion_limit 与 max_rounds 的组合**:graph 引擎的 recursion_limit
-  随 max_rounds 推导(4N+8,固定前缀 3 步 + 每轮 4 步 + 收尾 1 步),
-  正常轮数内不会触限;此前硬编码 80 在 max_rounds=20 时会提前误抛;
+  随 max_rounds 推导(M5 引入 PLAN 阶段后为 5N+8——每轮多出计划这一步;此前是 4N+8),
+  正常轮数内不会触限;此前硬编码 80 在 max_rounds=20 时会提前误抛。
+  崩溃续跑只顺延**剩余额度**(原上限减去检查点已烧步数),已烧完则拒绝续跑并按旧路径判死
+  (见 app/graph/resume.py),恢复不换来更多循环余地;
 - **停机窗口的受理语义**:服务关停瞬间已受理(create 返回 201)但未起跑的任务,
   可能在线程池关闭后收敛为 NEEDS_REVIEW——冒烟验证(compose_smoke)中实测到该
   竞态,语义为"需要人看",不谎报失败;

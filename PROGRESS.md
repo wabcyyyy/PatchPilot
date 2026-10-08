@@ -320,4 +320,85 @@
   (skip 是 Windows 无创建符号链接权限,符号链接拒绝用例在 Linux/CI 才真跑);
   全量见 commit 前的 `pytest -q` 汇总行。
 
+## M6 状态持久化与中断恢复(2026-10-07,子代理实现 + 主代理复核改两处)
+
+把 checkpointer 从"纯留档"变成"位置权威",并把循环的工作记忆持久化到 turn 边界。
+此前的真实代价:跑了 19 轮定位后进程死掉,重启只能从零开始(`recover_stale` 一律判 NEEDS_REVIEW)。
+
+- **A 级** `app/graph/loop_state.py`:`LoopSnapshot`(version/stage/round/turn/messages/
+  三个 token 累计/last_content/task_id)`save|load`,落盘在任务自己的 run_dir
+  (`loop_state.json`,与 trajectory.jsonl 同处,不新造路径口径)。
+  三条硬规矩:①`tmp` + `os.replace` 原子写(崩溃不能留下半份快照被续跑当真);
+  ②读侧宁缺勿信——版本/阶段/轮次任一不符或 JSON 损坏一律返回 None(退回旧路径,绝不抛异常);
+  ③超过模块上限就**不写**并只记 debug 日志(可选特性不得反过来影响任务)。
+  `run_plain_loop` 每个 turn 的**一致点**(工具回执追加之后)写一次;
+  `resume_snapshot` 给出时按快照播种 messages/累计量并从 `turn_no+1` 继续,
+  **不重置轮次上界**(崩溃不能换来更多 turn 额度);finish/取消后快照不再可续。
+- **B 级** `app/graph/resume.py`:`graph.get_state(thread_id)` 读回 `(values, next, metadata)`,
+  重建闭包对象(ctx/baseline 按设计不进 state),把 `next` 节点与 A 级快照接上,
+  然后 `graph.invoke(None, config)` 从检查点继续——这是全仓第一次真的**读**检查点。
+- 两条安全前提写进模块 docstring 并各有用例:
+  ①**可写阶段续跑前必须复位工作区到基线**:块协议锚点是拿磁盘实际内容校验的,
+    崩溃残留的半截补丁会让续跑的补丁落到错误位置;只读阶段(LOCALIZE/PLAN)刻意不复位,
+    否则反而毁掉取证现场;
+  ②**门禁必须重跑**:恢复只带回升阶时的工作记忆,绝不带回任何判断——apply 门禁、
+    verify 双测试集、E3 双跑复核、最终 verdict 都在续跑那次真实重算(用例数事件)。
+- `service.recover_stale` 分两路:graph 引擎 + run_dir 里有**通过校验**的快照 + 抢到既有任务锁
+  → 重新入队续跑;其余(快照损坏/版本不符/plain 引擎/自定义仓库任务题面无法重建/抢锁失败)
+  → 与分流引入前逐字相同地判 NEEDS_REVIEW。返回值语义("处理掉的僵尸行数")保持两路都算。
+  双恢复拦截用的是 `app/storage/locks.py` 既有锁,且刻意**不做 force_release**
+  (强清锁正是"两个进程同时续跑同一任务"的入口)。
+- 主代理复核改掉的**两处**:
+  ①原实现 `recursion_limit = 原上限 + 已烧步数`,等于给崩溃的任务多发循环额度——
+    改为只顺延**剩余额度**(`原上限 - 已烧步数`),已烧完则拒绝续跑;
+  ②顺序缺陷:原实现先复位工作区、后判额度,于是一个最终被拒绝的续跑已经先把崩溃现场抹掉了。
+    额度判定挪到函数开头,在任何 mutation 之前。补了用例断言"拒绝续跑不动工作区"。
+- 已知限制如实写进代码与文档(不是"看起来能续"):plain 引擎无图检查点不参与 B 级恢复;
+  自定义仓库任务的测试集不在 tasks 表里(issue_text 还截到 500 字符),无法忠实重建 → 判死。
+- 文档同步:`app/graph/checkpoint.py` 自述、ADR-0001、`docs/design.md` 里"checkpointer 仅留档、
+  不提供崩溃恢复"的声称已改为实际语义;顺手补掉 M5 留下的文档债(recursion_limit 4N+8 → 5N+8、
+  转移表补 plan 一步)。历史审计文档(`interview-audit-2026-09-24` 记的当时数字)**不改**——
+  那是时间戳证据,不是当前声称。
+- 体积不如规矩:`tests/test_resume.py` 611 行、M3 的 `test_search_tools.py` 826 行,都超
+  AGENTS.md「单次生成 ≤ 300 行」。覆盖本身是有用的(恢复这类路径不铺用例等于没做),
+  但体积违规如实记在这里,拆分留给后续人工整理,不为了合规临时删覆盖。
+- 证据:定向 `29 passed`(loop_state + resume + docs 锚点)与服务/图路径在 M6 自测中通过;
+  全量数字见本条 commit 正文。
+
+## M7 收口:生产默认、测试隔离、ADR 与文档债(2026-10-08 凌晨)
+
+- **M1.5 落地——压缩不再默认关闭**:`Settings.context_window_tokens` 从 `0` 改为 `16_000`。
+  默认 0 等于机制没上线,而"上下文只增不减"是有付费证据的主死因,留着关闭默认就是留着那个缺陷。
+  推导写进 config 注释:一条折叠后的 `read_file` 回执约 800-1000 tokens,
+  `context_keep_recent_turns=6` 的不可压尾部约 6-7k,16k 意味着"超出在用尾巴约 9k 的历史"才让位。
+  这是**工程判断,不是实测结论**(FakeLLM 无视消息内容,零成本回放照不出压缩对真实模型的效果,
+  ADR-0003/0007 已把这条边界写死),要证明"提高解决率"必须真实模型批 → 待用户裁决。
+- 顺带修掉一处会让两臂不可比的写法:`run_plain_loop` 的阈值参数从 `int = 0` 改为
+  `int | None = None`(None = 跟随 Settings,与既有 `token_budget` 同一约定)。
+  原写法下 graph 臂由 nodes 显式传 Settings 值、而 plain/消融臂按签名默认拿到 0,
+  等于"一边压缩一边不压缩"这种**未登记的消融变量**——正是本仓库作废过一次付费实验的那类缺陷。
+  配套改两条用例:①`test_loop_context_defaults_follow_settings`(默认必须是 None,Settings 默认 16000);
+  ②`test_loop_context_window_zero_reproduces_old_message_sequence` 改为**显式传 0**——
+  "关"现在是需要显式选择的档位,不能再借"默认值"的名义。
+- **测试隔离缺陷修复**(全量套件里复现过一次的假失败):`tests/test_resume.py` 的
+  `recover_stale` 用例会真的把续跑任务 submit 到线程池,用例断言完"已重新入队"就返回,
+  于是那次真实图执行在后台一直跑,和后续用例抢 `get_settings()` 缓存
+  (conftest 早记过同一类窗口),把 `tests/test_auth.py::test_report_trajectory_cancel_protected`
+  打成只在整套顺序下复现的失败。补 autouse `_drain_services` fixture:每个用例结束统一
+  `service.shutdown()`。定向复现顺序无法触发(必须整套跑才暴露),因此这条也写进记忆。
+- ADR 补齐(0004 上下文分层 / 0005 检索引擎 / 0006 崩溃恢复 / 0007 计划工件),
+  每篇都带"反方"与"未证明"条目;`docs/README.md` 索引从"三篇(0001–0003)"改为"七篇(0001–0007)"。
+  踩到并修好一条仓库既有机制:`tests/test_docs_anchors.py` 会解析每篇 ADR 的「## 验证锚点」节,
+  要求**严格形状** `- \`路径:行号\` — \`子串\`` 且逐条验真(行号必须存在、子串必须在该行)。
+  我第一版按散文写锚点,直接被这两条用例拒收——这是防文档漂移的正面证据,不是阻碍。
+- 文档债清掉:`docs/adr/0001` 与 `docs/design.md` 的 `recursion_limit` 声称 4N+8 → 5N+8、
+  转移表补 `plan` 一步;`app/graph/checkpoint.py`、ADR-0001、design.md 三处
+  "checkpointer 仅留档、不提供崩溃恢复"的旧声称改成实际语义(M6 后事实变了才改文案,
+  历史审计文档 `interview-audit-*` 不动——那是时间戳证据而非当前主张)。
+- **仍开放(不自行推进)**:压缩/骨架/计划段对真实模型修复率的影响需真实批次(付费,待授权);
+  `context_window_tokens` 阈值的实测标定;`nodes.py` 已达 1188 行的拆分(禁区文件大重构不当夜做);
+  `@`/`=` 测试 id 白名单、`metrics.py` 的 gold 结构对比、`BUG-014` reference.diff 存量缺陷照旧待裁决。
+
+
+
 

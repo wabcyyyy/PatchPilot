@@ -34,8 +34,11 @@
 - [x] M1.3 `Settings`:`context_window_tokens`(软阈值,0 = 关闭 = 旧行为)、`context_keep_recent_turns`。
       两键进 provenance `SNAPSHOT_KEYS`(决定轨迹形状,跨批次可比)。
 - [x] M1.4 用例:压缩纯函数边界 15 例 + 循环接线 6 例(含"关闭时消息序列逐字不变"的回归钉子)。
-- [ ] M1.5 按 M7.1 的零成本回放实测给 `context_window_tokens` 定**生产默认值**;
-      长期停在 0 = 机制没上线,这一项不做完 M1 不算收口。
+- [x] M1.5 给 `context_window_tokens` 定**生产默认值 = 16000**(推导写进 config 注释与 ADR-0004:
+      折叠后的单条回执约 800-1000 tok、6 回合尾巴约 6-7k,16k = 超出在用尾巴约 9k 才让位);
+      同时把 `run_plain_loop` 的两个阈值参数改成 `None = 跟随 Settings`,
+      避免"graph 臂压缩、消融臂不压缩"这种未登记消融变量。
+      **未证明的部分如实挂着**:阈值对真实模型修复率的影响要真实批次标定(待用户授权)。
 
 ### M2 持久记忆:仓库骨架注入
 
@@ -91,12 +94,14 @@
 
 ### M6 状态持久化与中断恢复(checkpointer 从"留档"变"可续跑")
 
-- [ ] M6.1 循环层 turn 边界快照:落 `run_dir/loop_state.json`(压缩后的消息列表 + 阶段/轮次/turn/已耗用量计数),尺寸上限保护。
-- [ ] M6.2 `runner` 增恢复入口:读 checkpoint state + 循环快照 → 重建 ToolContext → 从中断阶段续跑;
-      快照缺失/损坏/版本不符 → 退回"阶段重跑",落取证事件。
-- [ ] M6.3 `service.recover_stale`:有可续跑快照的任务改为重新入队续跑(而非一律 NEEDS_REVIEW);
-      不可续跑的保持现口径。**硬约束**:恢复后 APPLY/VERIFY/门禁必须真重跑,绝不复用中断前的"已过闸"结论。
-- [ ] M6.4 用例:turn 边界 kill 后续跑且阶段不重做;快照损坏安全降级;门禁在恢复路径上重新执行;重复续跑幂等。
+- [x] M6.1 循环层 turn 边界快照:落 `run_dir/loop_state.json`(压缩后的消息列表 + 阶段/轮次/turn/已耗用量计数),尺寸上限保护。
+- [x] M6.2 `runner` 增恢复入口:`get_state(thread_id)` 读检查点 + 循环快照 → 重建 ToolContext → 从中断阶段续跑;
+      快照缺失/损坏/版本不符 → 退回"阶段重跑/判死",落取证事件。
+- [x] M6.3 `service.recover_stale`:有可续跑快照的 graph 任务重新入队续跑(用既有任务锁防双恢复,不 force_release);
+      不可续跑的保持现口径。**硬约束已落地并有用例**:恢复后 APPLY/VERIFY/门禁必须真重跑,不复用中断前的"已过闸"结论。
+- [x] M6.4 用例 29 例:turn 边界 kill 后续跑且不重放已完成轮次;快照损坏/版本不符/尺寸超限三种降级;
+      原子写半途崩溃;可写阶段续跑前工作区确被复位、只读阶段现场原样;拒绝续跑不得先毁现场;
+      递归额度只顺延剩余(崩溃不换来更多循环);无快照僵尸仍判 NEEDS_REVIEW;双恢复被锁挡住。
 
 ### M7 证据、文档与收口
 
@@ -104,8 +109,12 @@
       测量工具已就位:`scripts/compare_batches.py <基线批> <对照批> [--tools]`
       (判定字段逐题不等即退出码 1;成本字段只报差异;`--tools` 出逐阶段工具调用直方图与
       `context_compact` 事件数)。基线批 = `runs/graph35-v2`(35 题,合计 turns 249 / tokens 6917)。
-- [ ] M7.2 ADR:上下文分层与压缩策略、检索工具从子串到 AST/ripgrep、续跑语义与"闸必须重跑"。
-- [ ] M7.3 `docs/design.md` 与 README 对齐实际实现;PROGRESS.md 记录每个 commit 的机器证据。
+- [x] M7.2 ADR:上下文分层与压缩策略(0004)、检索引擎(0005)、崩溃恢复两级与"闸必须重跑"(0006)、
+      计划工件(0007)。每篇含反方与"未证明"条目;锚点节按 `tests/test_docs_anchors.py` 的严格形状
+      (`- \`路径:行号\` — \`子串\``)逐条验真。
+- [x] M7.3 `docs/design.md`/`docs/adr/0001`/`app/graph/checkpoint.py` 与 README 索引对齐实际实现
+      (recursion_limit 5N+8、转移表含 plan、checkpointer 从"仅留档"改为"留档 + 恢复位置权威");
+      历史审计文档不改(时间戳证据)。
 - [ ] M7.4 全量 `ruff check . && ruff format --check . && pytest -q` 收绿 + graph 35 题回放对基线零回归。
 
 ## 明确不做(需用户裁决,不自行推进)
