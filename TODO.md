@@ -192,6 +192,12 @@
       `--basetemp`,也没给子进程换 TMPDIR/TEMP。于是被诊断仓库自己的测试用的
       `tmp_path` 全部落在 `<系统临时目录>/pytest-of-<user>/pytest-N/` ——
       所有并发执行共用同一个根,而 pytest 只"保留最近 3 个编号目录"。
+      **M11.5.0 更正:这条结论只核到了命令构造器,执行层是错的** ——
+      `build_pytest_cmd` 确实不带 `--basetemp`,但它的调用方 `run_pytest` 在
+      `app/adapters/pytest_adapter.py:255` 追加了 `--basetemp=<junit 所在目录>/basetemp`,
+      所以本地后端的执行**不落在机器默认临时根**。我当时只读了 113 行就下结论,没顺着调用方走。
+      M11.4 观察到的 `PermissionError` 因此另有归属(外层套件自身的 `tmp_path` 用机器默认根,
+      与并发的嵌套 pytest 共用 `pytest-of-<user>`),`_isolated_nested_temp` 那条修法仍然成立。
 - [ ] M11.2 待裁决的修法(动的是"必须掌握"区,故不自行实现):
       ①在 `build_pytest_command` 追加 `--basetemp=<该次 run 目录>/pytest-tmp`;
       ②或在执行器 env 白名单里把 TEMP/TMPDIR 指到 run 目录内(连非 pytest 的临时写入一起隔离)。
@@ -206,6 +212,33 @@
       本身(套件内部就有并发路径),不是外层 `--basetemp` 挑错了值。
       `tests/conftest.py` 加会话级 `_isolated_nested_temp`:把 TEMP/TMP/TMPDIR 指向本次会话私有目录
       (执行器的 env 白名单本来透传这三个键,故无需动生产代码)。生产侧仍按 M11.2 等裁决。
+
+### M11.5 生产影响评估:临时根在并发执行下到底会不会互删(2026-10-08 上午,零成本)
+
+- [x] M11.5.0 更正 M11.1(见上)。据此重新确定"临时根"的实际归属:每次执行的 basetemp
+      **由它的 junit 目录派生**(`(junit.parent / "basetemp")`)——
+      主流程 `run_dir/reports/junit-*.xml` → `run_dir/reports/basetemp`;
+      Best-of-N 候选 `run_dir/reports/cand{i}/branch-*.xml` → `…/cand{i}/basetemp`。
+      于是风险从"所有执行共用机器根"换成一个**不同的**问题:**同一任务内共享 report_dir 的
+      并发执行会共用同一个 basetemp**,而 pytest 在 `--basetemp` 给定时无条件先删后建
+      (`.venv/Lib/site-packages/_pytest/tmpdir.py:154-159`:`if basetemp.exists(): rm_rf(basetemp)`)。
+- [x] M11.5.a 今天的实际拓扑核对(读代码,不测):主流程 verify 的 4 次 pytest 是同线程串行
+      (`nodes.py:799/806` 在 `verify` 节点内顺序调用),候选并发但 `cand_reports` 按 index 分目录
+      (`nodes.py:907`),跨任务是不同 run_dir(`service.py` 线程池 + `run_dir` 含 task_id)
+      ⇒ **当前没有"同 basetemp 并发"的真实路径**。所以 M11.2 的紧迫性不能靠推定,要靠测量。
+- [ ] M11.5.1 真机测量(`scripts/measure_basetemp_contention.py`,走 `run_pytest` 真实路径,不起 LLM):
+      变量只有一个——**report_dir 是否共享**;工作区每次都另拷贝一份(排除工作区复用这个混淆项)。
+      ①控制组:单执行 1 次,确立"这题本来能过"(all_passed=True)基线;
+      ②同 report_dir 并发 K=2、K=4;③不同 report_dir 并发 K=2、K=4;各 3 轮;
+      ④机器默认根泄漏计数:`<temp>/pytest-of-*` 编号目录在执行前后的变化(验证更正后的说法);
+      ⑤被诊断测试写成两种:快版(纯 IO)与慢版(每次写文件间 sleep)。**慢版是放大器,登记在此**:
+      它只放大窗口,不改变机制;若快版已经出伪失败,结论就不依赖放大器。
+      **判据跑之前写死**:
+      (A) ②出现 ≥1 次"控制组能过而并发组 all_passed=False"⇒ 同 report_dir 共享 basetemp 是**真实缺陷**,
+          M11.2 必须做,且方案①的落键粒度必须是**每次执行唯一**(不能按 run_dir/report_dir);
+      (B) ②为 0 且③为 0 ⇒ 现有串行拓扑下无实际损害,把"basetemp 按执行唯一"降级为
+          **不变量用例 + 注释**(防未来新增并发时踩坑),不做语义变更;
+      (C) ④显示执行前后机器根有新增 ⇒ M11.5.0 的更正还不完备,回头继续查是哪条路径没走 `run_pytest`。
 
 ### M12 补上缺失的那篇 ADR:补丁协议(2026-10-08 01:59)
 
