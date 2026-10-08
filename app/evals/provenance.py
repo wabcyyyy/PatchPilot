@@ -145,6 +145,9 @@ SNAPSHOT_KEYS: tuple[str, ...] = (
     # 后者只截单条工具回执,前者会整段丢弃历史),故进快照而非豁免
     "context_window_tokens",
     "context_keep_recent_turns",
+    # M17 额度门禁的单位换算:这个系数决定"闸门在哪一次请求上判死",同一题 1.0 与 1.47
+    # 的轨迹长度、终态与成本都不可比(它不比 refine_* 那类只截单条回执的键轻),故进快照
+    "token_estimate_factor",
     # M2 仓库骨架:这三键决定"模型在第一轮就看到哪些文件与符号",同题开/关骨架的轨迹
     # 不可比(与 context_window_tokens 同类:改变的是模型可见上下文本身,不是单条回执);
     # 缺省即"结构从未注入"(PROGRESS.md D.4),付费实跑因此把额度花在重新发现仓库上

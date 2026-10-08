@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 
@@ -144,6 +145,118 @@ def test_loop_token_budget_zero_disables_token_check(ctx: ToolContext) -> None:
     assert "max_turns" in str(exc_info.value)
 
 
+_GATE_CONTENT = "x" * 400
+_GATE_USAGE = 1_000
+
+
+class _SteadyContextModel:
+    """每轮固定烧 `_GATE_USAGE` 真值、只回定长文本(不发工具调用),并记下收到的 messages。
+
+    额度门禁的两个读数单位(真值累计 / 本地估算)要能被逐字拆开验证,靠的就是这种
+    "上下文只按已知长度增长"的模型。
+    """
+
+    provider = "scripted"
+
+    def __init__(self) -> None:
+        self.seen: list[list[dict]] = []
+
+    def complete(self, messages, tools):  # type: ignore[no-untyped-def]
+        self.seen.append([dict(m) for m in messages])
+        return AssistantTurn(content=_GATE_CONTENT, finish_reason="stop", usage_tokens=_GATE_USAGE)
+
+
+def _gate_reading(exc: Exception) -> int:
+    """取闸门原文里的 `agent loop tokens X`(M15 V1 锚点吃的就是它)。"""
+    match = re.search(r"agent loop tokens (\d+) exceed budget", str(exc))
+    assert match is not None, f"不是额度闸的读数:{exc}"
+    return int(match.group(1))
+
+
+def test_gate_reading_at_default_is_the_unscaled_estimate(ctx: ToolContext, tmp_path: Path) -> None:
+    """M17 的默认不变量:`token_estimate_factor=1.0` 时读数 = 真值累计 + **未换算**的估算。
+
+    钉死这条是因为 M15 的 V1 锚点、以及 `docs/evidence/2026-10-08-*.txt` 里全部历史读数
+    都建立在这个数上 —— 引入换算不许回溯改变它。
+    """
+    probe = _SteadyContextModel()
+    with pytest.raises(BudgetError) as first:
+        run_plain_loop(
+            _readonly_ctx(ctx, "T-GATE-PROBE", tmp_path),
+            probe,
+            ISSUE,
+            max_turns=6,
+            token_budget=1,
+            context_window_tokens=0,
+        )
+    est0 = _gate_reading(first.value)  # 首轮已耗真值 = 0 ⇒ 读数就是种子上下文的估算
+    assert probe.seen == [], "闸门在第一次请求之前就判死"
+
+    model = _SteadyContextModel()
+    with pytest.raises(BudgetError) as second:
+        run_plain_loop(
+            _readonly_ctx(ctx, "T-GATE-DEFAULT", tmp_path),
+            model,
+            ISSUE,
+            max_turns=6,
+            token_budget=est0,
+            context_window_tokens=0,
+        )
+    assert est0 == messages_tokens(model.seen[0]), "首轮估算读数的来源就是种子消息"
+    pending = _gate_reading(second.value) - _GATE_USAGE  # 扣掉第一轮已烧的真值
+    expected = messages_tokens([*model.seen[0], {"role": "assistant", "content": _GATE_CONTENT}])
+    assert pending == expected, "默认系数下不许出现任何换算"
+
+
+def test_estimate_factor_scales_only_the_pending_request(
+    ctx: ToolContext, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """系数只把**待发的那一次**变贵,provider 真值累计一个字都不乘。"""
+    monkeypatch.setenv("PATCHPILOT_TOKEN_ESTIMATE_FACTOR", "2.0")
+
+    warm = _SteadyContextModel()
+    with pytest.raises(BudgetError, match="max_turns"):
+        run_plain_loop(
+            _readonly_ctx(ctx, "T-GATE-WARM", tmp_path),
+            warm,
+            ISSUE,
+            max_turns=1,
+            token_budget=10_000_000,
+            context_window_tokens=0,
+        )
+    est0 = messages_tokens(warm.seen[0])
+    est1 = messages_tokens([*warm.seen[0], {"role": "assistant", "content": _GATE_CONTENT}])
+
+    scaled = _SteadyContextModel()
+    with pytest.raises(BudgetError) as info:
+        run_plain_loop(
+            _readonly_ctx(ctx, "T-GATE-SCALED", tmp_path),
+            scaled,
+            ISSUE,
+            max_turns=6,
+            token_budget=2 * est0,
+            context_window_tokens=0,
+        )
+    assert _gate_reading(info.value) == _GATE_USAGE + 2 * est1
+    assert len(scaled.seen) == 1, "首轮换算后仍等于额度,应当发得出去;第二轮才撞"
+
+
+def test_token_estimate_factor_bounds() -> None:
+    """配置层:默认必须是不换算的 1.0,0 与越界一律拒。
+
+    `token_budget` 的"0 = 不限"在这里是个陷阱 —— 系数取 0 等于把待发请求说成免费,
+    门禁会被彻底架空,所以它必须报错而不是被当成关闭。
+    """
+    from pydantic import ValidationError
+
+    from app.config import Settings
+
+    assert Settings().token_estimate_factor == 1.0
+    for bad in (0.0, -1.0, 5.5):
+        with pytest.raises(ValidationError):
+            Settings(token_estimate_factor=bad)
+
+
 def test_loop_accumulates_prompt_completion_tokens(ctx: ToolContext) -> None:
     """N2a:循环累计 prompt/completion 明细;fake 下 prompt=0、completion=总量。"""
     model = FakeLLM([{"tool": "finish", "args": {"success": True, "summary": "s"}}])
@@ -262,6 +375,32 @@ def test_llm_thought_recorded_with_truncation(ctx: ToolContext) -> None:
     assert truncated.startswith("x" * 100) and "(2500 chars)" in truncated
     assert len(truncated) < 2500
     assert llm[2]["output_summary"]["tool_calls"] == ["finish"]
+
+
+@pytest.mark.parametrize("body_len", [40, 500])
+def test_finish_summary_keeps_its_length(ctx: ToolContext, body_len: int) -> None:
+    """M16.9:finish 的 summary 就是下一阶段的 findings,截断必须留原文长度。
+
+    旧写法在调用点 `summary[:200]`,长度信息当场消失 ⇒ 补丁段头部的尺寸在证据链里不可复原
+    (M16 只能用降级路径的 `findings_chars` 打锚,其余实例只能报下界)。
+    """
+    summary = "根因:空输入未处理。" + "x" * body_len
+    model = FakeLLM([{"tool": "finish", "args": {"success": True, "summary": summary}}])
+    outcome = run_plain_loop(ctx, model, "issue")
+    assert outcome.success
+
+    assert ctx.tracker.path is not None
+    events = [
+        json.loads(line) for line in ctx.tracker.path.read_text(encoding="utf-8").splitlines()
+    ]
+    finish = [e for e in events if e["tool"] == "finish"][-1]
+    recorded = str(finish["input"]["summary"])
+    assert finish["input"]["success"] is True
+    if len(summary) > 300:
+        assert recorded == summary[:300] + f"... ({len(summary)} chars)"
+        assert int(re.search(r"\.\.\. \((\d+) chars\)$", recorded).group(1)) == len(summary)
+    else:
+        assert recorded == summary
 
 
 class _ScriptedModel:
@@ -561,9 +700,13 @@ def test_loop_context_defaults_follow_settings(ctx: ToolContext) -> None:
     defaults = {
         name: param.default
         for name, param in inspect.signature(run_plain_loop).parameters.items()
-        if name in {"context_window_tokens", "context_keep_recent_turns"}
+        if name in {"context_window_tokens", "context_keep_recent_turns", "token_estimate_factor"}
     }
-    assert defaults == {"context_window_tokens": None, "context_keep_recent_turns": None}
+    assert defaults == {
+        "context_window_tokens": None,
+        "context_keep_recent_turns": None,
+        "token_estimate_factor": None,
+    }
     assert settings.context_window_tokens == 16_000
     assert settings.context_keep_recent_turns == 6
     # 0 仍是"关闭"档,且 Settings 可以整体退回旧行为

@@ -169,6 +169,8 @@ def test_provenance_carries_new_traceability_fields() -> None:
         "localize_budget_share",
         "context_window_tokens",
         "context_keep_recent_turns",
+        # M17 额度门禁单位换算:系数决定"闸门在哪一次请求上判死",同题 1.0 与 1.47 不可比
+        "token_estimate_factor",
         "repo_map_enabled",
         "repo_map_max_chars",
         "repo_map_max_files",

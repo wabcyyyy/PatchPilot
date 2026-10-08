@@ -72,6 +72,23 @@ class Settings(BaseSettings):
     # round_timeout_seconds 曾是零读者死键已删——现行实现为任务级 task_timeout_seconds
     # 在 turn 边界复查(plain_loop),不做单轮独立计时
     token_budget: int = 200_000  # 单任务累计 token 预算;0 = 不限制
+    # 额度门禁的**待发请求**读数换算系数(plain_loop 的 turn 边界门禁专用)。
+    # 缺陷出处:门禁比的是"provider 真值累计 + 本地估算的单次请求",两个单位;
+    # 25 份真实 run 标定出 `len//4` 低估 1.47 倍(逐实例 1.26~1.90,见 M15 与
+    # docs/evidence/2026-10-08-context-corpus-calibration.txt),所以这条混单位门禁
+    # 系统性地**晚判死**——超支发生在闸门读数还没到顶的那一次请求里。
+    # 默认 1.0 = 与引入该字段之前逐字同行为(旧语料的 V1 锚点吃的就是这个读数,不动);
+    # 取实测 ρ 才是"统一成 provider 真值口径",但那是**跨模型/跨仓库的一个数**,
+    # 要不要当默认值由真实两臂批决定(C 卡),不在这里替它拍板。
+    token_estimate_factor: float = 1.0
+
+    @field_validator("token_estimate_factor")
+    @classmethod
+    def _check_token_estimate_factor(cls, value: float) -> float:
+        if not 0.0 < value <= 5.0:
+            raise ValueError(f"token_estimate_factor must be in (0, 5], got {value}")
+        return value
+
     default_max_rounds: int = 5
     task_timeout_seconds: int = 900
     test_timeout_seconds: int = 120

@@ -21,7 +21,7 @@ from app.llm.base import AssistantTurn, Model, messages_tokens
 from app.prompts import SYSTEM_PROMPT
 from app.tools.base import ToolContext, ToolResult
 from app.tools.output_filter import fold_output
-from app.tools.registry import FINISH_TOOL, execute, tool_schemas
+from app.tools.registry import FINISH_TOOL, _summarize_input, execute, tool_schemas
 
 log = logging.getLogger(__name__)
 
@@ -173,6 +173,7 @@ def run_plain_loop(
     cancel_event: threading.Event | None = None,
     context_window_tokens: int | None = None,
     context_keep_recent_turns: int | None = None,
+    token_estimate_factor: float | None = None,
     resume_snapshot: LoopSnapshot | None = None,
 ) -> LoopOutcome:
     """工具循环:模型输出 → 解析工具调用 → 执行 → 结果回填 → 直到 finish。
@@ -209,6 +210,9 @@ def run_plain_loop(
         settings.context_keep_recent_turns
         if context_keep_recent_turns is None
         else context_keep_recent_turns
+    )
+    est_factor = (
+        settings.token_estimate_factor if token_estimate_factor is None else token_estimate_factor
     )
     system = SYSTEM_PROMPT + (f"\n\n{extra_system}" if extra_system else "")
     messages: list[dict[str, object]] = [
@@ -302,9 +306,13 @@ def run_plain_loop(
                 state_label=state_label,
                 turn_no=turn_no,
             )
-        if budget > 0 and tokens_spent + context_tokens > budget:
+        # 混单位门禁:`tokens_spent` 是 provider 真值,`context_tokens` 是本地估算。
+        # est_factor 只换算**待发的那一次**,默认 1.0 时读数与本字段引入前逐字相同(M15 的
+        # V1 锚点就吃这个读数,不许回溯改口径)。
+        pending = round(context_tokens * est_factor)
+        if budget > 0 and tokens_spent + pending > budget:
             raise _budget_error(
-                f"agent loop tokens {tokens_spent + context_tokens} exceed budget {budget}",
+                f"agent loop tokens {tokens_spent + pending} exceed budget {budget}",
                 tokens_spent,
                 tokens_prompt,
                 tokens_completion,
@@ -366,7 +374,11 @@ def run_plain_loop(
                     tool=FINISH_TOOL,
                     round_no=round_no,
                     state=state_label,
-                    input_payload={"success": success, "summary": summary[:200]},
+                    # summary 就是下一阶段的 findings,所以截断走工具入参同一条规则(>300 留
+                    # "... (N chars)"):调用点各自截断会把上一阶段结论的尺寸从证据链里抹掉(M16.9)。
+                    input_payload=_summarize_input(
+                        FINISH_TOOL, {"success": success, "summary": summary}
+                    ),
                     output_summary={"patch_applied": outcome.patch_applied, "turns": turn_no},
                     duration_ms=0,
                 )
