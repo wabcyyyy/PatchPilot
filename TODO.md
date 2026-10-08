@@ -666,7 +666,7 @@
       每次 run_pytest 前后复查(含最后一次 rerun 之后)。
 - [x] S05a 规范 TaskSpec 数据模型与迁移(F4 前半):app/task_spec.py 规范化 JSON+SHA256、
       SQLite 增量列、runner 生成完整任务契约;暂不宣称 API custom 可恢复。
-- [ ] S03 候选工件与恢复再验证(F2):app/graph/candidate.py 冻结 diff+manifest,
+- [x] S03 候选工件与恢复再验证(F2):app/graph/candidate.py 冻结 diff+manifest,
       恢复=重应用+重门禁+重测试,ResumeDecision 四态,服务恢复判定接合法边界。
 - [ ] S04 统一轮次递增与拒绝后重试(F5):round_no 单点递增,max_rounds=2 首拒后第二轮必须发生。
 - [ ] S05b API 幂等/完整持久化/恢复接线(F4 收口):TaskSpec 全量落库、custom 可重建、

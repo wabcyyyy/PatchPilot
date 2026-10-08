@@ -1053,3 +1053,44 @@ roundtrip/篡改与旧版本拒绝/指纹六态/落盘规范形态/runner 契约
 
 全量离线 pytest(闸记录见提交);ruff/format 绿。S05b(S03/S04 后)接 API 幂等与
 完整持久化端到端,不重复定义哈希。
+
+## S03 候选工件与恢复再验证(F2 关闭)(2026-10-09,产品卡 5/13)
+
+缺陷(review F2,P0):恢复把 propose/apply/verify/rollback/finish 之后的工作区一律
+复位到基线,再直接执行检查点的 next 节点。next=finish 时补丁已被复位清掉,finish 仍按
+检查点里的旧 verify 布尔判 resolved——磁盘 diff 为空、报告宣称成功(审查探针实测复现)。
+
+**修法(ADR-0009 §4 落地)**:
+- 新增 `app/graph/candidate.py`:apply 节点入口(= PROPOSE→APPLY 交接点,含分支合流)
+  把**实际工作区 diff** 冻结为 `candidates/<id>/diff.patch + manifest.json`
+  (tmp+replace 原子写;candidate_id 由 diff 内容派生,同 diff 幂等);manifest 带
+  task_spec_hash/source_snapshot_hash/baseline_commit/round/父候选/生成 call_ids;
+  读侧校验"清单可解析 + 补丁字节 sha256 与清单一致",半写/篡改一律不可信;
+  state 只存 candidate_id/candidate_hash 引用。
+- `prepare_resume` 重写为**结构化 ResumeDecision**(continue/revalidate/reject/
+  already_terminal),runner 不再把恢复失败默认为冷启动(冷启动会把时间/循环/token
+  额度整份重发):按 S03 规格表分流——localize/plan/propose/rollback=continue
+  (propose 先复位、rollback **不再提前复位**:回滚节点要先保全 preserved_diff 再自己
+  复位,旧实现提前复位会把取证毁成空 diff);apply/verify/finish=revalidate:
+  候选存在性与 sha 校验 → 受理契约哈希/源指纹/基线逐一核对 → 余额检查 →
+  复位前干跑落点校验(拒绝不毁现场)→ reset+重应用 → update_state 清旧 verify/gate
+  结论并以 as_node="propose" 落检查点 → 从 APPLY 完整重验;END=already_terminal:
+  只核对既有 report.json,不重跑、不再调用模型、不覆盖原终态。
+- verify 每次真实重跑刷新 `verification_attempt_id`;TaskResult/report 增
+  candidate_id/candidate_hash/verification_attempt_id——成功绑定**当前候选**与
+  **当前验证尝试**。
+- 服务 `_resumable_row` 纳入合法 checkpoint+candidate 边界:受理契约(task_spec.json)
+  在场 + (有候选工件 ∨ 循环快照可用)才重新入队;旧任务缺身份证据不自动放行。
+- 旧检查点无候选(next=finish 但 apply 入口从未冻结过)= F2 的真实历史现场:
+  恢复按规格 **reject → NEEDS_REVIEW**,绝不沿用旧 True。
+
+**回归**(tests/test_candidate_recovery.py 8 例):F2 种子(next=finish,旧 True+盘上有
+补丁)无候选→拒绝且现场保全、有候选→重验证 resolved 且磁盘 diff==candidate_hash==
+报告绑定;**verify→finish 边界 os._exit 真进程死亡**(子进程 monkeypatch finish 即死,
+父进程按候选恢复到 resolved,轨迹含重应用/门禁/双跑复核);候选篡改/缺失拒绝;
+END 恢复零模型调用零新事件;取消优先不 resolved;next=verify 的 revalidate 清旧旗标。
+既有测试:prepare_resume 用例改 ResumeDecision 形态;僵尸夹具补受理契约;
+恢复事件顺序维持"决策先于动作"。
+
+全量离线 pytest(闸记录见提交);ruff/format 绿;ADR-0009 锚点随 S03 重构同步
+(resume.py 缺陷现场锚点改钉修复位 REVALIDATE_NODES:67)。

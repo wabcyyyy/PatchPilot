@@ -507,7 +507,7 @@ basetemp 必须在仓库外；每卡提交并更新进度。单次生成不超�
 | S01 | done(2026-10-08) | fix(adapters) commit | tests/test_test_identity.py 22 例 + executor 6 例真实仓库 + API tuple 全链路;F3 由假通过变拒绝;详见 PROGRESS S01 |
 | S02a | done(2026-10-09) | feat(resources) commit | ResourceLedger+共享终局验收;F1 两引擎超额不再 resolved;tests/test_resources 13+test_acceptance 12+test_f1_budget 6;详见 PROGRESS S02a(S02b 待做) |
 | S05a | done(2026-10-09) | feat(task-spec) commit | app/task_spec.py 规范契约+canonical SHA256+源指纹;tasks 表三列迁移;graph runner 受理冻结/重算拒绝;test_task_spec 16+storage 2;详见 PROGRESS S05a |
-| S03 | pending | — | — |
+| S03 | done(2026-10-09) | feat(candidate) commit | ResumeDecision 四态分流+候选重应用完整重验;F2 关闭(含 verify→finish 边界 os._exit 真死亡用例);test_candidate_recovery 8 例;详见 PROGRESS S03 |
 | S04 | pending | — | — |
 | S05b | pending | — | — |
 | S06 | pending | — | — |

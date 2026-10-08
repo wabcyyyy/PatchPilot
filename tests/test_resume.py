@@ -451,18 +451,18 @@ def test_prepare_resume_resets_writable_stage_only(tmp_path: Path) -> None:
         "deadline_epoch": time.time() + 900,
     }
     nodes = _nodes("T-WRITE")
-    config = prepare_resume(
+    decision = prepare_resume(
         nodes,
         _StubGraph(state, "propose"),
         run_dir=tmp_path,
         config={"recursion_limit": 12},
         task_id="T-WRITE",
     )
-    assert config is not None
+    assert decision.action == "continue" and decision.config is not None
     # 主代理复核改的口径(原实现是 limit + step,等于给崩溃的任务多发循环额度):
     # 只顺延**剩余额度**——stub 的检查点 step=3,原 limit=12 ⇒ 续跑拿 9,
     # 整条 thread 的累计步数上界仍是那次正常运行的 12。崩溃不得换来更多的循环余地。
-    assert config["recursion_limit"] == 9, config["recursion_limit"]
+    assert decision.config["recursion_limit"] == 9, decision.config
     assert nodes.ctx is not None and nodes.baseline_commit == baseline
     assert nodes.resume_snapshot is not None and nodes.resume_snapshot.turn_no == 2
     assert working_tree_is_clean(workspace) and MARKER not in dirty.read_text(encoding="utf-8")
@@ -472,13 +472,14 @@ def test_prepare_resume_resets_writable_stage_only(tmp_path: Path) -> None:
     # 只读阶段:不复位、不记复位事件,现场原样
     dirty.write_text(_mark_partial(text), encoding="utf-8", newline="\n")
     readonly = _nodes("T-READ")
-    assert prepare_resume(
+    readonly_decision = prepare_resume(
         readonly,
         _StubGraph(state, "localize"),
         run_dir=tmp_path,
         config={"recursion_limit": 12},
         task_id="T-READ",
     )
+    assert readonly_decision.action == "continue"
     assert MARKER in dirty.read_text(encoding="utf-8")
     assert "resume_reset_workspace" not in [e.tool for e in readonly.tracker.events]
 
@@ -494,8 +495,8 @@ def test_prepare_resume_resets_writable_stage_only(tmp_path: Path) -> None:
             run_dir=tmp_path,
             config={"recursion_limit": 12},
             task_id="T-EXH",
-        )
-        is None
+        ).action
+        == "reject"
     )
     assert "resume_unavailable" in [e.tool for e in exhausted.tracker.events]
     assert "resume_reset_workspace" not in [e.tool for e in exhausted.tracker.events]
@@ -538,6 +539,19 @@ def _zombie(service: TaskService, tmp_path: Path, *, with_snapshot: bool) -> tup
     run_dir = tmp_path / "runs" / task_id
     run_dir.mkdir(parents=True, exist_ok=True)
     if with_snapshot:
+        # S03:可恢复判定要求受理契约在场(身份证据);loop snapshot + 契约 = 合法边界
+        from app.task_spec import build_task_spec, write_task_spec_file
+
+        write_task_spec_file(
+            run_dir,
+            build_task_spec(
+                load_bug("BUG-001", BUG_ROOT),
+                engine="graph",
+                arm="agent",
+                model_provider="fake-replay",
+                max_turns=20,
+            ),
+        )
         save_loop_snapshot(
             run_dir,
             LoopSnapshot(

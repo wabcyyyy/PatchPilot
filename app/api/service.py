@@ -438,9 +438,19 @@ class TaskService:
         run_dir = row.get("run_dir")
         if not run_dir:
             return False
+        run_dir_path = Path(run_dir)
+        # S03:可恢复判定 = 合法的 checkpoint+candidate 边界,不是只看 loop_state 文件。
+        # 受理契约(task_spec.json,S05a)是身份证据:缺失说明是旧任务,
+        # 缺所需输入/资源证据,一律不自动放行(判死路径)。
+        if not (run_dir_path / "task_spec.json").is_file():
+            return False
+        if (run_dir_path / "candidates").is_dir():
+            # 有候选工件:apply/verify/finish 边界崩溃(循环快照已被正常删除),
+            # runner 的 revalidate 会按候选重应用并完整重验——值得重新入队
+            return True
         from app.graph.loop_state import load_loop_snapshot
 
-        return load_loop_snapshot(Path(run_dir), task_id=str(row.get("task_id") or "")) is not None
+        return load_loop_snapshot(run_dir_path, task_id=str(row.get("task_id") or "")) is not None
 
     def _requeue_for_resume(self, row: dict[str, Any]) -> bool:
         """把僵尸行重新入队续跑;返回 False = 调用方须按旧路径判死。

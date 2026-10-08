@@ -26,6 +26,11 @@ if TYPE_CHECKING:  # 复盘 R-2:兑现 AGENTS"全量类型标注",运行时零�
     from app.evals.bugset import BugTask
 from app.gitops.testing import materialize_repo
 from app.graph.acceptance import acceptance_from_state, double_run_mismatch
+from app.graph.candidate import (
+    accepted_contract_hashes,
+    freeze_candidate,
+    new_verification_attempt_id,
+)
 from app.graph.gates import ensure_budget, run_gates
 from app.graph.loop_state import LoopSnapshot
 from app.graph.plain_loop import LoopOutcome, run_plain_loop
@@ -146,9 +151,6 @@ class TaskNodes:
     # S02/F1:任务级资源账本——本地化/规划/补丁/分支候选的全部模型调用入账,
     # 终局验收(acceptance_from_state)读它;None 时 __post_init__ 按 Settings 建。
     ledger: ResourceLedger | None = None
-    # S02b:恢复被拒的原因(prepare_resume 写);runner 据此拒绝恢复而非冷启动
-    # (S03 会把它泛化成结构化 ResumeDecision)
-    resume_rejected_reason: str | None = None
 
     def __post_init__(self) -> None:
         if self.ledger is None:
@@ -653,9 +655,47 @@ class TaskNodes:
 
     def apply(self, state: TaskState) -> dict[str, Any]:
         """最终门禁:对整个工作区 diff 复核七项门禁的静态五项
-        (格式/文件/路径/影子/范围;命令与资源门禁分别在工具层与预算检查点拦截)。"""
+        (格式/文件/路径/影子/范围;命令与资源门禁分别在工具层与预算检查点拦截)。
+
+        S03:本节点是 PROPOSE→APPLY(含分支合流)的交接点——把实际工作区 diff
+        冻结为候选工件(candidates/<id>/diff.patch+manifest),state 只存引用与
+        哈希。此后任何"成功"都必须绑定这份当前候选;恢复到 apply/verify/finish
+        时按候选重应用并从这里完整重验。"""
         assert self.ctx is not None
         diff = working_tree_diff(self.workspace)
+        candidate_update: dict[str, Any] = {}
+        if not diff.is_empty:
+            accepted_task_hash, accepted_source_hash = accepted_contract_hashes(
+                self.report_dir.parent
+            )
+            candidate = freeze_candidate(
+                self.report_dir.parent,
+                self.workspace,
+                task_spec_hash=accepted_task_hash,
+                source_snapshot_hash=accepted_source_hash,
+                baseline_commit=self.baseline_commit,
+                round_no=state["round_no"],
+                parent_candidate_id=state.get("candidate_id") or None,
+                generated_call_ids=[
+                    c["call_id"]
+                    for c in (self.ledger.snapshot()["calls"] if self.ledger else [])
+                    if c.get("status") == "recorded"
+                ],
+            )
+            candidate_update = {
+                "candidate_id": candidate.candidate_id,
+                "candidate_hash": candidate.diff_sha256,
+            }
+            self.tracker.record(
+                tool="candidate_frozen",
+                round_no=state["round_no"],
+                state="APPLY_PATCH",
+                input_payload={"round": state["round_no"]},
+                output_summary={
+                    "candidate_id": candidate.candidate_id,
+                    "diff_sha256": candidate.diff_sha256[:12],
+                },
+            )
         gate = run_gates(
             diff.diff_text,
             allowed_paths=self.bug.allowed_paths,
@@ -666,7 +706,12 @@ class TaskNodes:
             self.tracker.record(
                 tool="apply_gate", state="VERIFY", input_payload={"files": diff.changed_files}
             )
-            return {"status": "VERIFY", "changed_files": diff.changed_files, "gate_violations": []}
+            return {
+                "status": "VERIFY",
+                "changed_files": diff.changed_files,
+                "gate_violations": [],
+                **candidate_update,
+            }
 
         violations = [str(v) for v in gate.violations] or ["[format] no patch applied"]
         self.tracker.record(
@@ -752,6 +797,8 @@ class TaskNodes:
             "verify_failed_ok": failed_report.all_passed,
             "verify_regression_ok": regression_report.all_passed,
             "status": "VERIFY",
+            # S03:每次真实重跑都刷新验证尝试 id——恢复不得沿用旧证据的身份
+            "verification_attempt_id": new_verification_attempt_id(),
         }
         # 回归集单独失败时也要有反馈(此前只处理 failed 集,回归失败反馈会悬空);
         # failed+regression 的失败签名合并成一组做"连续相同"检测(重复错误 → 换思路提示)

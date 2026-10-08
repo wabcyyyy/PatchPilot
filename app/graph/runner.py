@@ -16,7 +16,7 @@ from app.gitops.differ import working_tree_diff
 from app.graph.builder import build_graph
 from app.graph.checkpoint import make_sqlite_checkpointer
 from app.graph.nodes import TaskNodes
-from app.graph.resume import prepare_resume
+from app.graph.resume import ResumeDecision, prepare_resume
 from app.graph.state import TaskState
 from app.llm.base import Model
 from app.tools.tracker import Tracker
@@ -187,26 +187,43 @@ def run_task_graph(
             "configurable": {"thread_id": task_id},
             "recursion_limit": 5 * nodes.max_rounds + 8,
         }
-        # M6 恢复分支:检查点里有被打断的节点 → 从那里 invoke(None) 续跑;
-        # prepare_resume 返回 None(无检查点/已终态/复位失败)→ 如实回退冷启动
-        resume_config = (
+        # M6/S03 恢复分支:结构化 ResumeDecision 分流——恢复失败绝不默认冷启动
+        # (冷启动会把时间/循环/token 额度整份重发一遍)
+        decision: ResumeDecision | None = (
             prepare_resume(nodes, graph, run_dir=run_dir, config=config, task_id=task_id)
             if resume
             else None
         )
         final: TaskState | None
-        if resume_config is not None:
-            final = graph.invoke(None, config=resume_config)  # type: ignore[assignment]
-        elif resume and nodes.resume_rejected_reason:
-            # S02b:拒绝恢复 ≠ 冷启动——冷启动会把时间/循环额度整份重发一遍。
-            # 按规格收敛 NEEDS_REVIEW,错误信息说明拒绝原因,现场不动。
+        if decision is None:
+            final = graph.invoke(initial, config=config)  # type: ignore[assignment]
+        elif decision.action in {"continue", "revalidate"}:
+            final = graph.invoke(None, config=decision.config)  # type: ignore[assignment]
+        elif decision.action == "already_terminal":
+            # END 恢复:只核对既有终态产物,不重跑、不重新调用模型、不覆盖原终态
+            report = dict(decision.detail.get("report") or {})
+            final = None
+            result.status = str(report.get("status") or "NEEDS_REVIEW")
+            result.outcome = str(report.get("outcome") or result.status.lower())
+            result.verdict = str(report.get("verdict") or "needs_review")
+            result.rounds = int(report.get("rounds", 1) or 1)
+            result.turns = int(report.get("turns", 0) or 0)
+            result.tokens_used = int(report.get("tokens_used", 0) or 0)
+            result.tokens_prompt = int(report.get("tokens_prompt", 0) or 0)
+            result.tokens_completion = int(report.get("tokens_completion", 0) or 0)
+            result.error = "resume: terminal checkpoint replayed (no re-execution)"
+            result.validation_status = str(report.get("validation_status") or "not_run")
+            result.gate_status = str(report.get("gate_status") or "not_run")
+            result.resource_status = str(report.get("resource_status") or "unknown")
+            result.verify_failed_ok = bool(report.get("verify_failed_ok"))
+            result.verify_regression_ok = bool(report.get("verify_regression_ok"))
+            result.changed_files = list(report.get("changed_files", []))
+        else:
             final = None
             result.status = "NEEDS_REVIEW"
             result.outcome = "needs_review"
             result.verdict = "needs_review"
-            result.error = f"resume rejected: {nodes.resume_rejected_reason}"
-        else:
-            final = graph.invoke(initial, config=config)  # type: ignore[assignment]
+            result.error = f"resume rejected: {decision.reason}"
 
         if final is not None:
             result.status = final.get("status", "NEEDS_REVIEW")
@@ -227,6 +244,9 @@ def run_task_graph(
             result.verify_failed_ok = final.get("verify_failed_ok", False)
             result.verify_regression_ok = final.get("verify_regression_ok", False)
             result.changed_files = list(final.get("changed_files", []))
+            result.candidate_id = str(final.get("candidate_id") or "")
+            result.candidate_hash = str(final.get("candidate_hash") or "")
+            result.verification_attempt_id = str(final.get("verification_attempt_id") or "")
             # S02(spec §3.1):终局验收的三态与用量事实进报告;state 未携带时
             # (预算路径提前收尾,没走到 finish 节点)回读账本真相,不冒充 unknown
             result.validation_status = final.get("validation_status", "not_run")

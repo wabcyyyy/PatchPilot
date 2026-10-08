@@ -75,3 +75,8 @@ class TaskState(TypedDict, total=False):
     validation_status: str  # not_run | passed | failed | inconclusive
     gate_status: str  # not_run | passed | rejected | inconclusive
     resource_status: str  # within_budget | exhausted | exceeded | unknown
+    # S03(ADR-0009 §4):候选工件引用与哈希——成功必须绑定"当前候选";
+    # verification_attempt_id 每次 verify 真实重跑时刷新(恢复不得沿用旧证据)
+    candidate_id: str
+    candidate_hash: str
+    verification_attempt_id: str

@@ -95,6 +95,10 @@ class TaskResult:
     validation_status: str = "not_run"  # not_run|passed|failed|inconclusive
     gate_status: str = "not_run"  # not_run|passed|rejected|inconclusive
     resource_status: str = "unknown"  # within_budget|exhausted|exceeded|unknown
+    # S03(ADR-0009 §4):成功绑定当前候选与当前验证尝试的证据链
+    candidate_id: str = ""
+    candidate_hash: str = ""
+    verification_attempt_id: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
