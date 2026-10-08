@@ -862,3 +862,32 @@ M11.3 要的是生产影响评估,结果它先推翻了我自己登记的 M11.1:
   `PYTHONPATH=. .venv/Scripts/python.exe scripts/measure_context_counterfactual.py`
   (退出码:前者 F1 不守恒即 1,后者 V1 锚点未全中即 1);原始输出已入
   `docs/evidence/2026-10-08-context-corpus-calibration.txt` 与 `...-context-counterfactual.txt`。
+
+## S00 实施基线与契约 ADR(2026-10-08,spec《PatchPilot执行SPEC-2026-10-08》开工卡)
+
+接手 spec 执行。**执行根偏离已声明**:spec 书写根是 codex worktree(C 侧),实际在 D 侧
+(用户会话目录、.venv 与历史 runs 所在地)执行——两侧 HEAD 逐字同为 `442cd8d`、D 侧工作树
+clean,满足 spec"其他 checkout 先核对代码身份"的前提;新增分支
+`codex/patchpilot-reliability-20261008` 承载全部实施 commit,master 不动,C 侧零写入
+(声明见 docs/spec-s00-baseline-2026-10-08.md §0)。
+
+- **全量离线 pytest 基线**(basetemp=D:/tmp/pt-patchpilot-spec-20261008,仓库外):
+  首跑 **2 failed / 717 passed / 3 skipped / 1108.5s**。2 个失败全是 `test_docs_anchors`
+  对**本卡新入库的 ADR-0009** 的锚点格式断言(我按散文写了"验证锚点",测试要求
+  `- \`path:line\` — \`substring\`` 逐条格式),不是产品失败;按格式修好后复跑该文件 6 passed。
+  产品用例零失败。3 个 skip 全环境性(redis×2、Windows 符号链接权限×1)。
+  收集数 **722**(审查材料记 710,同 commit 差异未逐例归因,以本侧 collect-only 为准)。
+- **35+35 FakeLLM 基线批**(新目录,历史 runs 未动):plain 走 driver CLI
+  (`runs/spec-baseline-plain-20261008`,manifest:35/35 resolved,commit 442cd8d,
+  worktree_dirty=false);graph 的批 CLI 不存在,按 spec 逐题 run_single --engine graph
+  (`runs/spec-baseline-graph-20261008`,35/35 退出码 0,report.json 复核 verdict 全 resolved、
+  bug_id 去重 35)。与历史 fake35-v2/graph35-v2 的 35/35 同分布——回放基线没有漂移。
+- **ADR-0009**(docs/adr/0009-严格验收契约-资源账本-恢复证据.md):把 spec §3.1–3.3 写成
+  契约——严格 resolved 保留 + validation/resource/gate 三个解释维度;ResourceLedger
+  (call_id 入账、provider/estimated/unknown 来源、超限结构化收尾、pending 崩缺记 unknown 不写 0);
+  task_timeout 覆盖"执行线程开始→最终验收"、恢复不重授;成功绑定
+  task_spec/source/baseline/candidate/test_policy 哈希与 verification_attempt_id;
+  round_no 单点递增;指标语义变更必须带版本。锚点节按测试格式钉在 7 处**缺陷现场**
+  (README:8 / nodes.py:861 finish / resume.py:43 / pytest_adapter.py:189 /
+  metrics.py:125 / config.py:74,93),后续每卡修复到哪锚点同步修订到哪。
+- 首个 commit 仅文档(spec 副本、ADR-0009、基线清单、TODO/PROGRESS、spec §10 索引)。

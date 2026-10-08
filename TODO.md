@@ -646,6 +646,46 @@
       仓库根 `.pytest-tmp*`(`scripts/measure_retrieval_domain.py` 的真实上游仓库缓存是它的数据源,
       删了只能重跑全量再生 —— 维持"留着"的判断,除非你另有打算)。
 
+### S 系列(spec 执行:docs/PatchPilot执行SPEC-2026-10-08.md,2026-10-08 接手)
+
+执行根 `D:/wcy/project/PatchPilot`,分支 `codex/patchpilot-reliability-20261008`
+(代码身份与 spec 审查基线 `442cd8d` 逐字核对一致,偏离声明见 docs/spec-s00-baseline-2026-10-08.md)。
+依赖序:S00→S01→S02a→S02b→S05a→S03→S04→S05b→S06→S07→S08→S09→S10a→S10b→S11;L01 不自动启动。
+授权边界:只实施 spec 明确列出的语义修正;禁降门禁、禁改被诊断仓库测试放行。
+
+- [x] S00 基线与契约 ADR:全量离线 pytest(717 passed+3 环境 skip,2 处失败为新 ADR-0009
+      锚点格式所致、当卡修复)、plain/graph 各 35 题 FakeLLM 基线批
+      (`runs/spec-baseline-{plain,graph}-20261008`,均 35/35 resolved)、ADR-0009
+      (严格验收/资源账本/时间口径/恢复证据/指标版本契约)、基线清单
+      docs/spec-s00-baseline-2026-10-08.md。首个 commit 仅文档。
+- [ ] S01 测试身份完整匹配与合法 node id(F3):类链/参数化/嵌套类,file 缺失与 rootdir 口径,
+      白名单放行 `test_tuple[(1,2)]` 等合法 ID;新增 app/adapters/test_identity.py 与用例。
+- [ ] S02a 资源账本与共享终局验收(F1):app/graph/resources.py + acceptance.py,
+      call_id 入账、超限结构化收尾、graph/plain 同一验收面、report_schema_version=2。
+- [ ] S02b 持久时间与执行边界:deadline 建立并持久化、恢复不重授、
+      每次 run_pytest 前后复查(含最后一次 rerun 之后)。
+- [ ] S05a 规范 TaskSpec 数据模型与迁移(F4 前半):app/task_spec.py 规范化 JSON+SHA256、
+      SQLite 增量列、runner 生成完整任务契约;暂不宣称 API custom 可恢复。
+- [ ] S03 候选工件与恢复再验证(F2):app/graph/candidate.py 冻结 diff+manifest,
+      恢复=重应用+重门禁+重测试,ResumeDecision 四态,服务恢复判定接合法边界。
+- [ ] S04 统一轮次递增与拒绝后重试(F5):round_no 单点递增,max_rounds=2 首拒后第二轮必须发生。
+- [ ] S05b API 幂等/完整持久化/恢复接线(F4 收口):TaskSpec 全量落库、custom 可重建、
+      执行参数与 replay 进幂等键、失败清理端到端。
+- [ ] S06 冻结执行输入与环境预检:app/gitops/input_snapshot.py + app/api/preflight.py,
+      受理时冻结源码身份,执行只读物化引用;preflight 不调模型不留假 RUNNING。
+- [ ] S07 运行中进度与轨迹可查:Tracker 事件 sink→SQLite 幂等入库,任务行进度字段,
+      终态不可被迟到事件复活;不引入 SSE/MQ。
+- [ ] S08 演示修复与 API golden path(F7):run_dirty_ticket 改 patch_text 块协议 + --out,
+      新 demo/run_api_ticket.py 全链路;离线冒烟测试钉住。
+- [ ] S09 指标 v2 与历史口径保留(F6):metrics_version=2,空 touched 不再 strict 成功,
+      v1 可显式重算;expected coverage 独立指标。
+- [ ] S10a 同引擎对照接线(F8):graph 增受控 one_shot 策略,两臂共享 LOCALIZE/PLAN/上下文/
+      预算/终局验收;manifest 登记差异,未登记差异报错。
+- [ ] S10b 实验预登记 v2 与离线统计:修正旧方案八条(样本固定/ITT 分母/失败分类等),
+      docs/experiment-preregistration-v2-2026-10-08.md + scripts/compare_experiments.py。
+- [ ] S11 全量收口:证据索引 docs/release-evidence-2026-10-08.md、简历证据
+      docs/resume-evidence-2026-10-08.md、README/design 对齐 implemented/offline/planned 边界。
+
 ## 明确不做(需用户裁决,不自行推进)
 - **LLM 语义摘要**(目标里"语义摘要"的一支):ADR-0004 已把它列为"考虑后否决"的候选
   (多一次花费 + 摘要可能丢掉补丁要的锚点上下文),现落地的是**机械压缩**。
