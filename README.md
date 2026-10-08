@@ -12,9 +12,9 @@
 
 ## 功能概览
 
-- **LangGraph 状态机**:CREATED → BASELINE → LOCALIZE → PROPOSE_PATCH → APPLY_PATCH → VERIFY → FINISHED,
+- **LangGraph 状态机**:CREATED → BASELINE → LOCALIZE → PLAN → PROPOSE_PATCH → APPLY_PATCH → VERIFY → FINISHED,
   外加 INVALID_TASK / PATCH_REJECTED / VERIFY_FAILED / BUDGET_EXCEEDED / NEEDS_REVIEW 异常分支;
-- **7 个受控 Agent 工具**:list_files / search_code / read_file / apply_patch / run_tests / git_diff / reset_workspace,
+- **9 个受控 Agent 工具**:list_files / search_code / find_symbol / describe_file / read_file / apply_patch / run_tests / git_diff / reset_workspace,
   每次调用记录完整轨迹(JSONL + SQLite);
 - **七项质量门禁**:格式 / 禁改测试文件 / 路径越界 / 修改范围 / 影子模块 / 命令白名单 / 资源预算,
   附 10 个攻击样例(`bugs/attacks/`)验证拦截;

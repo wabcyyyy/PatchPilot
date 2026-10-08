@@ -6,7 +6,8 @@
 
 1. 每篇 ADR 末尾必须有「验证锚点」节,逐条声明 `路径:行号` — `期望子串`;
 2. 锚点所指文件在所指行必须包含期望子串(行号漂移或文案回退都算失败);
-3. 已知的假命题文案禁止在任何文档/源码中复活(黑名单)。
+3. 已知的假命题文案禁止在任何文档/源码中复活(黑名单);
+4. README 的能力清单(工具条数与名单)以代码里的注册表为准绳逐名对齐。
 
 夜间 GOAL 的「全量 pytest 绿」红线由此物理卡住"改代码不改文档"。
 """
@@ -15,6 +16,8 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+
+from app.tools.registry import FINISH_TOOL, REGISTRY
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -123,3 +126,38 @@ def test_p3_7_corrected_claims_are_pinned() -> None:
     # 事实基准:checkpoint.py 自述「恢复分两级」仍在原位(M6:读侧已接线,
     # 此前的「当前没有崩溃恢复路径」随该事实改变而作废,见 ADR-0001 同步修订)
     assert "恢复分两级" in _read("app/graph/checkpoint.py")[2]
+
+
+def test_readme_tool_inventory_matches_registry() -> None:
+    """README「受控 Agent 工具」那句的条数与名单必须逐名等于 registry 实际注册。
+
+    M3 往目录里加了 find_symbol/describe_file,README 还写着"7 个"——file:line 锚点
+    盯不住"条数与名单"这类漂移,所以这里按集合对齐钉死(伪工具 finish 只给模型收敛用,
+    不算受控工具,与 README 的口径一致)。
+    """
+    line = next(line for line in _read("README.md") if "受控 Agent 工具" in line)
+    head, _, tail = line.partition("**:")
+    declared_count = int(re.search(r"\*\*(\d+) 个", head).group(1))
+    names = [name.strip() for name in tail.rstrip(",").split("/")]
+    registered = [name for name in REGISTRY if name != FINISH_TOOL]
+    assert declared_count == len(names) == len(registered), (
+        f"README 声明 {declared_count} 个、名单 {len(names)} 项、registry 注册 {len(registered)} 项"
+    )
+    assert names == registered, f"README 名单与 registry 不符:{set(names) ^ set(registered)}"
+
+
+def test_readme_dataset_counts_match_the_fixtures() -> None:
+    """README 与 threat-model 的题数/攻击样例数必须以夹具目录为准绳。
+
+    R3-Q1 记的就是这一类漂移(ATTACK-009 入库后「8 个」没回改)。数字写在文案里,
+    就得有人每次对着实物数一遍——上一用例管工具清单,这条管数据集。
+    """
+    attacks = sorted(p.name for p in (REPO_ROOT / "bugs" / "attacks").iterdir() if p.is_dir())
+    bugs = sorted(
+        p.name for p in (REPO_ROOT / "bugs").iterdir() if p.is_dir() and p.name.startswith("BUG-")
+    )
+    readme = "\n".join(_read("README.md"))
+    threat = "\n".join(_read("docs/threat-model.md"))
+    assert f"{len(attacks)} 个攻击样例" in readme, f"README 的攻击样例条数与目录不符:{attacks}"
+    assert f"攻击样例 {len(attacks)} 个拦截" in threat, "threat-model 的条数与目录不符"
+    assert f"正式集 {len(bugs)} 题" in readme, f"README 的题目数与 bugs/ 不符:{len(bugs)}"
