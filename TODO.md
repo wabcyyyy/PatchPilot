@@ -90,7 +90,8 @@
 - [x] M5.4 用例:阶段顺序、失败轮回 PLAN 并带上轮反馈、降级仍进 PROPOSE 落 `plan_degraded`、
       任务级耗尽仍 `BUDGET_EXCEEDED`、脚本模型零额外步消耗(`consumed` 相等)、
       `TaskState.plan` 可 checkpoint、fake 图路径 25 例一行未动仍绿。
-- [ ] M5.5 文档对齐:`docs/adr/0001` 与 `docs/design.md` 仍写 `4N+8`,归入 M7.3。
+- [x] M5.5 文档对齐:已随 M7.3 落地并复查过 —— `docs/design.md:99` 与 `docs/adr/0001:27`
+      都写 `5N+8`(并注明此前是 `4N+8`);历史审计文档按 M7.3 的口径保留原文间不改。
 
 ### M6 状态持久化与中断恢复(checkpointer 从"留档"变"可续跑")
 
