@@ -26,7 +26,7 @@
 | **发现自己写的测试是假通过**,并把它变成机制防线 | `test_context_wiring.py` 压缩用例当时靠"basetemp 恰好在仓库内"才绿(`.git` 父链);改成真 git 工作区 + `patch_applied is False` 断言,并在 `tests/conftest.py` 装 session 级防线:落点进了仓库就**当场整体报错** | 强:这条我最愿意讲 |
 | 把"并发执行互删临时根"从推测测成数字,再修掉 | `scripts/measure_basetemp_contention.py`:共用 report_dir 的并发执行 **9/18 伪失败**(隔离组 0/18,控制组单独跑全过);修复 `a127b28` 后 0 次,`tests/test_basetemp_isolation.py` 守住,**反向验证**过(把落键改回旧写法该用例 12/18 红) | 强:失败形态三种都抓到了 |
 | 我装的一条拦截,把文档里的默认命令冲掉了 —— **我自己发现并收口** | `pyproject.toml` 的 `--basetemp=.pytest-tmp`(仓库内)与 M10.5 防线相冲 ⇒ `AGENTS.md`/`README` 写的 `pytest -q` 必然失败;`94d558b` 把落点移出共享配置、文档同步改跑法,连带修掉 `measure_retrieval_domain.py` 的"报 0 题"假干净(`1e65a80`) | 强:有 commit,讲得出取舍 |
-| 工程规模与质量:**708 passed / 3 skipped**,评测每个数字可复现 | `ruff check .` 全绿 + `pytest -q --basetemp=D:/tmp/pt`(2026-10-08 实测 1229s);批次报告自动归并复现命令(`app/evals/report.py`) | 强 |
+| 工程规模与质量:**713 passed / 3 skipped**,评测每个数字可复现 | `ruff check .` 全绿 + `pytest -q --basetemp=D:/tmp/pt`(2026-10-08 19:55 实测 1321s);批次报告自动归并复现命令(`app/evals/report.py`) | 强 |
 | **拿 25 份真实模型 run 离线量出 token 估算器的偏差**,而不是假设 `len//4` 中立 | `scripts/context_replay.py`:重建逐轮请求消息列表,三道跑前写死的自检 F1 **无未解释失败**(唯一例外是 `4a4093e` 那条"崩溃路径把用量记成 0"的实物,单独归类)、F2 动作序列 0/251 错配(251 = 被重放的 LOCALIZE 回合,全语料 367 回合)、F3 R²=0.9424/中位误差 13.4%;结论 `chars//4` 低估 **1.47 倍**(逐实例 1.263~1.897)⇒ 生产阈值 16000 实际对应 **≈23,500 真 tokens** | 强:锚点见下条 |
 | 这个重建不是"我自说自话",它撞上了代码当时留下的**同口径读数** | `scripts/measure_context_counterfactual.py` 的 V1:额度型判死的 error 原文 `agent loop tokens X exceed budget Y` 里 X−已耗真值 就是生产代码算出的估算值,零换算 —— 重建 29,426 vs 代码 29,679、23,638 vs 23,838(差 0.8~0.9%);**负对照**(故意丢工具回执)只给 1,613 / 1,411,差 18~20 倍 | 强:这是我最愿意被追问的一条测量学证据 |
 | **架构升级里"压缩省额度"这一条第一次有了真实数字,而且它是个不大的数字** | 静态动作序列反事实(25 实例):生产默认 16000/keep=6 触发 11/25、首次中位第 12 回合、触发实例的累计额度节省中位 **6%**(全体中位 0%);要省到 31% 得同时降到 8000 且 keep 收到 4,而那里 **52% 的压缩回合压不到阈值**(keep=6 为 86%,钉住的最近 N 回合本身就比阈值大)⇒ 阈值与保留回合数联动,单独调阈值不是可用杠杆 | 中-强:额度口径,不含修复率主张 |
@@ -129,7 +129,7 @@ PYTHONPATH=. python scripts/measure_context_counterfactual.py      # V1 同口�
 
 PatchPilot:给定本地 Git 仓库 + Bug 描述,Agent 检索代码、按块协议提交补丁、在隔离工作区执行
 预定义测试集,由平台按四条件判定(原失败测试转绿 ∧ 回归集全绿 ∧ 通过全部门禁 ∧ 未超资源预算),
-**不采信模型自述**。自建 35 题评测集 + SWE-bench Verified 真实题接入;当前 708 个 pytest 用例
+**不采信模型自述**。自建 35 题评测集 + SWE-bench Verified 真实题接入;当前 713 个 pytest 用例
 (3 skipped 是 Redis/符号链接权限这类环境依赖)、零网络测试套件,每条评测数字都有落盘产物。
 
 ## 简历成就句(6 条,按可核对性排过)
