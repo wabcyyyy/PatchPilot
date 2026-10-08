@@ -505,7 +505,7 @@ basetemp 必须在仓库外；每卡提交并更新进度。单次生成不超�
 |---|---|---|---|
 | S00 | done(2026-10-08;执行根=本 checkout,分支 codex/patchpilot-reliability-20261008,偏离声明见基线清单§0) | 见 git log 首个文档 commit | docs/spec-s00-baseline-2026-10-08.md:全量 pytest 717 passed+3 环境 skip(2 失败为新 ADR-0009 锚点格式所致,当卡修复);plain/graph 基线批均 35/35 resolved;ADR-0009 契约入库 |
 | S01 | done(2026-10-08) | fix(adapters) commit | tests/test_test_identity.py 22 例 + executor 6 例真实仓库 + API tuple 全链路;F3 由假通过变拒绝;详见 PROGRESS S01 |
-| S02a/S02b | pending | — | — |
+| S02a | done(2026-10-09) | feat(resources) commit | ResourceLedger+共享终局验收;F1 两引擎超额不再 resolved;tests/test_resources 13+test_acceptance 12+test_f1_budget 6;详见 PROGRESS S02a(S02b 待做) |
 | S05a | pending | — | — |
 | S03 | pending | — | — |
 | S04 | pending | — | — |

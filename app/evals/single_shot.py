@@ -22,6 +22,7 @@ from app.errors import BudgetError
 from app.evals.bugset import BugTask
 from app.graph.nodes import READ_TOOLS
 from app.graph.plain_loop import LoopOutcome, run_plain_loop
+from app.graph.resources import ResourceLedger
 from app.llm.base import Model
 from app.prompts import LOCALIZE_PROMPT, ONE_SHOT_PROPOSE_PROMPT
 from app.tools.base import ToolContext
@@ -74,6 +75,7 @@ def one_shot_agent(
     started_monotonic: float | None = None,
     time_budget_seconds: int = 0,
     cancel_event: threading.Event | None = None,
+    ledger: ResourceLedger | None = None,
 ) -> LoopOutcome:
     """定位 → 提交补丁;无执行反馈,无第二轮。
 
@@ -81,6 +83,7 @@ def one_shot_agent(
     真实臂的对应阶段取同一个值——臂与臂只能差"有没有测试反馈、有没有重试",
     轮次差会把结论变成实验参数的函数。补丁阶段内仍可因协议/门禁拒绝而自纠多次,
     但模型看到的东西只有 Bug 描述 + 定位阶段自己写下的结论,永远看不到测试结果。
+    ledger(S02/F1)与默认臂同源:两臂共用任务级账本,对照才可比。
     """
     localize = run_plain_loop(
         ctx,
@@ -96,6 +99,7 @@ def one_shot_agent(
         time_budget_seconds=time_budget_seconds,
         token_budget=_budget_for(0),
         cancel_event=cancel_event,
+        ledger=ledger,
     )
 
     prompt = ONE_SHOT_PROPOSE_PROMPT.format(
@@ -114,6 +118,7 @@ def one_shot_agent(
             time_budget_seconds=time_budget_seconds,
             token_budget=_budget_for(localize.tokens_used),
             cancel_event=cancel_event,
+            ledger=ledger,
         )
     except BudgetError as exc:
         # N-11 同源:补丁阶段超预算时,定位阶段已烧的用量必须记回任务级账本,

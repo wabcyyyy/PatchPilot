@@ -17,6 +17,7 @@ from app.context.token_window import compact_messages
 from app.errors import BudgetError, TaskCancelled
 from app.gitops.differ import working_tree_diff
 from app.graph.loop_state import LoopSnapshot, delete_loop_snapshot, save_loop_snapshot
+from app.graph.resources import USAGE_ESTIMATED, ResourceLedger
 from app.llm.base import AssistantTurn, Model, messages_tokens
 from app.prompts import SYSTEM_PROMPT
 from app.tools.base import ToolContext, ToolResult
@@ -175,6 +176,7 @@ def run_plain_loop(
     context_keep_recent_turns: int | None = None,
     token_estimate_factor: float | None = None,
     resume_snapshot: LoopSnapshot | None = None,
+    ledger: ResourceLedger | None = None,
 ) -> LoopOutcome:
     """工具循环:模型输出 → 解析工具调用 → 执行 → 结果回填 → 直到 finish。
 
@@ -319,8 +321,42 @@ def run_plain_loop(
                 turns=turn_no,
                 last_content=last_content,
             )
+        # S02/F1:任务级账本——请求前记在途调用并做总额检查(与阶段份额分开);
+        # 总额不够发这次请求 = 停止新模型调用的信号(exhausted),不是阶段降级
+        call_id = ""
+        if ledger is not None:
+            try:
+                ledger.ensure_request_fits(pending)
+            except BudgetError as exc:
+                raise _budget_error(
+                    str(exc),
+                    tokens_spent,
+                    tokens_prompt,
+                    tokens_completion,
+                    turns=turn_no,
+                    last_content=last_content,
+                ) from exc
+            call_id = ledger.begin_call(stage=state_label, round_no=round_no)
         llm_started = time.monotonic()
-        response = model.complete(messages, tool_schemas())  # type: ignore[arg-type]
+        try:
+            response = model.complete(messages, tool_schemas())  # type: ignore[arg-type]
+        except BudgetError as exc:
+            # 预算异常携带的是**可知消耗**(N-11):按 estimated 入账保留,
+            # 不标 unknown——桩/真实端点用它表达"这次请求花了多少"是合法控制流
+            if ledger is not None and call_id:
+                ledger.record_usage(
+                    call_id,
+                    prompt_tokens=exc.tokens_prompt,
+                    completion_tokens=exc.tokens_completion,
+                    total_tokens=exc.tokens_spent,
+                    source=USAGE_ESTIMATED,
+                )
+            raise
+        except BaseException as exc:
+            # 在途调用拿不到真实 usage:标 unknown(不写 0、不重授余量),异常原样上抛
+            if ledger is not None and call_id:
+                ledger.abandon_call(call_id, reason=f"{type(exc).__name__}")
+            raise
         llm_ms = int((time.monotonic() - llm_started) * 1000)
         tokens_spent += response.usage_tokens
         tokens_prompt += response.prompt_tokens
@@ -335,6 +371,35 @@ def run_plain_loop(
             turn_no=turn_no,
             duration_ms=llm_ms,
         )
+        # S02/F1:回复的真实 usage **先入账**——若这一条把任务推过限额,本回复的
+        # 任何工具调用(含 finish)都不再执行,结构化收尾;已花的数字如实保留
+        if ledger is not None and call_id:
+            overrun = ledger.record_usage(
+                call_id,
+                prompt_tokens=response.prompt_tokens,
+                completion_tokens=response.completion_tokens,
+            )
+            if overrun is not None:
+                ctx.tracker.record(
+                    tool="resource_overrun",
+                    round_no=round_no,
+                    state=state_label,
+                    input_payload={"call_id": call_id, "turn": turn_no},
+                    output_summary={
+                        "tokens_used": ledger.tokens_used,
+                        "token_limit": ledger.token_limit,
+                        "usage_source": "provider",
+                    },
+                    error=str(overrun),
+                )
+                raise _budget_error(
+                    f"task token budget exceeded after reply: {overrun}",
+                    tokens_spent,
+                    tokens_prompt,
+                    tokens_completion,
+                    turns=turn_no,
+                    last_content=response.content or last_content,
+                )
 
         if not response.is_tool_call:
             messages.append(_assistant_payload(response))

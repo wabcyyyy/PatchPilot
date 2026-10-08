@@ -660,7 +660,7 @@
       docs/spec-s00-baseline-2026-10-08.md。首个 commit 仅文档。
 - [x] S01 测试身份完整匹配与合法 node id(F3):类链/参数化/嵌套类,file 缺失与 rootdir 口径,
       白名单放行 `test_tuple[(1,2)]` 等合法 ID;新增 app/adapters/test_identity.py 与用例。
-- [ ] S02a 资源账本与共享终局验收(F1):app/graph/resources.py + acceptance.py,
+- [x] S02a 资源账本与共享终局验收(F1):app/graph/resources.py + acceptance.py,
       call_id 入账、超限结构化收尾、graph/plain 同一验收面、report_schema_version=2。
 - [ ] S02b 持久时间与执行边界:deadline 建立并持久化、恢复不重授、
       每次 run_pytest 前后复查(含最后一次 rerun 之后)。

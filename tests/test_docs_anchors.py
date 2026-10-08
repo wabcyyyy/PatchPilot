@@ -118,8 +118,9 @@ def test_p3_7_corrected_claims_are_pinned() -> None:
     # →623(M5 复核:plan 也接仓库骨架——计划要能点名文件与符号,只靠单薄的定位结论写不出可执行计划)
     # →661(M6 崩溃恢复:TaskNodes 新增 resume_snapshot 字段与领取方法、prepare 的
     #        ToolContext 构造抽成 _build_ctx 供恢复侧重建,apply 节点整体下移)
+    # →657(S02a:TaskNodes 增加 ledger 字段与 __post_init__,其上方导入块同步变化)
     assert "七项门禁" in _read("app/graph/gates.py")[0]
-    assert "七项门禁" in _read("app/graph/nodes.py")[661]
+    assert "七项门禁" in _read("app/graph/nodes.py")[656]
     # ADR-0002:compose 冒烟如实表述
     adr2 = _read("docs/adr/0002-execution-backend-local-默认.md")
     assert any("无留档的实测运行" in line for line in adr2[28:34]), adr2[28:34]

@@ -33,6 +33,15 @@ def render_markdown(result: dict[str, Any]) -> str:
         f"- 成本(约值):{cost_text} | 输入 token:{result.get('tokens_prompt')}"
         f" | 输出 token:{result.get('tokens_completion')}",
         "",
+        "## 状态与验收证据",
+        "",
+        # S02(spec §3.1):三态缺一即 not_run/unknown——旧报告缺字段也如实显示,
+        # 没有验证过的任务不得因无 gate_violations 而展示"门禁已通过"
+        f"- 报告结构版本:{result.get('report_schema_version', '(旧报告,无版本)')}",
+        f"- 验证状态 validation_status:{result.get('validation_status') or 'not_run'}",
+        f"- 门禁状态 gate_status:{result.get('gate_status') or 'not_run'}",
+        f"- 资源状态 resource_status:{result.get('resource_status') or 'unknown'}",
+        "",
         "## 判定过程",
         "",
         "| 检查项 | 结果 |",

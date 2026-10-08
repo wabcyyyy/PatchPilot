@@ -67,3 +67,8 @@ class TaskState(TypedDict, total=False):
     outcome: str  # resolved | failed | needs_review | invalid
     # N-12 整改:rollback 在 reset 前保全的工作区 diff,供 runner 落盘取证
     preserved_diff: str
+    # S02(spec §3.1):终局验收的三个解释维度,由 finish 节点写回;
+    # 旧 status/verdict/outcome 保留,预算超限仍 BUDGET_EXCEEDED/failed
+    validation_status: str  # not_run | passed | failed | inconclusive
+    gate_status: str  # not_run | passed | rejected | inconclusive
+    resource_status: str  # within_budget | exhausted | exceeded | unknown

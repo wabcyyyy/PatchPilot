@@ -25,9 +25,11 @@ from app.gitops.patcher import apply_patch as git_apply_patch
 if TYPE_CHECKING:  # 复盘 R-2:兑现 AGENTS"全量类型标注",运行时零导入成本
     from app.evals.bugset import BugTask
 from app.gitops.testing import materialize_repo
+from app.graph.acceptance import acceptance_from_state, double_run_mismatch
 from app.graph.gates import ensure_budget, run_gates
 from app.graph.loop_state import LoopSnapshot
 from app.graph.plain_loop import LoopOutcome, run_plain_loop
+from app.graph.resources import ResourceLedger
 from app.graph.state import TaskState
 from app.llm.base import Model
 from app.prompts import (
@@ -64,30 +66,6 @@ WRITE_TOOLS = [
     "run_tests",
     FINISH_TOOL,
 ]
-
-
-def _case_ids(report: Any) -> set[tuple[str, str, str]]:
-    """junit 两次运行比对用的测试 id 集合(file, class, name 三元组,不含判定)。"""
-    return {(file_attr, classname, name) for file_attr, classname, name, _ in report.case_results}
-
-
-def _double_run_mismatch(
-    first_failed: Any, first_reg: Any, rerun_failed: Any, rerun_reg: Any
-) -> str:
-    """比对 verify 双跑的两次 junit;一致返回空串,不一致返回不匹配原因。
-
-    一致 = 两个测试集各自满足:两次收集到的测试 id 集合相等,且第一遍
-    (全绿)通过的 id 在第二遍无任何非 passed 记录(rerun 亦须 all_passed)。
-    """
-    for label, first, rerun in (
-        ("failed", first_failed, rerun_failed),
-        ("regression", first_reg, rerun_reg),
-    ):
-        if _case_ids(first) != _case_ids(rerun):
-            return f"{label}: junit test id set differs between runs"
-        if not rerun.all_passed:
-            return f"{label}: rerun not all passed (first run was)"
-    return ""
 
 
 def _feedback_streak(state: TaskState, current: list[str]) -> tuple[list[str], int]:
@@ -163,6 +141,20 @@ class TaskNodes:
     # 取走即清空——同一份快照不得被后续阶段或后续轮次再回放一遍)。默认 None = 冷启动,
     # 与引入恢复能力之前的行为逐字一致。
     resume_snapshot: LoopSnapshot | None = None
+    # S02/F1:任务级资源账本——本地化/规划/补丁/分支候选的全部模型调用入账,
+    # 终局验收(acceptance_from_state)读它;None 时 __post_init__ 按 Settings 建。
+    ledger: ResourceLedger | None = None
+
+    def __post_init__(self) -> None:
+        if self.ledger is None:
+            settings = get_settings()
+            # getattr 兜底:测试替身(部分字段的 SimpleNamespace settings)落在"无预算"一侧,
+            # 与本文件 _persistent_context 的既有惯例一致
+            self.ledger = ResourceLedger(
+                task_id=str(getattr(self.bug, "id", "") or ""),
+                token_limit=int(getattr(settings, "token_budget", 0) or 0),
+                output_reserve=int(getattr(settings, "llm_max_tokens", 0) or 0),
+            )
 
     def _take_resume_snapshot(self, stage: str, round_no: int) -> LoopSnapshot | None:
         """按"当前阶段+当前轮次"领取快照;不匹配返回 None(冷启动)。"""
@@ -326,6 +318,7 @@ class TaskNodes:
                 context_keep_recent_turns=get_settings().context_keep_recent_turns,
                 cancel_event=self.cancel_event,
                 resume_snapshot=self._take_resume_snapshot("LOCALIZE", state["round_no"]),
+                ledger=self.ledger,
             )
         except BudgetError as exc:
             # 两种"耗尽"要分开看,否则会毁掉任务:
@@ -509,6 +502,7 @@ class TaskNodes:
                 context_keep_recent_turns=settings.context_keep_recent_turns,
                 cancel_event=self.cancel_event,
                 resume_snapshot=self._take_resume_snapshot("PLAN", state["round_no"]),
+                ledger=self.ledger,
             )
         except BudgetError as exc:
             # 两类"耗尽"的处置与 localize 同构:任务级总额已超 → 终点;
@@ -618,6 +612,7 @@ class TaskNodes:
                 context_keep_recent_turns=get_settings().context_keep_recent_turns,
                 cancel_event=self.cancel_event,
                 resume_snapshot=self._take_resume_snapshot("PROPOSE_PATCH", state["round_no"]),
+                ledger=self.ledger,
             )
         except BudgetError as exc:
             # N-5 整改:超预算必须终止(route_propose 会 end),不得带着已应用
@@ -810,7 +805,7 @@ class TaskNodes:
                 self.report_dir / "verify-regression-rerun.xml",
                 env=self.ctx.env,
             )
-            mismatch = _double_run_mismatch(
+            mismatch = double_run_mismatch(
                 failed_report, regression_report, rerun_failed, rerun_regression
             )
             self.tracker.record(
@@ -859,8 +854,50 @@ class TaskNodes:
         return "finish" if ok else "rollback"
 
     def finish(self, state: TaskState) -> dict[str, Any]:
-        """判定规则 4.3 的四个条件已由前面的节点保证:门禁(apply)、双测试集(verify)、预算(guard)。"""
-        return {"status": "FINISHED", "outcome": "resolved"}
+        """终局共享验收(ADR-0009 §1,F1 的 graph 侧落点)。
+
+        此前本节点无条件写 FINISHED/resolved——最后一条回复把任务推过限额后
+        依然 resolved(F1)。现在与 plain 引擎共用 acceptance.final_acceptance:
+        非空 diff、完整测试身份、门禁、资源 within_budget、未取消,缺一不可。
+        预算超限仍 BUDGET_EXCEEDED/failed(旧字段保留),不新增放行模式;
+        非资源类拒绝(取消/空 diff/验证缺失)收敛 VERIFY_FAILED,语义不混装。
+        """
+        assert self.ledger is not None
+        decision = acceptance_from_state(
+            state,
+            ledger=self.ledger,
+            diff_non_empty=not working_tree_diff(self.workspace).is_empty,
+            cancelled=bool(self.cancel_event is not None and self.cancel_event.is_set()),
+        )
+        self.tracker.record(
+            tool="final_acceptance",
+            round_no=state["round_no"],
+            state="FINISH",
+            input_payload={"round": state["round_no"]},
+            output_summary={
+                "resolved": decision.resolved,
+                "validation_status": decision.validation_status,
+                "gate_status": decision.gate_status,
+                "resource_status": decision.resource_status,
+                "reasons": decision.reasons,
+                "tokens_used": self.ledger.tokens_used,
+            },
+            error=None if decision.resolved else "; ".join(decision.reasons),
+        )
+        statuses = {
+            "validation_status": decision.validation_status,
+            "gate_status": decision.gate_status,
+            "resource_status": decision.resource_status,
+        }
+        if decision.resolved:
+            return {"status": "FINISHED", "outcome": "resolved", **statuses}
+        resource_blocked = decision.resource_status != "within_budget"
+        return {
+            "status": "BUDGET_EXCEEDED" if resource_blocked else "VERIFY_FAILED",
+            "outcome": "failed",
+            "error": "acceptance failed: " + "; ".join(decision.reasons),
+            **statuses,
+        }
 
     # ---------- 回滚与预算 ----------
 
@@ -953,6 +990,7 @@ class TaskNodes:
                 context_window_tokens=settings.context_window_tokens,
                 context_keep_recent_turns=settings.context_keep_recent_turns,
                 cancel_event=self.cancel_event,
+                ledger=self.ledger,
             )
         except TaskCancelled:
             raise  # 取消语义不得被候选吞掉

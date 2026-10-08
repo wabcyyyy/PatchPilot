@@ -89,6 +89,12 @@ class TaskResult:
     verify_regression_ok: bool = False
     run_dir: str = ""
     provenance: dict[str, Any] = field(default_factory=dict)
+    # S02(spec §3.1):报告结构版本与三个解释维度。默认值按"未验证/未知"诚实落盘,
+    # 旧报告缺字段时读方也显示 not_run/unknown,不冒充已验证或额度合规。
+    report_schema_version: int = 2
+    validation_status: str = "not_run"  # not_run|passed|failed|inconclusive
+    gate_status: str = "not_run"  # not_run|passed|rejected|inconclusive
+    resource_status: str = "unknown"  # within_budget|exhausted|exceeded|unknown
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -167,6 +173,12 @@ def run_task(
     tracker = Tracker(run_dir / "trajectory.jsonl", task_id=task_id)
     started = time.monotonic()
     ctx: ToolContext | None = None  # materialize 失败时 finally 仍可安全引用
+    # S02/F1:任务级资源账本(与 graph 引擎同一套 ResourceLedger)
+    from app.graph.resources import ResourceLedger
+
+    ledger = ResourceLedger(
+        task_id=task_id, token_limit=settings.token_budget, output_reserve=settings.llm_max_tokens
+    )
 
     try:
         # CREATED → BASELINE:bug 仓库是纯工作树,运行时物化为 git 仓库并固定基线 commit
@@ -242,6 +254,7 @@ def run_task(
             started_monotonic=started,
             time_budget_seconds=settings.task_timeout_seconds,
             cancel_event=cancel_event,
+            ledger=ledger,
         )
         result.turns = outcome.turns
         result.tokens_used = outcome.tokens_used
@@ -265,6 +278,42 @@ def run_task(
         )
         result.verify_failed_ok = verify_failed.all_passed
         result.verify_regression_ok = verify_regression.all_passed
+        # E3 双跑(S02:两引擎同一条复核规则,比较臂不允许少跑):第一遍双集全绿
+        # (即将判 resolved)时同命令重跑并比对;不一致 = inconclusive,不 resolved
+        from app.graph.acceptance import double_run_mismatch, final_acceptance
+
+        mismatch = ""
+        if verify_failed.all_passed and verify_regression.all_passed and settings.verify_double_run:
+            rerun_failed, _ = run_pytest(
+                ctx.python_exe,
+                ctx.workspace,
+                bug.failed_tests,
+                report_dir / "verify-failed-rerun.xml",
+                env=ctx.env,
+            )
+            rerun_regression, _ = run_pytest(
+                ctx.python_exe,
+                ctx.workspace,
+                bug.regression_tests,
+                report_dir / "verify-regression-rerun.xml",
+                env=ctx.env,
+            )
+            mismatch = double_run_mismatch(
+                verify_failed, verify_regression, rerun_failed, rerun_regression
+            )
+            tracker.record(
+                tool="verify_double_run",
+                state="VERIFY",
+                input_payload={"engine": "plain"},
+                output_summary={
+                    "rerun": {
+                        "failed_ok": rerun_failed.all_passed,
+                        "regression_ok": rerun_regression.all_passed,
+                    },
+                    "mismatch": mismatch or None,
+                },
+                error=f"verify_mismatch: {mismatch}" if mismatch else None,
+            )
 
         diff = working_tree_diff(ctx.workspace)
         result.changed_files = diff.changed_files
@@ -272,14 +321,36 @@ def run_task(
             diff.diff_text, allowed_paths=bug.allowed_paths, max_files=settings.max_patch_files
         )
         result.gate_violations = [str(v) for v in gate.violations]
+        # 终局共享验收(S02/F1):与 graph 的 finish 节点同一条代码路径
+        decision = final_acceptance(
+            verify_failed_ok=result.verify_failed_ok,
+            verify_regression_ok=result.verify_regression_ok,
+            verify_ran=True,
+            gate_ok=gate.ok,
+            gate_ran=True,
+            diff_non_empty=not diff.is_empty,
+            double_run_inconsistent=bool(mismatch),
+            cancelled=bool(cancel_event is not None and cancel_event.is_set()),
+            ledger=ledger,
+        )
+        result.validation_status = decision.validation_status
+        result.gate_status = decision.gate_status
+        result.resource_status = decision.resource_status
 
-        # 判定规则(企划书 4.3):四个条件同时满足才是 resolved
-        if verify_failed.all_passed and verify_regression.all_passed and gate.ok:
+        # 判定规则(企划书 4.3 + ADR-0009 §1):resolved 与资源/取消绑定
+        if mismatch:
+            result.status, result.verdict = "NEEDS_REVIEW", "needs_review"
+            result.error = f"verify double-run mismatch: {mismatch}"
+        elif decision.resolved:
             result.status, result.verdict = "FINISHED", "resolved"
         elif not gate.ok:
             result.status, result.verdict = "PATCH_REJECTED", "failed"
+        elif decision.resource_status != "within_budget":
+            # 验证过了也不得静默 resolved(ADR-0009 §1):预算语义保持 BUDGET_EXCEEDED
+            result.status, result.verdict = "BUDGET_EXCEEDED", "failed"
+            result.error = "; ".join(decision.reasons) or result.error
         else:
-            # 模型放弃/自认失败/静默结束,结局一致:VERIFY_FAILED(P3 死分支折叠)
+            # 模型放弃/自认失败/静默结束/取消,结局一致:VERIFY_FAILED(P3 死分支折叠)
             result.status, result.verdict = "VERIFY_FAILED", "failed"
 
     except BudgetError as exc:
@@ -289,9 +360,11 @@ def run_task(
         result.tokens_used = exc.tokens_spent
         result.tokens_prompt = exc.tokens_prompt
         result.tokens_completion = exc.tokens_completion
+        result.resource_status = ledger.resource_status
     except TaskCancelled as exc:
         # 协作式取消:保留现场落盘;DB 状态由 cancel_task 置 CANCELLED,回写时让位
         result.status, result.verdict, result.error = "CANCELLED", "cancelled", str(exc)
+        result.resource_status = ledger.resource_status
     except TaskError as exc:
         result.status, result.verdict, result.error = "INVALID_TASK", "failed", str(exc)
     except Exception as exc:
@@ -301,6 +374,7 @@ def run_task(
             "needs_review",
             f"{type(exc).__name__}: {exc}",
         )
+        result.resource_status = ledger.resource_status
     finally:
         # R3 整改:diff.patch 移入 finally——CANCELLED/崩溃/预算路径的工作区
         # 未被回滚,现场仍在,取证产物不应缺失

@@ -931,3 +931,56 @@ SWE 题 230 条具体形态,零兼容面损失);路径逃逸检查放在结构�
 (唯一失败是 ADR-0009 锚点行号被本卡代码位移——锚点机制按设计要求同步,已修至
 pytest_adapter.py:213 并复跑 docs_anchors 6 passed);ruff/format 绿(196 files)。
 分支 commit 见 git log(fix(adapters))。
+
+## S02a 资源账本与共享终局验收(F1 关闭)(2026-10-09,产品卡 2/13)
+
+缺陷(review F1,P1):两引擎都只在发请求前查预算;最后一条回复(含 finish)的真实
+usage 入账后循环直接返回,graph 的 finish 无条件写 resolved、plain 的判定段只看
+两个布尔——README 契约"未超预算才 resolved"在终局没有兑现。审查探针实测:
+预算 20000、末回复 50000,plain 50148 / graph 50168 双双 FINISHED/resolved。
+
+**修法(ADR-0009 §1/§2 落地)**:
+- 新增 `app/graph/resources.py` `ResourceLedger`:任务级线程安全账本——每次模型调用
+  持久 call_id(请求前 pending,回复**先入账**再处理工具/finish;同 call_id 重复入账无效);
+  usage 标 provider/estimated/unknown;回复推过限额 → 记录实际 overrun(Overrun 带
+  call/stage/used/limit)、状态 exceeded;请求前总额检查(含单次输出预留)不够发 =
+  exhausted(停止新调用,实际未超);异常/取消留下 pending 且无 usage → unknown,
+  已用不写 0、余量不重授;输出上限 0 时记 `output_reserve_unavailable`(能力边界,
+  不宣称绝不超账单)。
+- `plain_loop` 接线:请求前 `ensure_request_fits`(抛错时带全 loop-local 用量,
+  N-11 口径不蒸发)+ `begin_call`;`model.complete` 异常路径 `abandon_call`;
+  回复先 `record_usage`——返回 overrun 时记 `resource_overrun` 轨迹事件并抛
+  BudgetError,**本回复的任何工具(含 finish)不执行**。
+- 新增 `app/graph/acceptance.py` `final_acceptance`:graph finish 与 plain 判定段
+  **同一条**终局验收代码——非空 diff ∧ 完整测试身份 ∧ 门禁 ∧ 双跑一致(开启时)
+  ∧ 资源 within_budget ∧ 未取消 ⇒ resolved;`double_run_mismatch` 从 nodes 迁入共享
+  (plain 引擎补上此前没有的 verify_double_run 复核,比较臂不再少跑);
+  `acceptance_from_state` 另做恢复防绕过:state 累计量与账本取大复核任务总额。
+- graph:TaskNodes 持有账本(测试替身 settings 走 getattr 兜底),四个 run_plain_loop
+  调用点(LOCALIZE/PLAN/PROPOSE/分支候选)同账本入账;finish 节点重写——resolved
+  不再无条件,资源类拒绝 BUDGET_EXCEEDED、非资源类 VERIFY_FAILED,旧字段保留;
+  runner 在 state 未携带三态时回读账本真相(预算提前收尾不走 finish 的路径)。
+- plain driver:建账本传循环;判定段走 final_acceptance;异常路径带账本状态。
+- 报告:`report_schema_version=2`,TaskResult 增 `validation_status/gate_status/
+  resource_status`(默认 not_run/unknown,不冒充已验证);Markdown 渲染新增
+  "状态与验收证据"节,旧报告缺字段如实显示。
+
+**回归**:tests/test_resources.py 13 例(call_id 幂等/边界=limit/overrun/exhausted/
+unknown 不清零/阶段与候选并行入账);tests/test_acceptance.py 12 例(全绿矩阵/验证过
+但超额不 resolved/unknown 不 resolved/空 diff/取消/门禁/双跑不一致/无账本=unknown/
+两引擎同事实同结论/恢复防绕过);tests/test_f1_budget.py 6 例(审查探针同构:graph 与
+plain 末回复 50000→BUDGET_EXCEEDED 且用量入账;多工具超额回复工具不执行;超额 finish
+不兑现;纯文本超额;中途异常用量保留+unknown)。
+
+**预算异常是"可知消耗"不是 unknown**(全量闸抓到的语义错误,当卡修正):测试桩用
+`BudgetError(tokens_spent=…)` 表达"这次请求花了多少"是合法控制流(N-11 口径)——
+plain_loop 对 model.complete 抛出的 BudgetError 走 `record_usage(source=estimated,
+total=tokens_spent)` 入账保留,只有**拿不到任何用量**的异常/取消才 abandon 为 unknown。
+record_usage 相应增加 total_tokens/source 参数(总额入账供无明细的异常路径)。
+
+锚点同步(机制按设计咬人):本卡位移了 nodes/plain_loop/runner 的行,ADR-0004:300、
+ADR-0006:195、ADR-0007:453/138、ADR-0009:856 与 test_docs_anchors 的"七项门禁"钉点
+(661→657,位移史补 →657 一步)全部随代码修订,锚点扫描 0 失配。
+
+兼容性修复(非放行):测试替身 settings(SimpleNamespace)缺新键 → nodes.__post_init__
+用 getattr 兜底(与本文件既有惯例一致);bug.id 同。

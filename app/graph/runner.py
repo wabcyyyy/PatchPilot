@@ -94,6 +94,7 @@ def run_task_graph(
     started = time.monotonic()
     checkpointer = None
     preserved_diff: str | None = None
+    nodes: TaskNodes | None = None  # 异常路径也要能读到账本(S02:资源状态不写 0)
 
     try:
         nodes = TaskNodes(
@@ -166,6 +167,15 @@ def run_task_graph(
         result.verify_failed_ok = final.get("verify_failed_ok", False)
         result.verify_regression_ok = final.get("verify_regression_ok", False)
         result.changed_files = list(final.get("changed_files", []))
+        # S02(spec §3.1):终局验收的三态与用量事实进报告;state 未携带时
+        # (预算路径提前收尾,没走到 finish 节点)回读账本真相,不冒充 unknown
+        result.validation_status = final.get("validation_status", "not_run")
+        result.gate_status = final.get("gate_status", "not_run")
+        resource_from_state = final.get("resource_status")
+        if resource_from_state:
+            result.resource_status = resource_from_state
+        elif nodes is not None and nodes.ledger is not None:
+            result.resource_status = nodes.ledger.resource_status
         # N-12 整改:末轮经 rollback 的任务,工作区已被 reset,
         # diff.patch 必须用 rollback 保全的现场,而不是回滚后的空 diff
         preserved_diff = final.get("preserved_diff")
@@ -175,6 +185,8 @@ def run_task_graph(
         result.outcome = "cancelled"
         result.verdict = "cancelled"
         result.error = str(exc)
+        if nodes is not None and nodes.ledger is not None:
+            result.resource_status = nodes.ledger.resource_status
     except Exception as exc:
         if isinstance(exc, TaskError):
             result.status, result.outcome, result.verdict, result.error = (
@@ -189,6 +201,8 @@ def run_task_graph(
             result.outcome = "needs_review"
             result.verdict = "needs_review"
             result.error = f"{type(exc).__name__}: {exc}"
+            if nodes is not None and nodes.ledger is not None:
+                result.resource_status = nodes.ledger.resource_status
     finally:
         # R3 整改:diff.patch 落盘移入 finally——CANCELLED/崩溃路径的现场
         # (工作区未被回滚)同样应留下取证产物
