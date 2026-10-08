@@ -187,18 +187,22 @@ def _pid_alive(pid: int) -> bool:  # pragma: no cover - 平台相关,测试内�
 
 
 def _write_junit(tmp_path: Path, cases: list[tuple[str, str, str]]) -> Path:
-    """cases: (file, name, status),status ∈ passed | failure | skipped。"""
+    """cases: (file, name, status),status ∈ passed | failure | skipped。
+
+    S01 起判定要求 file+类链一致,classname 写实为 tests.test_a(与 file 对应的
+    点分路径一致,xunit1 的真实形态),不再是与匹配无关的占位符。
+    """
     body = []
     for file, name, status in cases:
         if status == "passed":
-            body.append(f'<testcase classname="t" name="{name}" file="{file}"/>')
+            body.append(f'<testcase classname="tests.test_a" name="{name}" file="{file}"/>')
         elif status == "skipped":
             body.append(
-                f'<testcase classname="t" name="{name}" file="{file}"><skipped/></testcase>'
+                f'<testcase classname="tests.test_a" name="{name}" file="{file}"><skipped/></testcase>'
             )
         else:
             body.append(
-                f'<testcase classname="t" name="{name}" file="{file}">'
+                f'<testcase classname="tests.test_a" name="{name}" file="{file}">'
                 '<failure message="boom">x</failure></testcase>'
             )
     xml = '<testsuite tests="{}" failures="{}" errors="0" skipped="{}">{}</testsuite>'.format(
@@ -236,6 +240,131 @@ def test_all_passed_accepts_real_pass(tmp_path: Path) -> None:
     report = parse_junit_xml(_write_junit(tmp_path, [("tests/test_a.py", "test_x", "passed")]))
     report.requested_ids = ["tests/test_a.py::test_x"]
     assert report.all_passed
+
+
+def test_all_passed_rejects_ambiguous_identity(tmp_path: Path) -> None:
+    """S01/F3:同一请求 id 被两个不同 testcase 三元组同时满足 = 身份歧义,不许通过。
+
+    旧实现"任何一个 testcase passed 就算数":othertests/test_a.py 会顶替
+    tests/test_a.py 的同名用例。新口径每条请求 id 必须恰好对应一个去重三元组。
+    """
+    from app.adapters.pytest_adapter import parse_junit_xml
+
+    report = parse_junit_xml(
+        _write_junit(
+            tmp_path,
+            [("tests/test_a.py", "test_x", "passed"), ("tests/test_a.py", "test_x", "passed")],
+        )
+    )
+    # 手工把其中一个 case 的 file 换成同后缀的别的目录(junit 层面两条不同三元组)
+    raw = (tmp_path / "junit.xml").read_text(encoding="utf-8")
+    raw = raw.replace('file="tests/test_a.py"', 'file="pkg/tests/test_a.py"', 1)
+    (tmp_path / "junit.xml").write_text(raw, encoding="utf-8")
+    report = parse_junit_xml(tmp_path / "junit.xml")
+    report.requested_ids = ["tests/test_a.py::test_x"]
+    assert not report.all_passed
+
+
+# ---------- S01/F3:真实 pytest 仓库上的身份判定 ----------
+
+
+def _write_identity_repo(root: Path) -> Path:
+    """小仓库:同文件两个同名方法分属 TestA/TestB(一红一绿)+ 模块同名函数 + 参数化。"""
+    tests_dir = root / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_x.py").write_text(
+        "import pytest\n"
+        "def test_same():\n"
+        "    assert True\n"
+        "class TestA:\n"
+        "    def test_same(self):\n"
+        "        assert False, 'TestA still broken'\n"
+        "class TestB:\n"
+        "    def test_same(self):\n"
+        "        assert True\n"
+        "class TestOuter:\n"
+        "    class TestInner:\n"
+        "        def test_deep(self):\n"
+        "            assert True\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_tuple.py").write_text(
+        "import pytest\n"
+        "@pytest.mark.parametrize('v', [(1, 2), (3, 4)], ids=['(1,2)', '(3,4)'])\n"
+        "def test_tuple(v):\n"
+        "    assert v != (1, 2), 'tuple param still broken'\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_f3_real_repo_same_name_class_does_not_cross_match(tmp_path: Path) -> None:
+    """F3 端到端:请求 TestA::test_same,只有 TestB::test_same 通过 → 不得 all_passed。"""
+    ws = _write_identity_repo(tmp_path)
+    report, _ = run_pytest(
+        PYTHON, ws, ["tests/test_x.py::TestA::test_same"], report_path=tmp_path / "f3.xml"
+    )
+    assert report.exit_code == 1
+    assert not report.all_passed, "TestB 的同名通过不得顶替 TestA 的失败"
+    assert report.failed == 1
+    # 反向:请求的是真的通过的那条 → 通过
+    ok_report, _ = run_pytest(
+        PYTHON, ws, ["tests/test_x.py::TestB::test_same"], report_path=tmp_path / "f3-ok.xml"
+    )
+    assert ok_report.all_passed
+
+
+def test_f3_real_repo_module_function_vs_class_method(tmp_path: Path) -> None:
+    """模块函数 test_same(绿)不得顶替类方法 TestA::test_same(红),双向。"""
+    ws = _write_identity_repo(tmp_path)
+    report, _ = run_pytest(
+        PYTHON, ws, ["tests/test_x.py::TestA::test_same"], report_path=tmp_path / "m1.xml"
+    )
+    assert not report.all_passed
+    mod_report, _ = run_pytest(
+        PYTHON, ws, ["tests/test_x.py::test_same"], report_path=tmp_path / "m2.xml"
+    )
+    assert mod_report.all_passed
+
+
+def test_f3_real_repo_nested_class_chain(tmp_path: Path) -> None:
+    ws = _write_identity_repo(tmp_path)
+    report, _ = run_pytest(
+        PYTHON,
+        ws,
+        ["tests/test_x.py::TestOuter::TestInner::test_deep"],
+        report_path=tmp_path / "n1.xml",
+    )
+    assert report.all_passed
+
+
+def test_f3_real_repo_parametrized_tuple_ids(tmp_path: Path) -> None:
+    """合法参数化 id `test_tuple[(1,2)]` 可执行且按参数精确判定。"""
+    ws = _write_identity_repo(tmp_path)
+    bad, _ = run_pytest(
+        PYTHON, ws, ["tests/test_tuple.py::test_tuple[(1,2)]"], report_path=tmp_path / "p1.xml"
+    )
+    assert bad.failed == 1 and not bad.all_passed
+    good, _ = run_pytest(
+        PYTHON, ws, ["tests/test_tuple.py::test_tuple[(3,4)]"], report_path=tmp_path / "p2.xml"
+    )
+    assert good.all_passed and good.passed == 1
+    both, _ = run_pytest(
+        PYTHON,
+        ws,
+        ["tests/test_tuple.py::test_tuple[(1,2)]", "tests/test_tuple.py::test_tuple[(3,4)]"],
+        report_path=tmp_path / "p3.xml",
+    )
+    assert not both.all_passed and both.failed == 1
+
+
+def test_f3_real_repo_missing_id_rejected(tmp_path: Path) -> None:
+    """请求不存在的类:collection error(rc 非 0),绝不通过。"""
+    ws = _write_identity_repo(tmp_path)
+    report, _ = run_pytest(
+        PYTHON, ws, ["tests/test_x.py::TestMissing::test_same"], report_path=tmp_path / "x.xml"
+    )
+    assert report.exit_code != 0 and not report.all_passed
 
 
 def test_build_pytest_cmd_forces_xunit1() -> None:

@@ -891,3 +891,43 @@ clean,满足 spec"其他 checkout 先核对代码身份"的前提;新增分支
   (README:8 / nodes.py:861 finish / resume.py:43 / pytest_adapter.py:189 /
   metrics.py:125 / config.py:74,93),后续每卡修复到哪锚点同步修订到哪。
 - 首个 commit 仅文档(spec 副本、ADR-0009、基线清单、TODO/PROGRESS、spec §10 索引)。
+
+## S01 测试身份完整匹配(F3 关闭)(2026-10-08,产品卡 1/13)
+
+缺陷(review F3,P0):`_matches_requested` 在 junit 带 file 属性时只对 file+方法名,
+请求 `tests/test_x.py::TestA::test_same` 时 `TestB::test_same` 通过也算 all_passed;
+同时 `validate_test_ids` 拒绝合法参数化 id `test_tuple[(1,2)]`(括号/逗号不在旧字符域),
+executor 白名单放行了、入口预检却拦着,整条接入链是断的。
+
+**修法**:新增共享解析器 `app/adapters/test_identity.py`——node id 解析成结构化身份
+(POSIX 文件 + 完整类链 + test* 函数 + 参数化段),JUnit testcase 三元组逐段核对:
+
+- @name 必须与 `function[params]` 逐字一致;参数段允许 `()`/逗号/引号/空格/等号等数据字符,
+  拒 shell 元字符与控制字符(argv 单元素下只有注入语义);
+- file 匹配按路径段边界(`othertests/` 顶替不了 `tests/`),**且 classname 必须以
+  "点分模块路径+完整类链"结尾**——类链缺段、同名不同类、模块函数↔类方法互相顶替一律拒绝;
+- 无 file 属性保留 rootdir 后缀兼容,同样要求完整类链;
+- `all_passed` 升级:每条请求 id 必须恰好对应**一个**去重 testcase(0=缺失/deselected,
+  ≥2=身份歧义)且其 status=passed;rc/timeout/零失败/零错误/零跳过检查原样保留。
+
+**预检语义(spec S01 授权)**:第一版只验收具体函数/方法 node id——文件/目录/仅类
+selector 在 `validate_test_ids` 明确拒绝(实测题面 35 题 147 条 id 全部是具体形态,
+SWE 题 230 条具体形态,零兼容面损失);路径逃逸检查放在结构检查**之前**,
+保留 `escapes the workspace/workspace-relative` 的既有消息分类(test_bugset 既有断言不动)。
+
+**复现与回归**:
+- 单元矩阵 `tests/test_test_identity.py`(22 例):同名类不互认、模块↔类方法、嵌套类链、
+  参数化精确、file 缺失、rootdir 变化、Win 分隔、路径边界、`-p`/`../`/盘符/UNC/换行/NUL 拒绝;
+- 真实 pytest 仓库(`tests/test_executor.py` 新 6 例):F3 由假通过变拒绝(TestA 红时
+  TestB 绿不算过)、嵌套类、`test_tuple[(1,2)]` 真执行按参数判定、缺失类拒绝;
+- API 全链路(`tests/test_custom_task.py` 新 1 例):POST custom 任务带 tuple 参数化 ID,
+  基线红→回放补丁→verify 只跑请求的那条参数 → FINISHED/resolved。
+- 既有 3 处夹具写实化(非期望放松):junit 夹具 classname 从占位 `t` 改为真实点分形态;
+  custom id 推导测试的 `::t1` 函数名改 `test_*`(N-22 散列语义不变);
+  参数化夹具补 `ids=['(1,2)','(3,4)']`——**tuple 参数不带显式 ids 时 pytest 生成 v0/v1**,
+  `[(1,2)]` 形态本就不存在,这是夹具错误不是产品语义。
+
+证据:受影响 4 文件 163 passed;全量离线 pytest **759 passed + 3 环境 skip**
+(唯一失败是 ADR-0009 锚点行号被本卡代码位移——锚点机制按设计要求同步,已修至
+pytest_adapter.py:213 并复跑 docs_anchors 6 passed);ruff/format 绿(196 files)。
+分支 commit 见 git log(fix(adapters))。

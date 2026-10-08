@@ -6,7 +6,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -14,6 +13,7 @@ from typing import Any
 import yaml
 
 from app.adapters.pytest_adapter import BugEnv
+from app.adapters.test_identity import validate_concrete_node_id
 from app.config import get_settings
 from app.errors import InvalidRequestError, TaskError
 
@@ -25,39 +25,32 @@ BUGS_ROOT = Path("bugs")
 # host 只放开到宿主网络栈,仍看不到宿主文件系统(挂载只有工作区那一处)。
 _ALLOWED_ENV_NETWORKS = ("none", "bridge", "host")
 
-# P2-5 整改:测试 id 是要拼进 pytest argv 的外部输入(manifest 或 API 请求),
-# 必须先过格式白名单——否则 "-p evil" 这类 pytest 选项会构成注入。
-# 空格允许:参数化 id 如 test_x[a b] 是合法节点 id,argv 单元素传参无注入语义。
-_TEST_ID_RE = re.compile(r"^[A-Za-z0-9_ ./\-\[\]:]+$")
-# N-3 整改:id 里的路径部分还可能把 pytest 的收集范围指到工作区之外
-# (cwd=物化工作区下,`../x`、盘符、UNC 都是合法 argv 操作数),一并拒绝。
-_DRIVE_RE = re.compile(r"^[A-Za-z]:")
-
 
 def validate_test_ids(ids: list[str], ctx: str) -> None:
-    """逐条校验测试 id 格式:非空、不以 - 开头、仅含路径/节点 id 合法字符。
+    """逐条校验测试 id(S01/F3):必须是**具体函数/方法** node id,且无注入/越界形态。
 
-    另拒绝 `..` 段与绝对路径(盘符/UNC/`/` 开头):id 会原样进入 pytest argv,
-    收集范围逃逸工作区等于把判定权交给工作区外的任意文件。
+    规则(共享解析器 app/adapters/test_identity.py):
+    - 非空、不以前导空白或 `-` 开头(pytest 选项注入面);
+    - 结构化解析通过:文件段为工作区相对 POSIX 路径(拒 `..`/绝对/盘符/UNC/`//`),
+      末段 test* 函数,中间段 Test* 类链,参数化段仅数据字符;
+    - 文件/目录/仅类 selector 明确拒绝(spec S01:未展开为具体 node ids 不许进判定,
+      一个 testcase 通过证明不了整个 selector)。
+    另保留 shell 元字符整条拒绝(argv 单元素下这些字符只有注入语义)。
     """
     for tid in ids:
-        if (
-            not tid
-            or tid != tid.strip()  # 前导空白可掩盖 "-p" 形态,一并拒绝
-            or tid.startswith("-")
-            or not _TEST_ID_RE.fullmatch(tid)
-        ):
+        if not tid or tid != tid.strip() or tid.startswith("-"):
             raise InvalidRequestError(
                 f"{ctx}: invalid test id {tid!r} (pytest option injection guard)"
             )
-        file_part = tid.split("::")[0]
-        parts = file_part.split("/")
-        if ".." in parts or file_part.startswith(("/", "\\")) or "//" in file_part:
-            raise InvalidRequestError(
-                f"{ctx}: test id {tid!r} escapes the workspace (path traversal guard)"
-            )
-        if _DRIVE_RE.match(file_part):
-            raise InvalidRequestError(f"{ctx}: test id {tid!r} must be workspace-relative")
+        for ch in tid:
+            if ch in ";|&`><$\\\n\r\t\x00":
+                raise InvalidRequestError(
+                    f"{ctx}: invalid test id {tid!r} (shell/control character)"
+                )
+        try:
+            validate_concrete_node_id(tid)
+        except ValueError as exc:
+            raise InvalidRequestError(f"{ctx}: {exc}") from exc
 
 
 @dataclass

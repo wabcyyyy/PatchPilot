@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from app.adapters.test_identity import TestIdentity, case_matches, parse_node_id
 from app.config import get_settings
 from app.errors import ExecError
 from app.executor.local_runner import TestRunResult, run_tests
@@ -78,12 +79,17 @@ class PytestReport:
 
     @property
     def all_passed(self) -> bool:
-        """判定口径(P0-1 整改):请求的每条测试 id 都**真实跑过并通过**。
+        """判定口径(P0-1 整改;S01/F3 重写匹配语义):请求的每条测试 id 都**真实跑过并通过**,
+        且身份无歧义。
 
         仅凭 exit_code==0 防不了伪:仓库内 conftest 可以把用例 skip 或
         deselect,junit 的 rc 依然是 0。因此:rc==0 且零失败/错误/跳过之外,
-        还要求每条 requested_id 都能在 junit 的 testcase 中匹配到一条
-        status=passed 的记录。无期望 id 的调用方退化为"零失败零跳过"。
+        还要求每条 requested_id 都:
+        ① 能解析成具体测试身份(解析不了即不通过,预检层本应拒绝);
+        ② 在 junit 中恰好对应**一个**去重后的 testcase 三元组——0 个 = 用例缺失/
+           被 deselect,≥2 个 = 身份歧义(同后缀不同文件/不同类),都不许通过;
+        ③ 该 testcase 的 status 是 passed。
+        无期望 id 的调用方退化为"零失败零跳过"。
         """
         if self.exit_code != RC_OK or self.timed_out:
             return False
@@ -91,14 +97,32 @@ class PytestReport:
             return False
         if not self.requested_ids:
             return True
-        remaining = set(self.requested_ids)
-        for file_attr, classname, case_name, status in self.case_results:
-            if status != "passed":
-                continue
-            for rid in list(remaining):
-                if _matches_requested(file_attr, classname, case_name, rid):
-                    remaining.discard(rid)
-        return not remaining
+        identities: list[TestIdentity] = []
+        for rid in self.requested_ids:
+            identity = parse_node_id(rid)
+            if identity is None:
+                return False
+            identities.append(identity)
+        # 去重:同一三元组在 junit 里出现多次只算一个 case;不同三元组各自计数
+        distinct_cases: list[tuple[str, str, str]] = []
+        for file_attr, classname, case_name, _status in self.case_results:
+            case_key = (file_attr, classname, case_name)
+            if case_key not in distinct_cases:
+                distinct_cases.append(case_key)
+        passed_statuses = {
+            (file_attr, classname, case_name)
+            for file_attr, classname, case_name, status in self.case_results
+            if status == "passed"
+        }
+        for identity in identities:
+            matching = [
+                case_key for case_key in distinct_cases if case_matches(identity, *case_key)
+            ]
+            if len(matching) != 1:
+                return False  # 缺失(0)或歧义(≥2)
+            if matching[0] not in passed_statuses:
+                return False
+        return True
 
 
 def build_pytest_cmd(
@@ -187,24 +211,16 @@ def parse_junit_xml(path: Path) -> PytestReport:
 
 
 def _matches_requested(file_attr: str, classname: str, case_name: str, requested: str) -> bool:
-    """junit 的 testcase 是否对应请求的 node id。
+    """junit 的 testcase 是否对应请求的 node id(S01/F3 起委托共享解析器)。
 
-    主判据是 junit 自带的 file 属性(命令已强制 junit_family=xunit1 保证其存在):
-    请求 id 的文件路径段与 file 做后缀匹配——classname 相对内层 rootdir,同一仓库
-    在不同 rootdir 下会得出不同 classname,不可靠。file 缺失时退化为 classname 尾部
-    与"模块点分路径(+类链)"的后缀匹配。
+    完整身份语义(文件 + 类链 + 函数 + 参数化)见 app/adapters/test_identity.py;
+    请求 id 解析不了(非具体 node id)一律不匹配——旧实现"只对 file+方法名、
+    丢类链"的假通过正是本函数的缺陷现场。
     """
-    parts = requested.replace("\\", "/").split("::")
-    if case_name != parts[-1]:
+    identity = parse_node_id(requested)
+    if identity is None:
         return False
-    req_path = parts[0]
-    file_n = file_attr.replace("\\", "/")
-    if file_n:
-        return file_n == req_path or file_n.endswith("/" + req_path)
-    full = req_path.removesuffix(".py").replace("/", ".")
-    class_chain = ".".join(parts[1:-1])
-    expected_tail = f"{full}.{class_chain}" if class_chain else full
-    return classname == expected_tail or classname.endswith("." + expected_tail)
+    return case_matches(identity, file_attr, classname, case_name)
 
 
 def _case_id(case: ET.Element) -> str:

@@ -658,7 +658,7 @@
       (`runs/spec-baseline-{plain,graph}-20261008`,均 35/35 resolved)、ADR-0009
       (严格验收/资源账本/时间口径/恢复证据/指标版本契约)、基线清单
       docs/spec-s00-baseline-2026-10-08.md。首个 commit 仅文档。
-- [ ] S01 测试身份完整匹配与合法 node id(F3):类链/参数化/嵌套类,file 缺失与 rootdir 口径,
+- [x] S01 测试身份完整匹配与合法 node id(F3):类链/参数化/嵌套类,file 缺失与 rootdir 口径,
       白名单放行 `test_tuple[(1,2)]` 等合法 ID;新增 app/adapters/test_identity.py 与用例。
 - [ ] S02a 资源账本与共享终局验收(F1):app/graph/resources.py + acceptance.py,
       call_id 入账、超限结构化收尾、graph/plain 同一验收面、report_schema_version=2。

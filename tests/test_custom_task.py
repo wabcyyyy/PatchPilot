@@ -321,8 +321,8 @@ def test_custom_bug_id_is_content_derived(tmp_path: Path) -> None:
     kwargs = {
         "repo_path": tmp_path,
         "issue_text": "same issue",
-        "failed_tests": ["tests/test_a.py::t1", "tests/test_b.py::t2"],
-        "regression_tests": ["tests/test_c.py::t3"],
+        "failed_tests": ["tests/test_a.py::test_one", "tests/test_b.py::test_two"],
+        "regression_tests": ["tests/test_c.py::test_three"],
     }
     id1 = build_custom_bug(**kwargs).id
     id2 = build_custom_bug(**kwargs).id
@@ -333,7 +333,86 @@ def test_custom_bug_id_is_content_derived(tmp_path: Path) -> None:
 
     diff_content = build_custom_bug(**{**kwargs, "issue_text": "different issue"})
     assert diff_content.id != id1
-    diff_tests = build_custom_bug(**{**kwargs, "failed_tests": ["tests/test_x.py::t"]})
+    diff_tests = build_custom_bug(**{**kwargs, "failed_tests": ["tests/test_x.py::test_x"]})
     assert diff_tests.id != id1
     diff_scope = build_custom_bug(**{**kwargs, "allowed_paths": ["src/**"]})
     assert diff_scope.id != id1
+
+
+# ---------- S01/F3:参数化 tuple ID 经 API 全链路 ----------
+
+_TUPLE_SRC = (
+    "def area(value):\n"
+    "    w, h = value\n"
+    "    if w == 1 and h == 2:\n"
+    "        return 3  # baseline bug\n"
+    "    return w * h\n"
+)
+
+_TUPLE_TESTS = (
+    "import pytest\n"
+    "from src.rect import area\n"
+    "\n"
+    "@pytest.mark.parametrize('size', [(1, 2), (3, 4)], ids=['(1,2)', '(3,4)'])\n"
+    "def test_area(size):\n"
+    "    assert area(size) == size[0] * size[1]\n"
+)
+
+_TUPLE_FIX_DIFF = (
+    "--- a/src/rect.py\n"
+    "+++ b/src/rect.py\n"
+    "@@ -1,5 +1,3 @@\n"
+    " def area(value):\n"
+    "     w, h = value\n"
+    "-    if w == 1 and h == 2:\n"
+    "-        return 3  # baseline bug\n"
+    "-    return w * h\n"
+    "+    return w * h\n"
+)
+
+
+def test_api_accepts_parametrized_tuple_ids_and_executes_them(
+    tmp_path: Path, client: TestClient
+) -> None:
+    """S01 验收:API 接收 `test_area[(1,2)]` 形态的合法参数化 ID,并真正只执行
+    指定参数(基线红/修复后绿),verify junit 只含请求的那条参数。"""
+    repo = tmp_path / "tuple-repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "tests").mkdir()
+    (repo / "conftest.py").write_text("", encoding="utf-8", newline="\n")
+    (repo / "src" / "rect.py").write_text(_TUPLE_SRC, encoding="utf-8", newline="\n")
+    (repo / "tests" / "test_area.py").write_text(_TUPLE_TESTS, encoding="utf-8", newline="\n")
+
+    replay = [
+        {"tool": "apply_patch", "args": {"patch_text": block(_TUPLE_FIX_DIFF)}},
+        {"tool": "run_tests", "args": {"test_set": "failed"}},
+        {"tool": "run_tests", "args": {"test_set": "regression"}},
+        {"tool": "finish", "args": {"success": True, "summary": "drop (1,2) special case"}},
+    ]
+    resp = client.post(
+        "/api/tasks",
+        json={
+            "repo_path": str(repo),
+            "issue_text": "area((1, 2)) 应为 2,基线返回 3",
+            "failed_tests": ["tests/test_area.py::test_area[(1,2)]"],
+            "regression_tests": ["tests/test_area.py::test_area[(3,4)]"],
+            "allowed_paths": ["src/rect.py"],
+            "engine": "plain",
+            "model": "fake",
+            "replay_script": replay,
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    final = wait_terminal(client, resp.json()["task_id"])
+    assert final["status"] == "FINISHED", final
+    assert final["verdict"] == "resolved"
+
+    run_dir = Path(final["run_dir"])
+    report = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
+    assert report["changed_files"] == ["src/rect.py"]
+    # verify 只跑了请求的参数化用例:failed 集恰好 (1,2) 一条、regression 集恰好 (3,4) 一条
+    failed_xml = (run_dir / "reports" / "verify-failed.xml").read_text(encoding="utf-8")
+    reg_xml = (run_dir / "reports" / "verify-regression.xml").read_text(encoding="utf-8")
+    assert 'name="test_area[(1,2)]"' in failed_xml
+    assert "test_area[(3,4)]" not in failed_xml
+    assert 'name="test_area[(3,4)]"' in reg_xml
