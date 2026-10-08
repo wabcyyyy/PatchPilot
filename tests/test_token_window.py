@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import json
 
+from app.config import Settings
 from app.context.token_window import REASONING_STUB, STUB_PREFIX, compact_messages
 from app.llm.base import messages_tokens
 
@@ -246,3 +247,36 @@ def test_token_estimates_use_the_shared_estimator() -> None:
     assert result.before_tokens == messages_tokens(messages)
     assert result.after_tokens == messages_tokens(result.messages)
     assert result.after_tokens < result.before_tokens
+
+
+def test_production_default_threshold_bites_on_realistic_shape() -> None:
+    """生产默认阈值不是装饰物:按真实 PROPOSE 轨迹的形状(每条 read_file 回执约占窗口 1/8)
+    堆 20 组,必须真的被压回阈值内,且输出仍是**合法请求**。
+
+    这条只支撑"默认值会咬人 + 形态不破",不支撑"省了多少额度"——零成本回放的 fake 语料
+    每题 7-9 轮、够不到这个尺寸(ADR-0004 反方条目 / PROGRESS M7.1 同一口径)。
+    尺寸全部从 Settings 的字段声明推导,不写死数字:改默认值时这条用例跟着变,而不是先红在无关处。
+    刻意读**字段默认值**而不是 `get_settings()` 的缓存实例——全量套件里有用例会 monkeypatch
+    环境变量再 `cache_clear()`,teardown 还原得了 env、还原不了已被重建的缓存,顺用时这条会
+    因用例顺序假红(同一类坑 conftest 里记过账)。
+    """
+    window = Settings.model_fields["context_window_tokens"].default
+    keep = Settings.model_fields["context_keep_recent_turns"].default
+    chars_per_result = window * 4 // 8  # 每条 tool 回执 ≈ 窗口的 1/8(token≈字符/4)
+
+    messages = _history(20, big=chars_per_result, n_tools=1)
+    before = messages_tokens(messages)
+    assert before > window * 2, f"夹具没造出真实的超载:{before} vs 窗口 {window}"
+
+    result = compact_messages(messages, max_context_tokens=window, keep_recent_turns=keep)
+
+    assert result.after_tokens <= window, (result.before_tokens, result.after_tokens, window)
+    assert result.stubbed > 0
+    assert result.messages[:2] == HEAD, "持久记忆(system + issue)永远不进压缩区"
+    tail = keep * 2  # n_tools=1 ⇒ 每组两条
+    assert result.messages[-tail:] == messages[-tail:], "最近若干轮必须原文可见"
+    _assert_tool_replies_bound_to_assistant(result.messages)
+    assert all(
+        msg.get("role") != "tool" or not str(msg["content"]).startswith(STUB_PREFIX)
+        for msg in result.messages[-tail:]
+    )
