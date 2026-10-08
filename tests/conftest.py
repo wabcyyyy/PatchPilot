@@ -58,12 +58,22 @@ def _basetemp_outside_repo(tmp_path_factory: pytest.TempPathFactory) -> None:
     成因见 PROGRESS 的 M10 卡:临时目录的父链上有本仓库的 `.git`,
     `git -C <临时目录> add -A -N` 就能沿父链找到外层仓库、又因忽略规则加不到任何文件,
     于是"工作区其实不是 git 仓库"这类夹具缺陷既不报错、diff 也恒为空——用例只在
-    特定 basetemp 位置下才绿。默认 basetemp(系统临时目录)本来就在仓库外。
+    特定 basetemp 位置下才绿。系统临时目录本来就在仓库外,但**本机的
+    `%TEMP%\\pytest-of-*` ACL 是坏的(PM-004,至今未修)**,所以本地跑要显式传
+    仓库外且可写的落点:`pytest -q --basetemp=D:/tmp/pt`(pyproject 里不钉落点,
+    否则就等于把"仓库内"这个坏姿势固化进共享配置)。
     """
-    root = tmp_path_factory.getbasetemp().resolve()
+    try:
+        root = tmp_path_factory.getbasetemp().resolve()
+    except OSError as exc:  # 落点不可用时要说人话,别让 WinError 5 单独站在那里
+        raise OSError(
+            f"pytest 临时根不可用:{exc} —— 传一个仓库外且可写的落点,"
+            f"例如 pytest -q --basetemp=D:/tmp/pt"
+        ) from exc
     repo_root = Path(__file__).resolve().parents[1]
     assert repo_root not in (root, *root.parents), (
-        f"basetemp 在仓库内:{root} —— 别传 --basetemp=<仓库内路径>,用默认值即可"
+        f"basetemp 在仓库内:{root} —— 落点必须在仓库外且可写,"
+        f"本地用 pytest -q --basetemp=D:/tmp/pt(CI 的系统临时目录本来就在仓库外)"
     )
 
 

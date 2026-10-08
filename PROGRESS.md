@@ -667,3 +667,30 @@ M11.3 要的是生产影响评估,结果它先推翻了我自己登记的 M11.1:
 - **不能简单删 pin**:这台机器的系统临时根不可用(PM-004 至今未修),退回默认根实测直接
   `PermissionError`。三条收口方案(推荐项+代价)记在 TODO M11.6.3,其中"以管理员权限清理
   `%TEMP%\pytest-of-*`"动的是机器、影响你其它项目,我不主动做。
+
+## M11.5/M11.6 落地:裁决放行后改的三处(2026-10-08 12:45)
+
+- **临时根改成每次执行私有**(`a127b28`,`app/adapters/pytest_adapter.py`):
+  `<报告目录>/<junit 名>.basetemp-<8位随机>` + 执行完自己回收。落地时被实测纠正了两点:
+  (i) 给了显式 `--basetemp` 时 pytest **收尾不清理**(`tmpdir.py` 的 finish 只处理"没给
+      basetemp"那一支),所以"多一个目录"不是小代价而是攒着 —— 于是加了 `_discard_basetemp`;
+  (ii) 旧行为的失败不止"测试中途 `FileNotFoundError`":复现脚本里还跑出
+      `FileExistsError`(session setup 建目录时撞车)与清理侧 `PermissionError`
+      —— 三种面孔,同一个因由。
+- **反向验证做了**:把 `_basetemp_for` monkeypatch 回旧写法,新加的并发用例 18 次里
+  **12 次伪失败**;新行为 0 次。不做这一步,"回归用例"可能只是装饰物。
+  `tests/test_basetemp_isolation.py` 跑真子进程 —— 被删的是文件系统事实,mock 不出来。
+- **跑法收口按方案①**:`pyproject.toml` 的 addopts 不再钉落点(注释里写清为什么不钉),
+  `AGENTS.md`/`README.md` 的本地命令改成 `pytest -q --basetemp=D:/tmp/pt` 并说明理由,
+  防线报错从裸 `WinError 5` 改成给得出路的文案。现在裸 `pytest -q` 的失败是**清楚的**,
+  而且**不再先 `rm_rf` 掉仓库内那 408 个测试期副本**。
+- **顺手查出一个默认值,记成 M11.7 但把严重性写回真实水平**:`run_pytest` 的
+  `report_path=None` 会把 junit 与临时根落进**工作区**,而 `differ.py:30` 用
+  `git add -A -N` 取 diff(未跟踪文件进 diff)—— 我第一版把它写成"范围门禁会被平台产物骗",
+  核对后不成立:`.patchpilot_junit.xml` 正好在物化仓库强制注入的忽略清单里
+  (`testing.py:19`),临时根又被新加的 `finally` 回收。真实剩下的缺口很窄
+  (平台进程在 pytest 期间死掉 ⇒ 回收没跑、目录里有文件)。签名要不要改成必填属于另一次裁决,
+  我倾向不动,只在文档里写清"默认值仅供测试"。
+- **全量确认**:改完之后 `pytest -q --basetemp=D:/tmp/pt-full-m116b` →
+  **708 passed / 3 skipped**(1229.21s;比上一轮多出的 2 例就是 `test_basetemp_isolation.py`),
+  `ruff check .` 全绿,工作区无残留。

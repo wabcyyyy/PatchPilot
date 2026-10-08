@@ -198,11 +198,11 @@
       所以本地后端的执行**不落在机器默认临时根**。我当时只读了 113 行就下结论,没顺着调用方走。
       M11.4 观察到的 `PermissionError` 因此另有归属(外层套件自身的 `tmp_path` 用机器默认根,
       与并发的嵌套 pytest 共用 `pytest-of-<user>`),`_isolated_nested_temp` 那条修法仍然成立。
-- [ ] M11.2 待裁决的修法(动的是"必须掌握"区,故不自行实现):
-      ①在 `build_pytest_command` 追加 `--basetemp=<该次 run 目录>/pytest-tmp`;
-      ②或在执行器 env 白名单里把 TEMP/TMPDIR 指到 run 目录内(连非 pytest 的临时写入一起隔离)。
-      两者都能把"临时根"变成每次执行私有。代价:每次执行多一个临时目录要随 run_dir 清理,
-      且若被诊断仓库的测试硬编码 `/tmp` 路径会行为微变(方案②不覆盖 /tmp,POSIX 上要另处理)。
+- [x] M11.2 修法已裁决并落地(2026-10-08 12:40,`a127b28`,细节见 M11.5.5):
+      ①的形态改成**每次执行私有**(不是按 run_dir/report_dir),②(执行器 env 重定向 TEMP)
+      经核对**不需要**——平台所有测试执行都走 `run_pytest`,临时根已私有;
+      被诊断仓库里裸 `tempfile.mkdtemp()` 落的是 `%TEMP%` 根本身,那一层实测可写
+      (坏的只是 `pytest-of-<user>` 这一层,见 M11.6.2)。
 - [ ] M11.3 生产影响评估(需要它才能定优先级):同一平台上并发任务数 >1 时,
       一次长验证的 `tmp_path` 可能被更新三次执行后的清理**删掉**,那时得到的不是 flaky
       而是**假 VERIFY_FAILED**;本夜只在 Windows 上拿到 `PermissionError` 这一半证据,
@@ -270,13 +270,19 @@
       同一套件里真正共用机器默认根的是 `tests/test_bugset.py:53` 的**裸 subprocess pytest**
       (基线校验不经适配器,不带 `--basetemp`)—— 这才是本夜 `os.scandir(pytest-of-wabcy)`
       PermissionError 的完整出处;`_isolated_nested_temp` 之所以有效就是因为它透传 TEMP。
-- [ ] M11.5.5 待裁决(M11.2 的具体形态,现在有数据了):把
-      `--basetemp={(junit.parent / "basetemp")}` 改成**每次执行唯一**
-      (`junit.parent / f"{junit.stem}.basetemp"`),一处 1 行,动的是"必须掌握"区。
-      代价:每次执行多一个临时目录(仍随 run_dir 清理);报告目录布局从"每 report_dir 一个
-      `basetemp`"变成"每个 junit 一个",`docs/design.md:42` 的"副产物落工作区外的报告目录"仍成立;
-      现无任何用例或文档钉住旧的 basetemp 路径(已 grep:`app/tests/docs` 里只有 PM-004 叙述它)。
-      收益:把刚测出的 50% 伪失败形态从"靠拓扑不踩"变成"结构上不可能踩"。
+- [x] M11.5.5 已落地(`a127b28`,2026-10-08 12:40):`run_pytest` 的临时根改成
+      `<报告目录>/<junit 名>.basetemp-<8位随机>`,并在执行结束后自己回收。
+      落地时纠正了两处我原来的说法:
+      - "代价是每次执行多一个临时目录要随 run_dir 清理"——**pytest 对显式 `--basetemp`
+        根本不做收尾清理**(`tmpdir.py` 的 finish 只走"没给 basetemp"那一支),所以不回收
+        就是真的攒着;现在适配器自己 `rmtree(ignore_errors=True)`,判定用的 junit 与
+        精炼堆栈都在报告目录里,与被删的目录无关。
+      - "随机后缀只是防同名 junit 跨轮复用"不止如此:超时被杀的会话可能有**逃逸的孙子进程**
+        还在写(`local_runner.py:144-156` 自己注释过),下一轮复用同名目录时删它的人会撞上
+        孤儿持有的句柄 —— 实测旧行为下除了 `FileNotFoundError` 还见到
+        `FileExistsError`(session setup 的 mkdir)与清理时的 `PermissionError` 两副新面孔。
+      用例:`tests/test_basetemp_isolation.py` 两条(跑真子进程,被删的是文件系统事实)。
+      **反向验证做过**:把 `_basetemp_for` 改回旧行为,并发用例 18 次里 12 次伪失败;新行为 0 次。
 
 ### M11.6 我自己在 M10.5 装的防线与 M0 的 addopts 冲掉了"文档里那条命令"(2026-10-08 11:55)
 
@@ -294,18 +300,32 @@
       同级还留着 `pytest-of-SYSTEM`(当年以管理员/SYSTEM 跑过 pytest 留下的)。
       所以 pin 不是随意加的,它是对一台坏机器的适配 —— 但它被写进了**仓库配置**,
       于是换任何人/CI 都会撞上,而防线又正确地拒绝了仓库内落点。
-- [ ] M11.6.3 待裁决的收口方案(我给的推荐项 + 代价,三选一):
-      ①**推荐**:把 pin 移出仓库配置 —— 本机用 `pytest -q --basetemp=D:/tmp/pt` 这类
-        **仓库外**落点,并把这条写进 `AGENTS.md:35` 与 `README.md:43`(改文档不是我一个人的事,
-        AGENTS.md 是你的会话约定文件);同时删掉 addopts 里的 `--basetemp`,让 CI 用默认根
-        (CI 的 /tmp 没有这个 ACL 问题)。代价:每台本地机器要自己知道落点,配置里少了一个"兜底"。
-      ②把 addopts 改成仓库外的相对落点 `--basetemp=../.patchpilot-pytest-tmp`(仓库父目录)。
-        代价:仓库被放在文件系统根或父目录不可写时失效;CI 上落点变成长在 workspace 里的一坨。
-      ③先修机器再谈配置:以管理员权限删掉 `%TEMP%\pytest-of-wabcy` 与 `pytest-of-SYSTEM`
-        (或 icacls /reset),然后 addopts 的 pin 直接删掉、防线照常。
-        代价:**动的是你这台机器上所有项目的临时目录**,且需要管理员窗口;
-        我不主动做(与 Docker 迁盘同一类:机器级、可影响别的服务)。
-      无论选哪条,`M11.2/M11.5.5` 与它独立:basetemp 落点粒度是平台代码的事,addopts 是跑法的事。
+- [x] M11.6.3 按方案①落地(2026-10-08 12:45):`pyproject.toml` 的 addopts 去掉
+      `--basetemp=.pytest-tmp`(留注释说明为什么不钉),`AGENTS.md:35` 与 `README.md`
+      两处命令改成 `pytest -q --basetemp=D:/tmp/pt` 并写明理由(CI 仍用默认值),
+      `tests/conftest.py` 的防线报错改成给得出路的文案,并把落点不可用的 `OSError`
+      单独包住(以前是裸 `WinError 5` 站在那儿,看不出该做什么)。
+      实测:裸 `pytest -q` 现在是**清楚的报错且不再先删 `.pytest-tmp`**;
+      带仓库外落点 3 passed。PM-004 追加"后续"一节,把这次的反噬写进去。
+- [x] M11.6.5 遗留(不动机器):本机 `%TEMP%\pytest-of-wabcy` 仍"拒绝访问"、
+      旁边留着 `pytest-of-SYSTEM`。清理需要管理员权限且影响本机所有项目,
+      由你在方便的时候做;仓库侧已经不再依赖那个根可用。
+
+### M11.7 实现时顺手查出的潜伏坑(只登记,未动)
+
+- [ ] M11.7.1 事实:`run_pytest` 允许 `report_path=None`,此时 junit 与临时根都落在
+      **工作区内**(`cwd/.patchpilot_junit.xml`、`cwd/.patchpilot_junit.xml.basetemp-xxxx`)。
+      而 `app/gitops/differ.py:30` 用 `git add -A -N` 取 diff,未跟踪文件会进 diff
+      ⇒ 原则上平台产物可能被算成"模型改过的文件"。
+      **但今天有两道"恰好成立"的遮挡**,所以这不是一个会兑现的缺陷:
+      ①`.patchpilot_junit.xml` 正好在物化仓库强制注入的忽略清单里
+      (`app/gitops/testing.py:19` 的 `REQUIRED_GITIGNORE_LINES`);
+      ②临时根现在被 `finally` 里的 `_discard_basetemp` 回收(git 只报文件不报空目录,
+      所以旧写法在"没被回收"时也只是恰好不响)。
+      剩下的真实缺口很窄:平台进程自己在 pytest 期间死掉 ⇒ 回收没执行、目录里有文件
+      ⇒ 续跑后的 diff 视图会带上它们。要不要把 `report_path` 改成必填(或在 local 分支
+      遇到 None 直接 `ExecError`)属于签名变更,等裁决;我倾向**不改**,只在文档里写明
+      "默认值仅供测试用,生产调用方必须传报告目录"。
 - [x] M11.6.4 复跑确认(2026-10-08 12:20):`eb0e103` 之后全量 **706 passed / 3 skipped**
       (1142.24s;夜里那次是 841s,差的是机器负载,用例集合与判定字段没变),工作区无残留。
       这一轮的唯一行为改动是 `tests/conftest.py` 的 docstring 口径,数字不变即符合预期。

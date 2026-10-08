@@ -23,4 +23,9 @@ dev = ["pytest>=8.2", "ruff>=0.5"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-addopts = "-ra --basetemp=.pytest-tmp"
+# 不在此处钉 --basetemp:落点在仓库内会让"临时目录的父链上有本仓库 .git"这类夹具缺陷
+# 悄悄变绿(防线见 tests/conftest.py 的 _basetemp_outside_repo),而仓库外落点没法写进
+# 共享配置。本机 %TEMP%\pytest-of-* 的 ACL 是坏的(PM-004),本地跑要显式传:
+#   pytest -q --basetemp=D:/tmp/pt
+# CI 用系统临时目录,直接 pytest -q 即可。
+addopts = "-ra"

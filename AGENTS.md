@@ -33,3 +33,7 @@ PatchPilot:面向软件仓库的测试失败诊断与补丁验证平台。
 - Conventional Commits:`feat(scope): ...`、`fix(scope): ...`、`test(scope): ...`、`docs(scope): ...`;
 - 每张任务卡至少一个 commit;
 - 提交前本地必须跑绿:`ruff check . && pytest -q`。
+  **basetemp 落点不许在仓库内**(`tests/conftest.py` 的 `_basetemp_outside_repo` 会当场拦红,
+  成因见 PROGRESS 的 M10 卡:仓库在临时目录的父链上会让"其实不是 git 工作区"这类夹具缺陷悄悄变绿);
+  而本机 `%TEMP%\pytest-of-*` 的 ACL 是坏的(PM-004,至今未修),所以**本地跑要显式传仓库外落点**:
+  `pytest -q --basetemp=D:/tmp/pt`。CI 上系统临时目录可用,`pytest -q` 直接跑即可。

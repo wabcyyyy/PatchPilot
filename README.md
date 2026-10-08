@@ -40,7 +40,9 @@
 python -m pip install -r requirements.txt -r requirements-dev.txt
 
 # 运行测试(全离线,模型交互用 FakeLLM 回放)
-pytest -q
+# 临时根落点不许在仓库内(防线见 tests/conftest.py);Windows 本机系统临时目录的
+# pytest 根 ACL 已坏(PM-004),本地要显式传仓库外落点,CI 用默认值即可
+pytest -q --basetemp=D:/tmp/pt
 
 # 回放模式跑一个完整修复任务(验证平台闭环)
 python -m app.evals.run_single --bug BUG-001 --model fake --engine graph --out runs
@@ -81,7 +83,7 @@ app/
 bugs/           # 自建 Bug 任务集 + 攻击样例 + hard 候选(计数以 bugs/README.md 与 list_bug_ids 为准)
 docker/         # 执行器镜像、API 镜像、Compose
 docs/           # 索引(docs/README.md)、设计笔记、威胁模型、隔离实验、复盘、审计、adr/、archive/
-tests/          # 项目自身测试(全离线,模型交互用 FakeLLM 回放;用例数不手写,以本地可复现实测为准:PATCHPILOT_LLM_ENABLED=false python -m pytest -q)
+tests/          # 项目自身测试(全离线,模型交互用 FakeLLM 回放;用例数不手写,以本地可复现实测为准:PATCHPILOT_LLM_ENABLED=false python -m pytest -q --basetemp=D:/tmp/pt)
 ```
 
 ## 文档
