@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import logging
+import shutil
+import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -211,6 +213,31 @@ def _case_id(case: ET.Element) -> str:
     return f"{classname}::{name}" if classname else name
 
 
+def _basetemp_for(junit: Path) -> Path:
+    """本次执行私有的临时根:`<报告目录>/<junit 名>.basetemp-<8位随机>`。
+
+    为什么必须"每次执行唯一",而不是按 report_dir 共用一个:pytest 在 `--basetemp`
+    已存在时**无条件先整棵删掉再建**(`_pytest/tmpdir.py:154-158`)。两条执行共用同一个
+    报告目录就等于共用同一个临时根,后起步那次会把先起步那次**正在写**的 `tmp_path`
+    删光 —— 实测 18 次并发里 9 次出现"单独跑能过、并发跑 `FileNotFoundError` 或会话级
+    error"(脚本 `scripts/measure_basetemp_contention.py`,判据与数字见 TODO M11.5)。
+    随机后缀不是给"同名 junit 跨轮复用"兜底的:超时被杀的会话可能有逃逸的孙子进程还在写
+    (`local_runner.py:144-156`),下一轮若复用同一个目录,删它的人会撞上孤儿持有的句柄。
+    """
+    return junit.parent / f"{junit.stem}.basetemp-{uuid.uuid4().hex[:8]}"
+
+
+def _discard_basetemp(path: Path) -> None:
+    """执行完回收这次的私有临时根(尽力而为,失败不升级为任务失败)。
+
+    显式给了 `--basetemp` 时 pytest 自己的收尾不做清理(`tmpdir.py` 的 finish 只处理
+    "没给 basetemp"那一支),所以不回收等于每次执行留一份被诊断仓库的临时产物——
+    长任务多轮下来是实打实的磁盘增长。判定用的 junit 与精炼堆栈都在报告目录里,
+    与被删的这个目录无关。
+    """
+    shutil.rmtree(path, ignore_errors=True)
+
+
 def run_pytest(
     python_exe: str,
     cwd: Path | str,
@@ -223,8 +250,9 @@ def run_pytest(
 ) -> tuple[PytestReport, TestRunResult]:
     """执行 pytest 并解析报告;报告缺失/超时都反映在返回值里。
 
-    basetemp 显式指向报告目录:目标仓库测试里的 tmp_path fixture 不再依赖
-    系统临时目录(权限/容量不可控),也不污染被验证的工作区。
+    basetemp 是**这次执行私有**的临时根(落在报告目录下,名字带随机后缀),执行完即回收:
+    目标仓库测试里的 tmp_path 不依赖系统临时目录(权限/容量不可控),不污染被验证的工作区,
+    也不会和另一条并发执行共用同一个目录(共用的实测后果见 `_basetemp_for`)。
     execution_backend="docker" 时改在临时容器内执行(隔离边界见 docker_runner),
     签名与返回结构不变,上层无感知;镜像需预装 pytest(见 docker/executor.Dockerfile)。
     env 是题目自带环境:容器题覆盖镜像/挂载点/容器内解释器,宿主题覆盖解释器。
@@ -252,8 +280,12 @@ def run_pytest(
     cmd = build_pytest_cmd(
         env.python if env and env.python else python_exe, test_ids, junit, extra_args
     )
-    cmd.append(f"--basetemp={(junit.parent / 'basetemp').as_posix()}")
-    run = run_tests(cmd, cwd, timeout)
+    basetemp = _basetemp_for(junit)
+    cmd.append(f"--basetemp={basetemp.as_posix()}")
+    try:
+        run = run_tests(cmd, cwd, timeout)
+    finally:
+        _discard_basetemp(basetemp)
     report = parse_junit_xml(junit)
     report.requested_ids = list(test_ids or [])
     report.exit_code = run.exit_code
