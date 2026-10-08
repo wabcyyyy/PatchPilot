@@ -227,7 +227,7 @@ def test_checkpoint_roundtrip(tmp_path: Path) -> None:
         report_dir=tmp_path / "reports",
         max_rounds=bug.max_rounds,
         max_turns=20,
-        started_monotonic=__import__("time").monotonic(),
+        deadline_epoch=__import__("time").time() + 900,
     )
     graph = build_graph(nodes, checkpointer=checkpointer)
     thread = {"configurable": {"thread_id": "T-CP"}}
@@ -654,7 +654,7 @@ def test_verify_deadline_overrun_returns_budget_terminal(
         report_dir=tmp_path,
         max_rounds=3,
         max_turns=5,
-        started_monotonic=time.monotonic() - 10_000,  # 早已超 900s
+        deadline_epoch=time.time() - 1,  # 截止时刻早已过去
     )
     nodes.ctx = SimpleNamespace(python_exe="python", env=None)  # type: ignore[assignment]
 
@@ -672,15 +672,11 @@ def test_verify_deadline_hits_midway_keeps_partial_flags(
     from types import SimpleNamespace
 
     clock = {"now": 1000.0}
-    monkeypatch.setattr("app.graph.nodes.time", SimpleNamespace(monotonic=lambda: clock["now"]))
-    monkeypatch.setattr(
-        "app.graph.nodes.get_settings",
-        lambda: SimpleNamespace(task_timeout_seconds=900, verify_double_run=False),
-    )
+    monkeypatch.setattr("app.graph.nodes.time", SimpleNamespace(time=lambda: clock["now"]))
     partial = SimpleNamespace(all_passed=True, failed_cases=[], failed=0, errors=0)
 
     def _advance_after_first(*args: object, **kwargs: object) -> object:
-        clock["now"] = 1001.0  # 第一次 pytest 之后时间越过 deadline(100+900)
+        clock["now"] = 1001.0  # 第一次 pytest 之后时间越过截止时刻(1000)
         return (partial, None)
 
     monkeypatch.setattr("app.graph.nodes.run_pytest", _advance_after_first)
@@ -693,7 +689,7 @@ def test_verify_deadline_hits_midway_keeps_partial_flags(
         report_dir=tmp_path,
         max_rounds=3,
         max_turns=5,
-        started_monotonic=100.0,  # deadline = 100 + 900 = 1000
+        deadline_epoch=1000.0,  # 持久化的墙钟截止时刻(S02b)
     )
     nodes.ctx = SimpleNamespace(python_exe="python", env=None)  # type: ignore[assignment]
 

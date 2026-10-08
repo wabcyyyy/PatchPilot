@@ -128,9 +128,11 @@ class TaskNodes:
     report_dir: Path
     max_rounds: int
     max_turns: int
-    # R2 整改:默认 None(不查时间)而不是 0.0——0.0 会让直接构造 TaskNodes 的
-    # 调用方(测试/未来代码)在第一个 turn 边界就撞上"已超时 900s"的假 BudgetError
-    started_monotonic: float | None = None
+    # S02b:任务级墙钟截止时刻(执行启动时建立并持久化,恢复沿用原值)。
+    # 默认 None(不查时间)——直接构造 TaskNodes 的调用方(测试/未来代码)
+    # 不产生假超时。不再是 monotonic 起点:monotonic 跨进程无意义,
+    # 恢复会因此悄悄重授 900s(本卡堵掉的洞)。
+    deadline_epoch: float | None = None
     ctx: ToolContext | None = None
     baseline_commit: str = ""
     cancel_event: threading.Event | None = None
@@ -144,6 +146,9 @@ class TaskNodes:
     # S02/F1:任务级资源账本——本地化/规划/补丁/分支候选的全部模型调用入账,
     # 终局验收(acceptance_from_state)读它;None 时 __post_init__ 按 Settings 建。
     ledger: ResourceLedger | None = None
+    # S02b:恢复被拒的原因(prepare_resume 写);runner 据此拒绝恢复而非冷启动
+    # (S03 会把它泛化成结构化 ResumeDecision)
+    resume_rejected_reason: str | None = None
 
     def __post_init__(self) -> None:
         if self.ledger is None:
@@ -309,8 +314,7 @@ class TaskNodes:
                 # 主线 localize 无阶段提示,故 extra_system 即骨架(候选点未接,见 _run_candidate)
                 extra_system=self._persistent_context(self.workspace),
                 allowed_tools=READ_TOOLS,
-                started_monotonic=self.started_monotonic,
-                time_budget_seconds=get_settings().task_timeout_seconds,
+                deadline_epoch=self.deadline_epoch,
                 token_budget=self._token_budget_for(
                     state, share=get_settings().localize_budget_share
                 ),
@@ -493,8 +497,7 @@ class TaskNodes:
                 # 计划只产文本:工具白名单只留 finish,不给任何检索/写入面
                 # (否则"先计划"会变成"再调查一轮")
                 allowed_tools=[FINISH_TOOL],
-                started_monotonic=self.started_monotonic,
-                time_budget_seconds=settings.task_timeout_seconds,
+                deadline_epoch=self.deadline_epoch,
                 token_budget=self._token_budget_for(
                     state, share=getattr(settings, "plan_budget_share", 0.15)
                 ),
@@ -577,17 +580,13 @@ class TaskNodes:
 
     def propose(self, state: TaskState) -> dict[str, Any]:
         assert self.ctx is not None
-        # started_monotonic 未接线时(直接构造 TaskNodes 的测试场景)以"当前"为
-        # 时间零点,时间预算从 propose 起算;生产路径由 runner 赋任务真实起点
-        started = self.started_monotonic if self.started_monotonic is not None else time.monotonic()
         try:
             ensure_budget(
                 round_no=state["round_no"],
                 max_rounds=self.max_rounds,
                 tokens_used=state.get("tokens_used", 0),
                 token_budget=get_settings().token_budget,
-                started_monotonic=started,
-                time_budget_seconds=get_settings().task_timeout_seconds,
+                deadline_epoch=self.deadline_epoch,
             )
         except BudgetError as exc:
             # 只捕 BudgetError:其余异常是实现缺陷,交给 runner 收敛为 NEEDS_REVIEW,
@@ -605,8 +604,7 @@ class TaskNodes:
                 state_label="PROPOSE_PATCH",
                 extra_system=self._persistent_context(self.workspace),
                 allowed_tools=WRITE_TOOLS,
-                started_monotonic=started,
-                time_budget_seconds=get_settings().task_timeout_seconds,
+                deadline_epoch=self.deadline_epoch,
                 token_budget=self._token_budget_for(state),
                 context_window_tokens=get_settings().context_window_tokens,
                 context_keep_recent_turns=get_settings().context_keep_recent_turns,
@@ -705,19 +703,15 @@ class TaskNodes:
     # ---------- VERIFY ----------
 
     def _deadline_overrun(self) -> str | None:
-        """任务级 deadline 复查(复盘 P1-6):verify 双跑最多 4 次 pytest,单次各有
-        test_timeout,但都不查任务级 task_timeout_seconds——不复查则可整体越界。
-        started_monotonic 未接线(直连 TaskNodes 的测试场景)不查,与 R2 同口径;
-        verify 无模型调用不耗 token,任务级 token 预算由 propose/apply 段守卫。"""
-        settings = get_settings()
-        if self.started_monotonic is None or settings.task_timeout_seconds <= 0:
+        """任务级 deadline 复查(复盘 P1-6;S02b 起比对持久化的墙钟截止时刻):
+        verify 双跑最多 4 次 pytest,单次各有 test_timeout,但都不查任务级
+        截止时刻——不复查则可整体越界。deadline_epoch 未接线(直连 TaskNodes
+        的测试场景)不查,与 R2 同口径;verify 无模型调用不耗 token,
+        任务级 token 预算由 propose/apply 段守卫。"""
+        if self.deadline_epoch is None:
             return None
-        elapsed = time.monotonic() - self.started_monotonic
-        if elapsed > settings.task_timeout_seconds:
-            return (
-                f"verify: task exceeded time budget {settings.task_timeout_seconds}s"
-                f" (elapsed {elapsed:.0f}s)"
-            )
+        if time.time() > self.deadline_epoch:
+            return f"verify: task exceeded time budget (deadline {int(self.deadline_epoch)} passed)"
         return None
 
     def verify(self, state: TaskState) -> dict[str, Any]:
@@ -726,7 +720,12 @@ class TaskNodes:
         # 终态收尾(与 localize/propose 段同语义),不得越过 task_timeout_seconds;
         # 已拿到的部分结果随状态带回,供事后复盘
         if (overrun := self._deadline_overrun()) is not None:
-            return {"status": "BUDGET_EXCEEDED", "outcome": "failed", "error": overrun}
+            return {
+                "status": "BUDGET_EXCEEDED",
+                "outcome": "failed",
+                "error": overrun,
+                "resource_status": "exhausted",
+            }
         failed_report, _ = run_pytest(
             self.ctx.python_exe,
             self.workspace,
@@ -740,6 +739,7 @@ class TaskNodes:
                 "outcome": "failed",
                 "error": overrun,
                 "verify_failed_ok": failed_report.all_passed,
+                "resource_status": "exhausted",
             }
         regression_report, _ = run_pytest(
             self.ctx.python_exe,
@@ -790,6 +790,7 @@ class TaskNodes:
                     "error": overrun,
                     "verify_failed_ok": failed_report.all_passed,
                     "verify_regression_ok": regression_report.all_passed,
+                    "resource_status": "exhausted",
                 }
             rerun_failed, _ = run_pytest(
                 self.ctx.python_exe,
@@ -805,6 +806,17 @@ class TaskNodes:
                 self.report_dir / "verify-regression-rerun.xml",
                 env=self.ctx.env,
             )
+            # S02b(spec 必测"最后复核越时"):最后一次 rerun 之后也要复查——
+            # 复核期间越过截止时刻,已有测试证据保留,但资源终态明确、不得 resolved
+            if (overrun := self._deadline_overrun()) is not None:
+                return {
+                    "status": "BUDGET_EXCEEDED",
+                    "outcome": "failed",
+                    "error": overrun,
+                    "verify_failed_ok": failed_report.all_passed,
+                    "verify_regression_ok": regression_report.all_passed,
+                    "resource_status": "exhausted",
+                }
             mismatch = double_run_mismatch(
                 failed_report, regression_report, rerun_failed, rerun_regression
             )
@@ -985,8 +997,7 @@ class TaskNodes:
                 # max(…, 1):余量极小时 0 会被 plain_loop 当"不限制",
                 # 脚枪式语义(复盘 P2);至少给 1,让候选在首个 turn 边界即被预算拦下
                 token_budget=max(reserve // 2, 1) if reserve else reserve,
-                started_monotonic=self.started_monotonic,
-                time_budget_seconds=settings.task_timeout_seconds,
+                deadline_epoch=self.deadline_epoch,
                 context_window_tokens=settings.context_window_tokens,
                 context_keep_recent_turns=settings.context_keep_recent_turns,
                 cancel_event=self.cancel_event,

@@ -26,6 +26,9 @@ class TaskState(TypedDict, total=False):
     # 复位到基线(reset_workspace 需完整 sha),而轨迹里的 create_workspace 事件只存了
     # 12 位前缀——只有 state 里的这份是权威的。
     baseline_commit: str
+    # S02b:任务级墙钟截止时刻(epoch 秒)。执行启动时建立、随 superstep 进 checkpoint,
+    # 恢复沿用原值的剩余时间(不重授);None = 不限时(旧约定 0=无限的同义)。必须可序列化。
+    deadline_epoch: float | None
 
     # 运行时进度
     status: str

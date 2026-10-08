@@ -228,7 +228,7 @@ def test_recursion_limit_covers_the_extra_plan_superstep(
         report_dir=tmp_path / "reports",
         max_rounds=rounds,
         max_turns=10,
-        started_monotonic=time.monotonic(),
+        deadline_epoch=time.time() + 900,
     )
     with pytest.raises(GraphRecursionError):
         build_graph(nodes).invoke(_initial(bug, rounds), config={"recursion_limit": 4 * rounds + 8})

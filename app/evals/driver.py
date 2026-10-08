@@ -100,6 +100,11 @@ class TaskResult:
         return asdict(self)
 
 
+class _DeadlineReached(Exception):
+    """S02b 内部哨兵:验证段撞任务级 deadline,带着已得的部分证据跳进 finally。
+    单独列出以免落进 except Exception 的 NEEDS_REVIEW 分支。"""
+
+
 def _write_report(result: TaskResult, run_dir: Path) -> None:
     """落盘 report.json(N-17 整改):tmp + os.replace 原子写。
 
@@ -172,6 +177,11 @@ def run_task(
     )
     tracker = Tracker(run_dir / "trajectory.jsonl", task_id=task_id)
     started = time.monotonic()
+    # S02b:任务级墙钟截止时刻,执行线程启动时建立(排队不计);plain 验证段
+    # 从此与 graph 同口径——每次 run_pytest 前后复查,剩余时间不足不启动下一次
+    deadline_epoch = (
+        time.time() + settings.task_timeout_seconds if settings.task_timeout_seconds > 0 else None
+    )
     ctx: ToolContext | None = None  # materialize 失败时 finally 仍可安全引用
     # S02/F1:任务级资源账本(与 graph 引擎同一套 ResourceLedger)
     from app.graph.resources import ResourceLedger
@@ -179,6 +189,17 @@ def run_task(
     ledger = ResourceLedger(
         task_id=task_id, token_limit=settings.token_budget, output_reserve=settings.llm_max_tokens
     )
+
+    def _time_overrun() -> str | None:
+        if deadline_epoch is not None and time.time() > deadline_epoch:
+            return f"verify: task exceeded time budget (deadline {int(deadline_epoch)} passed)"
+        return None
+
+    def _deadline_terminal(message: str) -> None:
+        from app.graph.resources import EXHAUSTED
+
+        result.status, result.verdict, result.error = "BUDGET_EXCEEDED", "failed", message
+        result.resource_status = EXHAUSTED
 
     try:
         # CREATED → BASELINE:bug 仓库是纯工作树,运行时物化为 git 仓库并固定基线 commit
@@ -205,6 +226,9 @@ def run_task(
             input_payload={"baseline": baseline_commit[:12]},
         )
 
+        if deadline_epoch is not None and time.time() > deadline_epoch:
+            _deadline_terminal("baseline: task exceeded time budget (deadline passed)")
+            raise _DeadlineReached()
         failed_report, _ = run_pytest(
             ctx.python_exe,
             ctx.workspace,
@@ -236,8 +260,7 @@ def run_task(
             max_rounds=bug.max_rounds,
             tokens_used=0,
             token_budget=0,
-            started_monotonic=started,
-            time_budget_seconds=settings.task_timeout_seconds,
+            deadline_epoch=deadline_epoch,
         )
 
         # LOCALIZE + PROPOSE_PATCH:工具循环(plain 引擎单轮多步)
@@ -251,8 +274,7 @@ def run_task(
             model,
             bug,
             max_turns=max_turns,
-            started_monotonic=started,
-            time_budget_seconds=settings.task_timeout_seconds,
+            deadline_epoch=deadline_epoch,
             cancel_event=cancel_event,
             ledger=ledger,
         )
@@ -261,7 +283,12 @@ def run_task(
         result.tokens_prompt = outcome.tokens_prompt
         result.tokens_completion = outcome.tokens_completion
 
-        # VERIFY:用平台自己的执行器重新验证,不信任模型的声明
+        # VERIFY:用平台自己的执行器重新验证,不信任模型的声明。
+        # S02b:每次执行前查剩余时间(不足不启动下一次),执行后复查——
+        # 越时即 BUDGET_EXCEEDED 结构化收尾,已拿到的部分证据随状态保留
+        if (overrun := _time_overrun()) is not None:
+            _deadline_terminal(overrun)
+            raise _DeadlineReached()  # 跳过后续验证段,进 finally 落盘
         verify_failed, _ = run_pytest(
             ctx.python_exe,
             ctx.workspace,
@@ -269,6 +296,10 @@ def run_task(
             report_dir / "verify-failed.xml",
             env=ctx.env,
         )
+        result.verify_failed_ok = verify_failed.all_passed
+        if (overrun := _time_overrun()) is not None:
+            _deadline_terminal(overrun)  # failed 集的部分证据已在 result 上
+            raise _DeadlineReached()
         verify_regression, _ = run_pytest(
             ctx.python_exe,
             ctx.workspace,
@@ -276,14 +307,21 @@ def run_task(
             report_dir / "verify-regression.xml",
             env=ctx.env,
         )
-        result.verify_failed_ok = verify_failed.all_passed
         result.verify_regression_ok = verify_regression.all_passed
+        if (overrun := _time_overrun()) is not None:
+            _deadline_terminal(overrun)
+            raise _DeadlineReached()
         # E3 双跑(S02:两引擎同一条复核规则,比较臂不允许少跑):第一遍双集全绿
         # (即将判 resolved)时同命令重跑并比对;不一致 = inconclusive,不 resolved
         from app.graph.acceptance import double_run_mismatch, final_acceptance
 
         mismatch = ""
         if verify_failed.all_passed and verify_regression.all_passed and settings.verify_double_run:
+            # 双跑是 verify 段最贵的追加开销:启动前与收尾后都查 deadline——
+            # 最后一次 rerun 之后越过截止时刻,同样不得 resolved(spec S02 必测)
+            if (overrun := _time_overrun()) is not None:
+                _deadline_terminal(overrun)
+                raise _DeadlineReached()
             rerun_failed, _ = run_pytest(
                 ctx.python_exe,
                 ctx.workspace,
@@ -298,6 +336,9 @@ def run_task(
                 report_dir / "verify-regression-rerun.xml",
                 env=ctx.env,
             )
+            if (overrun := _time_overrun()) is not None:
+                _deadline_terminal(overrun)
+                raise _DeadlineReached()
             mismatch = double_run_mismatch(
                 verify_failed, verify_regression, rerun_failed, rerun_regression
             )
@@ -365,6 +406,8 @@ def run_task(
         # 协作式取消:保留现场落盘;DB 状态由 cancel_task 置 CANCELLED,回写时让位
         result.status, result.verdict, result.error = "CANCELLED", "cancelled", str(exc)
         result.resource_status = ledger.resource_status
+    except _DeadlineReached:
+        pass  # 终态已在 _deadline_terminal 里写好(BUDGET_EXCEEDED + exhausted)
     except TaskError as exc:
         result.status, result.verdict, result.error = "INVALID_TASK", "failed", str(exc)
     except Exception as exc:

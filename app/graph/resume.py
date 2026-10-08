@@ -131,6 +131,25 @@ def prepare_resume(
         )
         return None
 
+    # S02b(ADR-0009 §3):恢复只顺延原 deadline 的**剩余时间**,绝不重授。
+    # 旧检查点没有持久化 deadline_epoch → 无可信旧截止时刻,恢复等于把 900s
+    # 整段重发一遍——按规格降级 NEEDS_REVIEW,不猜。检查排在任何复位之前:
+    # 被拒绝的恢复不得先毁掉崩溃现场。
+    raw_deadline = values.get("deadline_epoch")
+    try:
+        persisted_deadline = float(raw_deadline) if raw_deadline is not None else None
+    except (TypeError, ValueError):
+        persisted_deadline = None
+    if persisted_deadline is None:
+        nodes.resume_rejected_reason = "no persisted deadline_epoch in checkpoint"
+        nodes.tracker.record(
+            tool="resume_unavailable",
+            state="RESUME",
+            input_payload={"next_node": node, "reason": "no persisted deadline_epoch"},
+            error="checkpoint has no trusted deadline; resume would re-grant the time budget",
+        )
+        return None
+
     # ① 重建闭包对象:prepare/baseline 已被检查点跨过、不会重跑,而 ctx/baseline_commit
     #    按设计不进 state(不可序列化)——不重建,第一个续跑节点就会 assert ctx 判死
     baseline = str(values.get("baseline_commit") or "")
@@ -139,6 +158,7 @@ def prepare_resume(
         baseline = _workspace_head(run_dir / "workspace")
         baseline_from_head = bool(baseline)
     nodes.restore_runtime(values, baseline)
+    nodes.deadline_epoch = persisted_deadline  # 原截止时刻原样带回,停机间隔计入
 
     # ② 被打断阶段的工作记忆(阶段与轮次都由 A 级读侧校验,不符即 None = 冷启动该阶段)
     loop_snapshot = None

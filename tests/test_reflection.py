@@ -135,7 +135,7 @@ def test_rollback_attaches_the_discarded_patch_shape_to_next_round_feedback(
         report_dir=tmp_path / "reports",
         max_rounds=3,
         max_turns=5,
-        started_monotonic=time.monotonic(),
+        deadline_epoch=time.time() + 900,
     )
     nodes.baseline_commit = baseline
     state = {
@@ -182,7 +182,7 @@ def test_rollback_on_last_round_does_not_become_a_retry_path(tmp_path: Path) -> 
         report_dir=tmp_path / "reports",
         max_rounds=1,
         max_turns=5,
-        started_monotonic=time.monotonic(),
+        deadline_epoch=time.time() + 900,
     )
     nodes.baseline_commit = baseline
 

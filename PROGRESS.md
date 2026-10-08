@@ -984,3 +984,37 @@ ADR-0006:195、ADR-0007:453/138、ADR-0009:856 与 test_docs_anchors 的"七项�
 
 兼容性修复(非放行):测试替身 settings(SimpleNamespace)缺新键 → nodes.__post_init__
 用 getattr 兜底(与本文件既有惯例一致);bug.id 同。
+
+## S02b 持久化时间预算与执行边界(2026-10-09,产品卡 3/13)
+
+缺陷(spec S02 时间口径,ADR-0009 §3):deadline 依赖进程内 monotonic 起点——
+跨进程无意义,恢复时 runner 以"当前时刻"重建 started_monotonic,**把 900s
+整段重授**;plain 验证段完全没有时间守卫;verify 双跑的最后一次 rerun 之后
+没有复查。排队时间、恢复停机间隔全部不计,时间预算形同虚设。
+
+**修法**:时间口径整体切换到**持久化的墙钟截止时刻** `deadline_epoch`:
+- runner/driver 在**执行线程启动**时建立 `time.time()+task_timeout_seconds`
+  (排队不计),写进 state 随 superstep 进 checkpoint;0=不限时的既有约定保留;
+- `gates.ensure_budget`/`plain_loop`/`TaskNodes._deadline_overrun` 全部改为比对
+  `deadline_epoch`(参数与字段从 started_monotonic+time_budget_seconds 更名,
+  测试替身调用点同步更新);duration 计量仍用 monotonic,两种时钟不再混装;
+- **恢复不重授**:`prepare_resume` 从 checkpoint values 读回原 deadline 原样带上
+  (停机间隔自然计入);没有可信 deadline 的旧检查点 → 拒绝恢复,且 runner 把
+  "拒绝恢复"与"回退冷启动"分开——`TaskNodes.resume_rejected_reason` 置位时收敛
+  NEEDS_REVIEW 而不是冷启动(冷启动会把时间/循环额度整份重发,S03 将泛化为
+  结构化 ResumeDecision);
+- **执行边界**:graph verify 四处复查(入口/failed 集后/双跑前/**最后一次 rerun 后**,
+  最后这处是本卡新增)与 plain 驱动器的六处复查(baseline 前、verify 前/后×2、
+  双跑前/后)全部就位——越时即 `BUDGET_EXCEEDED` 结构化收尾,已拿到的部分证据
+  (verify 布尔)随状态保留,`resource_status=exhausted`,不得 resolved;
+  plain 用内部哨兵 `_DeadlineReached` 带证据跳进 finally,绝不落进 NEEDS_REVIEW。
+
+**回归**(tests/test_time_budget.py 4 例):过去时刻的合法检查点 → 恢复即判超时
+(轨迹证明走的是恢复路径而非冷启动);无 deadline 的旧检查点 → NEEDS_REVIEW +
+resume_unavailable 事件;最后一次 rerun 后越时 → 证据保留 + exhausted + 路由 end;
+plain 驱动器 deadline 已过 → verify 一次 pytest 都不发起。
+既有测试更新:test_graph 三个时间用例改墙钟口径(时钟注入从 monotonic 换 time),
+test_plain_loop 更名 without_deadline,test_resume 的 stub state 补 deadline_epoch
+(新格式合法检查点的夹具义务)。
+
+全量离线 pytest(闸记录见提交);ruff/format 绿。

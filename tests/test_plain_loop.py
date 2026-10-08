@@ -322,21 +322,19 @@ def test_plain_loop_enforces_time_budget_at_turn_boundary(ctx: ToolContext) -> N
         {"tool": "finish", "args": {"success": True, "summary": "done"}},
     ]
     model = FakeLLM(script)
-    started = time.monotonic() - 10_000  # 伪起点:任务早已超时
     with pytest.raises(BudgetError, match="time budget"):
         run_plain_loop(
             ctx,
             model,
             "issue",
             max_turns=5,
-            started_monotonic=started,
-            time_budget_seconds=1,
+            deadline_epoch=time.time() - 1,  # 截止时刻早已过去(S02b 墙钟口径)
         )
     # turn 边界在 model.complete 之前:模型不应被调用(事件里只有 start 无 tool)
 
 
-def test_plain_loop_without_started_monotonic_skips_time_check(ctx: ToolContext) -> None:
-    """started_monotonic 未接线(直接构造场景)不得产生假超时(R2 整改)。"""
+def test_plain_loop_without_deadline_skips_time_check(ctx: ToolContext) -> None:
+    """deadline_epoch 未接线(直接构造场景)不得产生假超时(R2 整改,S02b 沿用)。"""
     script = [{"tool": "finish", "args": {"success": True, "summary": "done"}}]
     outcome = run_plain_loop(ctx, FakeLLM(script), "issue", max_turns=5)
     assert outcome.success and outcome.finish_declared

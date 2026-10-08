@@ -234,13 +234,17 @@ def ensure_budget(
     max_rounds: int,
     tokens_used: int,
     token_budget: int,
-    started_monotonic: float,
-    time_budget_seconds: int,
+    deadline_epoch: float | None = None,
 ) -> None:
-    """第 6 项(资源门禁):轮数/token/时间任一超限即 BudgetError。"""
+    """第 6 项(资源门禁):轮数/token/时间任一超限即 BudgetError。
+
+    时间口径(S02b,ADR-0009 §3):deadline_epoch 是**持久化的墙钟截止时刻**
+    (执行启动时建立、进 checkpoint、恢复沿用原值的剩余时间),不再依赖
+    进程内 monotonic 起点——monotonic 跨进程无意义,恢复会因此重授 900s。
+    """
     if round_no > max_rounds:
         raise BudgetError(f"round {round_no} exceeds max_rounds={max_rounds}")
     if token_budget > 0 and tokens_used > token_budget:
         raise BudgetError(f"tokens {tokens_used} exceed budget {token_budget}")
-    if time_budget_seconds > 0 and time.monotonic() - started_monotonic > time_budget_seconds:
-        raise BudgetError(f"task exceeded time budget {time_budget_seconds}s")
+    if deadline_epoch is not None and time.time() > deadline_epoch:
+        raise BudgetError("task exceeded time budget (deadline passed)")

@@ -447,6 +447,8 @@ def test_prepare_resume_resets_writable_stage_only(tmp_path: Path) -> None:
         "status": "PROPOSE_PATCH",
         "baseline_commit": baseline,
         "tokens_used": 900,
+        # S02b:合法检查点必须携带持久化 deadline(恢复不重授时间预算)
+        "deadline_epoch": time.time() + 900,
     }
     nodes = _nodes("T-WRITE")
     config = prepare_resume(

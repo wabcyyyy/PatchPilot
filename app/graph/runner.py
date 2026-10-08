@@ -92,6 +92,13 @@ def run_task_graph(
     )
     tracker = Tracker(run_dir / "trajectory.jsonl", task_id=task_id)
     started = time.monotonic()
+    # S02b:deadline 在**执行线程启动**时建立(排队不计),墙钟持久化进 state——
+    # 恢复沿用原值的剩余时间,停机间隔计入,不重授 900s
+    deadline_epoch = (
+        time.time() + get_settings().task_timeout_seconds
+        if get_settings().task_timeout_seconds > 0
+        else None
+    )
     checkpointer = None
     preserved_diff: str | None = None
     nodes: TaskNodes | None = None  # 异常路径也要能读到账本(S02:资源状态不写 0)
@@ -105,7 +112,7 @@ def run_task_graph(
             report_dir=report_dir,
             max_rounds=max_rounds if max_rounds is not None else bug.max_rounds,
             max_turns=max_turns,
-            started_monotonic=started,
+            deadline_epoch=deadline_epoch,
             cancel_event=cancel_event,
             branch_model_factory=branch_model_factory,
         )
@@ -125,6 +132,7 @@ def run_task_graph(
             "round_no": 1,
             "turns": 0,
             "tokens_used": 0,
+            "deadline_epoch": deadline_epoch,
         }
         # recursion_limit 随 max_rounds 推导(R2 整改;M5 起 5N+8)。斜率不靠推算:满轮数
         # 重试路径实测每轮 5 个 superstep、固定段 3 个(N=2/3/6 → 13/18/33,三点共线,
@@ -144,41 +152,51 @@ def run_task_graph(
             if resume
             else None
         )
+        final: TaskState | None
         if resume_config is not None:
-            final: TaskState = graph.invoke(None, config=resume_config)  # type: ignore[assignment]
+            final = graph.invoke(None, config=resume_config)  # type: ignore[assignment]
+        elif resume and nodes.resume_rejected_reason:
+            # S02b:拒绝恢复 ≠ 冷启动——冷启动会把时间/循环额度整份重发一遍。
+            # 按规格收敛 NEEDS_REVIEW,错误信息说明拒绝原因,现场不动。
+            final = None
+            result.status = "NEEDS_REVIEW"
+            result.outcome = "needs_review"
+            result.verdict = "needs_review"
+            result.error = f"resume rejected: {nodes.resume_rejected_reason}"
         else:
             final = graph.invoke(initial, config=config)  # type: ignore[assignment]
 
-        result.status = final.get("status", "NEEDS_REVIEW")
-        outcome = final.get("outcome")
-        if outcome is None:
-            outcome = "resolved" if final.get("status") == "FINISHED" else "failed"
-        result.outcome = outcome
-        result.verdict = outcome if outcome in {"resolved", "needs_review"} else "failed"
-        result.rounds = max(1, final.get("round_no", 1))
-        result.turns = final.get("turns", 0)
-        result.tokens_used = final.get("tokens_used", 0)
-        result.tokens_prompt = final.get("tokens_prompt", 0)
-        result.tokens_completion = final.get("tokens_completion", 0)
-        result.error = final.get("error")
-        result.gate_violations = list(final.get("gate_violations", []))
-        result.baseline_failed = final.get("baseline_failed", 0)
-        result.baseline_regression_ok = final.get("baseline_regression_ok", False)
-        result.verify_failed_ok = final.get("verify_failed_ok", False)
-        result.verify_regression_ok = final.get("verify_regression_ok", False)
-        result.changed_files = list(final.get("changed_files", []))
-        # S02(spec §3.1):终局验收的三态与用量事实进报告;state 未携带时
-        # (预算路径提前收尾,没走到 finish 节点)回读账本真相,不冒充 unknown
-        result.validation_status = final.get("validation_status", "not_run")
-        result.gate_status = final.get("gate_status", "not_run")
-        resource_from_state = final.get("resource_status")
-        if resource_from_state:
-            result.resource_status = resource_from_state
-        elif nodes is not None and nodes.ledger is not None:
-            result.resource_status = nodes.ledger.resource_status
-        # N-12 整改:末轮经 rollback 的任务,工作区已被 reset,
-        # diff.patch 必须用 rollback 保全的现场,而不是回滚后的空 diff
-        preserved_diff = final.get("preserved_diff")
+        if final is not None:
+            result.status = final.get("status", "NEEDS_REVIEW")
+            outcome = final.get("outcome")
+            if outcome is None:
+                outcome = "resolved" if final.get("status") == "FINISHED" else "failed"
+            result.outcome = outcome
+            result.verdict = outcome if outcome in {"resolved", "needs_review"} else "failed"
+            result.rounds = max(1, final.get("round_no", 1))
+            result.turns = final.get("turns", 0)
+            result.tokens_used = final.get("tokens_used", 0)
+            result.tokens_prompt = final.get("tokens_prompt", 0)
+            result.tokens_completion = final.get("tokens_completion", 0)
+            result.error = final.get("error")
+            result.gate_violations = list(final.get("gate_violations", []))
+            result.baseline_failed = final.get("baseline_failed", 0)
+            result.baseline_regression_ok = final.get("baseline_regression_ok", False)
+            result.verify_failed_ok = final.get("verify_failed_ok", False)
+            result.verify_regression_ok = final.get("verify_regression_ok", False)
+            result.changed_files = list(final.get("changed_files", []))
+            # S02(spec §3.1):终局验收的三态与用量事实进报告;state 未携带时
+            # (预算路径提前收尾,没走到 finish 节点)回读账本真相,不冒充 unknown
+            result.validation_status = final.get("validation_status", "not_run")
+            result.gate_status = final.get("gate_status", "not_run")
+            resource_from_state = final.get("resource_status")
+            if resource_from_state:
+                result.resource_status = resource_from_state
+            elif nodes is not None and nodes.ledger is not None:
+                result.resource_status = nodes.ledger.resource_status
+            # N-12 整改:末轮经 rollback 的任务,工作区已被 reset,
+            # diff.patch 必须用 rollback 保全的现场,而不是回滚后的空 diff
+            preserved_diff = final.get("preserved_diff")
 
     except TaskCancelled as exc:
         result.status = "CANCELLED"
