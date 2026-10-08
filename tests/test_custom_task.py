@@ -416,3 +416,121 @@ def test_api_accepts_parametrized_tuple_ids_and_executes_them(
     assert 'name="test_area[(1,2)]"' in failed_xml
     assert "test_area[(3,4)]" not in failed_xml
     assert 'name="test_area[(3,4)]"' in reg_xml
+
+
+# ---------- S05b/F4:幂等键=完整 task_spec_hash(字段边界不再裸拼接) ----------
+
+
+def test_f4_split_test_groupings_no_longer_coalesce(tmp_path: Path, client: TestClient) -> None:
+    """F4 核心:failed=[a],regression=[b,c] 与 failed=[a,b],regression=[c]
+    是不同验收契约 → 不同幂等键 → 两个任务(旧实现折叠成同一个)。"""
+    repo = tmp_path / "f4-repo"
+    (repo / "tests").mkdir(parents=True)
+    (repo / "conftest.py").write_text("", encoding="utf-8", newline="\n")
+    (repo / "tests" / "test_x.py").write_text(
+        "def test_a():\n    assert True\n", encoding="utf-8", newline="\n"
+    )
+    base = {
+        "repo_path": str(repo),
+        "issue_text": "f4 grouping",
+        "engine": "plain",
+        "model": "fake",
+        "replay_script": [{"tool": "finish", "args": {"success": True, "summary": "s"}}],
+    }
+    first = client.post(
+        "/api/tasks",
+        json={
+            **base,
+            "failed_tests": ["tests/test_x.py::test_a"],
+            "regression_tests": ["tests/test_x.py::test_a", "tests/test_x.py::test_a"],
+        },
+    )
+    second = client.post(
+        "/api/tasks",
+        json={
+            **base,
+            "failed_tests": ["tests/test_x.py::test_a", "tests/test_x.py::test_a"],
+            "regression_tests": ["tests/test_x.py::test_a"],
+        },
+    )
+    assert first.status_code == 201 and second.status_code == 201
+    assert first.json()["task_id"] != second.json()["task_id"]
+
+
+def test_f4_different_replay_scripts_do_not_coalesce(tmp_path: Path, client: TestClient) -> None:
+    """执行参数/回放不同不得 coalesce:同 repo 同 issue,不同 replay → 不同任务。"""
+    repo = tmp_path / "r-repo"
+    (repo / "tests").mkdir(parents=True)
+    (repo / "conftest.py").write_text("", encoding="utf-8", newline="\n")
+    (repo / "tests" / "test_x.py").write_text(
+        "def test_a():\n    assert True\n", encoding="utf-8", newline="\n"
+    )
+    base = {
+        "repo_path": str(repo),
+        "issue_text": "same issue",
+        "engine": "plain",
+        "model": "fake",
+        "failed_tests": ["tests/test_x.py::test_a"],
+        "regression_tests": ["tests/test_x.py::test_a"],
+    }
+    a = client.post(
+        "/api/tasks",
+        json={
+            **base,
+            "replay_script": [{"tool": "finish", "args": {"success": True, "summary": "A"}}],
+        },
+    )
+    b = client.post(
+        "/api/tasks",
+        json={
+            **base,
+            "replay_script": [{"tool": "finish", "args": {"success": True, "summary": "B"}}],
+        },
+    )
+    assert a.status_code == 201 and b.status_code == 201
+    assert a.json()["task_id"] != b.json()["task_id"], "回放是任务身份的一部分"
+
+
+def test_f4_issue_over_500_chars_rebuilt_faithfully(tmp_path: Path) -> None:
+    """issue 原文完整参与身份与重建:DB 列截 500,但契约与重建不截。"""
+    import time as _time
+
+    from app.storage.repository import Repository
+    from app.task_spec import TaskSpec
+
+    repo = tmp_path / "i-repo"
+    (repo / "tests").mkdir(parents=True)
+    (repo / "conftest.py").write_text("", encoding="utf-8", newline="\n")
+    (repo / "tests" / "test_x.py").write_text(
+        "def test_a():\n    assert True\n", encoding="utf-8", newline="\n"
+    )
+    long_issue = "很长的缺陷描述,必须完整保留。" * 40
+    assert len(long_issue) > 500
+    from app.api.service import TaskService
+
+    service = TaskService(
+        repo=Repository(tmp_path / "db.sqlite3"),
+        runs_root=tmp_path / "runs",
+        bugs_root=Path("bugs"),
+    )
+    task, _created = service.create_task(
+        repo_path=str(repo),
+        issue_text=long_issue,
+        failed_tests=["tests/test_x.py::test_a"],
+        regression_tests=["tests/test_x.py::test_a"],
+        replay_script=[{"tool": "finish", "args": {"success": True, "summary": "s"}}],
+        engine="plain",
+    )
+    deadline = _time.monotonic() + 60
+    while _time.monotonic() < deadline:
+        row = service.repo.get_task(task["task_id"])
+        if row["status"] in TERMINAL:
+            break
+        _time.sleep(0.2)
+    service.shutdown()
+    # DB 列截 500(展示位),契约与重建不截
+    assert len(row["issue_text"]) == 500
+    spec = TaskSpec.read_file(Path(row["run_dir"]) / "task_spec.json")
+    assert spec.issue_text == long_issue
+    rebuilt = service._bug_from_row(row)
+    assert rebuilt.issue_text == long_issue

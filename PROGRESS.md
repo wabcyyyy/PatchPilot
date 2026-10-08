@@ -1122,3 +1122,31 @@ max_rounds=3 末轮翻盘;验证失败路径同样单点递增并恢复;首轮�
 既有 test_graph 的拒绝重试/耗尽用例原样通过(语义收敛的旁证)。
 
 全量离线 pytest(闸记录见提交);ruff/format 绿。
+
+## S05b API 幂等/完整持久化/恢复接线(F4 收口)(2026-10-09,产品卡 7/13)
+
+S05a 建好了契约模型,本卡把它接到业务两端:受理即双写,执行先核账,恢复按契约重建。
+
+**修法**:
+- **幂等键 = 受理时冻结的 TaskSpec 完整哈希**(service.create_task 构建 spec 后取
+  `task_spec_hash`),取代裸拼接的 `bug_id|engine|model`——执行参数(max_rounds)与
+  fake 回放脚本从此进身份(F4 的字段边界折叠与"不同 replay 共键"一起关闭);
+  同输入同源码同策略的在途重提返回原任务,终态后重提生成新 task_id(既有语义不变)。
+- **契约双写**:受理路径先原子写 run_dir/task_spec.json(执行与恢复读这份),
+  再落 tasks 表三列;两处哈希同源。
+- **执行一致性闸**:_execute_inner 开跑前核对 DB 与文件的契约哈希——不一致
+  (半写/被改)= INVALID_TASK "task_spec inconsistent",模型构建器一次不调。
+- **恢复按契约重建**(_bug_from_row):tasks 表带契约 → manifest 题回读题面并
+  核对身份一致(漂移即拒);custom 任务从契约忠实重建(issue 完整原文、测试清单、
+  scope、max_rounds,源指纹重算不一致即拒)——"custom 无从重建一律判死"的旧边界
+  在有契约后解除;旧行无契约保持旧路径(正式题回读 manifest,custom 判死)。
+  回放脚本经 spec.replay 传递,_execute 的 in-memory 脚本链路不变。
+- 不变量保持:api_key/Bearer/代理凭据不进契约(有效策略只拷具名键);取消原子守卫、
+  终态守卫、失败回滚(_rollback_created)原样。
+
+**回归**:tests/test_custom_task.py +3(F4 的两种测试分组不再 coalesce/不同 replay
+不 coalesce/issue>500 忠实重建——DB 列截 500 而契约与重建不截);
+tests/test_service_robustness.py +2(custom BugTask 从持久化契约重建+源变拒绝/
+DB 与文件契约哈希分叉时执行判 INVALID 且模型零调用)。既有幂等/取消/恢复用例全绿。
+
+全量离线 pytest(闸记录见提交);ruff/format 绿。F4 全部关闭。

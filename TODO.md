@@ -669,7 +669,7 @@
 - [x] S03 候选工件与恢复再验证(F2):app/graph/candidate.py 冻结 diff+manifest,
       恢复=重应用+重门禁+重测试,ResumeDecision 四态,服务恢复判定接合法边界。
 - [x] S04 统一轮次递增与拒绝后重试(F5):round_no 单点递增,max_rounds=2 首拒后第二轮必须发生。
-- [ ] S05b API 幂等/完整持久化/恢复接线(F4 收口):TaskSpec 全量落库、custom 可重建、
+- [x] S05b API 幂等/完整持久化/恢复接线(F4 收口):TaskSpec 全量落库、custom 可重建、
       执行参数与 replay 进幂等键、失败清理端到端。
 - [ ] S06 冻结执行输入与环境预检:app/gitops/input_snapshot.py + app/api/preflight.py,
       受理时冻结源码身份,执行只读物化引用;preflight 不调模型不留假 RUNNING。

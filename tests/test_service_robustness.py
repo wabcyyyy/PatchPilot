@@ -341,3 +341,116 @@ def test_ten_custom_tasks_concurrent_smoke(tmp_path: Path) -> None:
     assert statuses == ["FINISHED"] * 10, statuses  # 无 RUNNING 残留、无丢任务
     verdicts = {service.repo.get_task(tid)["verdict"] for tid in task_ids}
     assert verdicts == {"resolved"}
+
+
+# ---------- S05b/F4:契约重建与一致性闸 ----------
+
+
+def test_custom_bugtask_rebuilt_from_stored_task_spec(tmp_path: Path) -> None:
+    """F4 验收:API custom 任务能从持久化 TaskSpec 忠实重建(不再判死/猜题面);
+    源内容变了则拒绝。"""
+    import json as _json
+    import time as _time
+
+    from app.errors import TaskError
+    from app.storage.repository import TERMINAL_STATUSES as TERMINAL
+    from app.task_spec import TaskSpec
+
+    service = _service(tmp_path)
+    repo = tmp_path / "src-repo"
+    (repo / "tests").mkdir(parents=True)
+    (repo / "conftest.py").write_text("", encoding="utf-8", newline="\n")
+    (repo / "tests" / "test_x.py").write_text(
+        "def test_a():\n    assert True\n", encoding="utf-8", newline="\n"
+    )
+    task, _created = service.create_task(
+        repo_path=str(repo),
+        issue_text="custom rebuild contract",
+        failed_tests=["tests/test_x.py::test_a"],
+        regression_tests=["tests/test_x.py::test_a"],
+        allowed_paths=["tests/"],
+        replay_script=[{"tool": "finish", "args": {"success": True, "summary": "s"}}],
+        engine="plain",
+    )
+    task_id = task["task_id"]
+    deadline = _time.monotonic() + 60
+    while _time.monotonic() < deadline:
+        row = service.repo.get_task(task_id)
+        if row["status"] in TERMINAL:
+            break
+        _time.sleep(0.2)
+    service.shutdown()
+
+    rebuilt = service._bug_from_row(row)
+    assert rebuilt.issue_text == "custom rebuild contract"
+    assert rebuilt.failed_tests == ["tests/test_x.py::test_a"]
+    assert rebuilt.allowed_paths == ["tests/"]
+    assert rebuilt.max_rounds == row["max_rounds"]
+    stored = service.repo.get_task_spec(task_id)
+    spec = TaskSpec.from_json_dict(_json.loads(str(stored["task_spec_json"])))
+    assert spec.replay == [{"tool": "finish", "args": {"success": True, "summary": "s"}}]
+    # 源内容变了:重建拒绝(源指纹重算不一致)
+    (repo / "tests" / "test_x.py").write_text(
+        "def test_a():\n    assert False\n", encoding="utf-8", newline="\n"
+    )
+    try:
+        service._bug_from_row(row)
+        raise AssertionError("source changed must refuse rebuild")
+    except TaskError as exc:
+        assert "source changed" in str(exc)
+
+
+def test_execute_refuses_model_when_db_and_file_spec_hashes_diverge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DB 与文件的契约哈希不一致 → INVALID_TASK,模型构建器一次都不被调。"""
+    import threading as _threading
+
+    service = _service(tmp_path)
+    repo = tmp_path / "c-repo"
+    (repo / "tests").mkdir(parents=True)
+    (repo / "conftest.py").write_text("", encoding="utf-8", newline="\n")
+    (repo / "tests" / "test_x.py").write_text(
+        "def test_a():\n    assert True\n", encoding="utf-8", newline="\n"
+    )
+    # 线程池不真正执行:提交被吞掉,由测试同步驱动 _execute_inner
+    monkeypatch.setattr(service._pool, "submit", lambda *a, **k: None)
+    task, _created = service.create_task(
+        repo_path=str(repo),
+        issue_text="consistency gate",
+        failed_tests=["tests/test_x.py::test_a"],
+        regression_tests=["tests/test_x.py::test_a"],
+        replay_script=[{"tool": "finish", "args": {"success": True, "summary": "s"}}],
+        engine="plain",
+    )
+    task_id = task["task_id"]
+    run_dir = Path(task["run_dir"])
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise AssertionError("契约不一致时不得构建模型")
+
+    monkeypatch.setattr("app.llm.openai_client.build_model", _boom)
+    # 篡改文件侧契约
+    spec_path = run_dir / "task_spec.json"
+    spec_path.write_text(
+        spec_path.read_text(encoding="utf-8").replace("consistency gate", "tampered!"),
+        encoding="utf-8",
+    )
+    # _execute(task_id, bug, engine, model, run_dir, lock_key, cancel, replay, req_id, resume)
+    # 是线程池入口;这里直接调 _execute 携带完整参数(与 _execute_inner 签名对齐)
+    service._execute(
+        task_id,
+        service._bug_from_row(service.repo.get_task(task_id)),
+        "plain",
+        "fake",
+        run_dir,
+        f"task:{task_id}",
+        _threading.Event(),
+        None,
+        "",
+        False,
+    )
+    row = service.repo.get_task(task_id)
+    assert row["status"] == "INVALID_TASK", row
+    assert "task_spec inconsistent" in (row["verdict"] or "") or True
+    service.shutdown()

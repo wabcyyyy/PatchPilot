@@ -538,19 +538,39 @@ def _zombie(service: TaskService, tmp_path: Path, *, with_snapshot: bool) -> tup
     idem = hashlib.sha256(b"BUG-001|graph|fake").hexdigest()
     run_dir = tmp_path / "runs" / task_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    service.repo.create_task(
+        task_id=task_id,
+        idem_key=idem,
+        bug_id="BUG-001",
+        repo_path="bugs/BUG-001/repo",
+        issue_text="x",
+        max_rounds=5,
+        engine="graph",
+        model_provider="fake",
+        run_dir=str(run_dir),
+    )
     if with_snapshot:
-        # S03:可恢复判定要求受理契约在场(身份证据);loop snapshot + 契约 = 合法边界
-        from app.task_spec import build_task_spec, write_task_spec_file
+        # S03/S05b:可恢复判定要求受理契约在场(身份证据),且 DB 与文件一致——
+        # loop snapshot + 契约双写 = 合法恢复边界(先建行,再补契约两处)
+        from app.task_spec import (
+            build_task_spec,
+            canonical_json,
+            write_task_spec_file,
+        )
 
-        write_task_spec_file(
-            run_dir,
-            build_task_spec(
-                load_bug("BUG-001", BUG_ROOT),
-                engine="graph",
-                arm="agent",
-                model_provider="fake-replay",
-                max_turns=20,
-            ),
+        spec = build_task_spec(
+            load_bug("BUG-001", BUG_ROOT),
+            engine="graph",
+            arm="agent",
+            model_provider="fake-replay",
+            max_turns=20,
+        )
+        write_task_spec_file(run_dir, spec)
+        service.repo.set_task_spec(
+            task_id,
+            spec_json=canonical_json(spec.to_json_dict()),
+            spec_hash=spec.task_spec_hash,
+            schema_version=1,
         )
         save_loop_snapshot(
             run_dir,
@@ -563,17 +583,6 @@ def _zombie(service: TaskService, tmp_path: Path, *, with_snapshot: bool) -> tup
                 task_id=task_id,
             ),
         )
-    service.repo.create_task(
-        task_id=task_id,
-        idem_key=idem,
-        bug_id="BUG-001",
-        repo_path="bugs/BUG-001/repo",
-        issue_text="x",
-        max_rounds=5,
-        engine="graph",
-        model_provider="fake",
-        run_dir=str(run_dir),
-    )
     service.repo.set_status_unless_terminal(task_id, "RUNNING")
     return task_id, idem, run_dir
 

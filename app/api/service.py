@@ -12,7 +12,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -26,15 +25,25 @@ from app.api.cancellation import CancelRegistry
 from app.api.recycle import recycle_run_dir
 from app.config import get_settings
 from app.errors import InvalidRequestError, PatchPilotError, TaskCancelled, TaskError
-from app.evals.bugset import BUGS_ROOT, build_custom_bug, load_bug, load_replay_script
+from app.evals.bugset import BUGS_ROOT, BugTask, build_custom_bug, load_bug, load_replay_script
 from app.logctx import request_id_var, reset_task_context, set_task_context
 from app.storage.locks import BaseLock, build_lock
 from app.storage.repository import TERMINAL_STATUSES, Repository
+from app.task_spec import (
+    SCHEMA_VERSION,
+    TaskSpec,
+    build_task_spec,
+    canonical_json,
+    write_task_spec_file,
+)
 
 if TYPE_CHECKING:  # 仅标注用:BugTask 已在运行时导入面之外,避免给服务层加导入负担
     from app.evals.bugset import BugTask
 
 log = logging.getLogger(__name__)
+
+# API 受理的任务与引擎默认轮内步数保持同一口径(runner/驱动器的默认值)
+DEFAULT_MAX_TURNS = 20
 
 
 def ensure_repo_allowed(resolved: Path) -> None:
@@ -91,6 +100,23 @@ class TaskService:
 
     # ---------- 创建 ----------
 
+    @staticmethod
+    def _real_model_name(model: str) -> str:
+        """spec 里的真实模型身份:openai 取 Settings.llm_model,fake 回放为空串。"""
+        return get_settings().llm_model if model == "openai" else ""
+
+    @staticmethod
+    def _replay_for_spec(
+        bug: BugTask, engine: str, model: str, replay_script: list[dict[str, Any]] | None
+    ) -> list[dict[str, Any]] | None:
+        """spec 的回放字段:fake=完整脚本(custom 用请求里的,manifest 从题目目录装载);
+        真实模型 None。回放不同 ⇒ task_spec_hash 不同 ⇒ 不 coalesce(F4)。"""
+        if model != "fake":
+            return None
+        if replay_script:
+            return replay_script
+        return load_replay_script(bug, kind=engine)
+
     def create_task(
         self,
         *,
@@ -143,7 +169,21 @@ class TaskService:
             from app.llm.openai_client import build_model
 
             build_model(model, get_settings())
-        idem_key = hashlib.sha256(f"{bug.id}|{engine}|{model}".encode()).hexdigest()
+        # S05b/F4:幂等键 = 受理时冻结的 TaskSpec **完整哈希**(字段边界由具名 JSON
+        # 结构表达,不再是裸拼接的 bug_id|engine|model)——执行参数(max_rounds)与
+        # fake 回放脚本进身份,不同不得 coalesce;同输入同源码同策略才命中在途任务。
+        replay_for_spec = self._replay_for_spec(bug, engine, model, replay_script)
+        spec = build_task_spec(
+            bug,
+            engine=engine,
+            arm="agent",
+            model_provider=model,
+            model_name=self._real_model_name(model),
+            max_turns=DEFAULT_MAX_TURNS,
+            max_rounds=max_rounds if max_rounds is not None else bug.max_rounds,
+            replay=replay_for_spec,
+        )
+        idem_key = spec.task_spec_hash
 
         existing = self.repo.find_by_idem_key(idem_key)
         if existing and existing["status"] not in TERMINAL_STATUSES:
@@ -159,6 +199,10 @@ class TaskService:
         run_dir = self.runs_root / task_id
         try:
             run_dir.mkdir(parents=True, exist_ok=True)
+            # S05b/F4:契约双写——run_dir/task_spec.json(执行与恢复读这份)与
+            # tasks 表三列(重启后可查)。两边哈希同源(spec.task_spec_hash);
+            # _execute 开跑前再核一次,不一致不调模型。
+            write_task_spec_file(run_dir, spec)
             self.repo.create_task(
                 task_id=task_id,
                 idem_key=idem_key,
@@ -169,6 +213,12 @@ class TaskService:
                 engine=engine,
                 model_provider=model,
                 run_dir=str(run_dir),
+            )
+            self.repo.set_task_spec(
+                task_id,
+                spec_json=canonical_json(spec.to_json_dict()),
+                spec_hash=idem_key,
+                schema_version=SCHEMA_VERSION,
             )
             # N-7/R2 整改保留:RUNNING 置位已挪入 _execute 首行(P3-10)——
             # 此前在 create_task 置 RUNNING,语义是"已受理进线程池"而非执行中,
@@ -274,6 +324,22 @@ class TaskService:
             return
         try:
             settings = get_settings()
+            # S05b/F4:DB 与文件的契约哈希一致才调模型——不一致说明受理证据损坏
+            # (半写/被改),按 INVALID_TASK 收敛,绝不带着可疑身份烧模型。
+            stored_spec = self.repo.get_task_spec(task_id)
+            spec_path = run_dir / "task_spec.json"
+            file_hash = ""
+            if spec_path.is_file():
+                try:
+                    file_hash = TaskSpec.read_file(spec_path).task_spec_hash
+                except (ValueError, OSError):
+                    file_hash = ""
+            db_hash = str((stored_spec or {}).get("task_spec_hash") or "")
+            if not file_hash or not db_hash or file_hash != db_hash:
+                raise TaskError(
+                    f"task_spec inconsistent (db={db_hash[:12] or 'none'}"
+                    f" file={file_hash[:12] or 'none'}); model not invoked"
+                )
             script = None
             if model_name == "fake":
                 # 自定义任务的回放脚本来自请求内存对象;正式题从 bugs/ 目录加载
@@ -497,27 +563,76 @@ class TaskService:
         return True
 
     def _bug_from_row(self, row: dict[str, Any]) -> BugTask:
-        """从任务行重建 BugTask:正式题按 bug_id 回读 manifest(题面与首轮逐字一致)。
+        """从任务行重建 BugTask;S05b 起优先走持久化 TaskSpec(F4 收口)。
 
-        已知边界(如实声明,不做假):自定义仓库任务的 failed/regression 测试集**不在
-        tasks 表里**(只有 issue_text 且截到 500 字符),无从忠实重建 → 抛 TaskError,
-        调用方按旧路径判死。恢复是加速器,不是靠猜题面换来的"看起来能续"。
+        - tasks 表带契约 → 按契约重建:manifest 题回读题面并**核对身份一致**(漂移即拒);
+          custom 任务从契约忠实重建(issue 完整、测试清单、scope、源指纹重算),
+          不再"无从重建一律判死"。
+        - 旧行无契约 → 退回旧行为:正式题回读 manifest;custom 缺证据判死(不猜题面)。
         """
+        task_id = str(row.get("task_id") or "")
+        if not task_id:
+            raise TaskError(f"task {row.get('task_id')}: empty task_id, resume impossible")
+        stored = self.repo.get_task_spec(task_id)
+        if stored is not None:
+            try:
+                spec = TaskSpec.from_json_dict(json.loads(str(stored["task_spec_json"])))
+            except (ValueError, OSError) as exc:
+                raise TaskError(f"task {task_id}: stored task_spec unusable: {exc}") from exc
+            if spec.source_kind == "manifest":
+                bug = load_bug(str(row.get("bug_id") or ""), self.bugs_root)
+                if (
+                    bug.issue_text != spec.issue_text
+                    or bug.failed_tests != list(spec.failed_tests)
+                    or bug.regression_tests != list(spec.regression_tests)
+                ):
+                    raise TaskError(
+                        f"task {task_id}: bugs_root manifest drifted from accepted"
+                        " task_spec; resume impossible"
+                    )
+            else:
+                bug = self._bug_from_custom_spec(spec, task_id)
+            row_rounds = row.get("max_rounds")
+            bug.max_rounds = int(row_rounds) if row_rounds else int(spec.max_rounds)
+            return bug
         bug_id = str(row.get("bug_id") or "")
         if not bug_id:
-            raise TaskError(f"task {row.get('task_id')}: empty bug_id, resume impossible")
+            raise TaskError(f"task {task_id}: empty bug_id, resume impossible")
         try:
             bug = load_bug(bug_id, self.bugs_root)
         except TaskError as exc:
             raise TaskError(
-                f"task {row.get('task_id')}: bug {bug_id!r} not reloadable from bugs_root"
-                f" (custom repo task carries no test sets in DB); resume impossible"
+                f"task {task_id}: bug {bug_id!r} not reloadable and no stored task_spec;"
+                " resume impossible"
             ) from exc
         max_rounds = row.get("max_rounds")
         if max_rounds:
             # 与 create_task 同口径:轮数上限只落库不生效是假活键(N-9),续跑同样要覆写
             bug.max_rounds = int(max_rounds)
         return bug
+
+    @staticmethod
+    def _bug_from_custom_spec(spec: Any, task_id: str) -> BugTask:
+        """从持久化契约重建 custom 任务;源内容指纹必须仍与受理时一致。"""
+        from app.task_spec import fingerprint_source_dir
+
+        repo_dir = Path(spec.source_path)
+        if not repo_dir.is_dir():
+            raise TaskError(f"task {task_id}: source dir gone: {repo_dir}")
+        if fingerprint_source_dir(repo_dir) != spec.source_snapshot_hash:
+            raise TaskError(f"task {task_id}: source changed since acceptance; resume impossible")
+        return BugTask(
+            id=task_id,
+            root=repo_dir,
+            repo_dir=repo_dir,
+            issue_text=spec.issue_text,
+            failed_tests=list(spec.failed_tests),
+            regression_tests=list(spec.regression_tests),
+            allowed_paths=list(spec.allowed_paths) if spec.allowed_paths else None,
+            max_rounds=int(spec.max_rounds),
+            category="custom",
+            replay_script_path=None,
+        )
 
     def shutdown(self) -> None:
         """优雅停机(N-21 整改):向在途任务传播协作式取消,收敛未开始的任务。
