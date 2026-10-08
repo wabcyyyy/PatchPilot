@@ -722,7 +722,11 @@ class TaskNodes:
             error=violations[0],
         )
         signatures, streak = _feedback_streak(state, violations)
-        update: dict[str, Any] = {
+        # S04/F5:apply **不再预增 round_no**——门禁拒绝统一交给 rollback 节点做
+        # "保全现场 → reset → 一次递增"(与验证失败同一条单线失败路径)。
+        # 旧实现在这里预增、route_apply 再拿更新值比较:max_rounds=2 的首轮拒绝
+        # 会被直接判耗尽,第二轮永远不发生。已拒绝候选由 rollback 复位,不泄漏到下一轮。
+        return {
             "status": "PATCH_REJECTED",
             "gate_violations": violations,
             "feedback": build_feedback(
@@ -731,19 +735,14 @@ class TaskNodes:
             "last_feedback_signatures": signatures,
             "repeat_streak": streak,
         }
-        if state["round_no"] < self.max_rounds:
-            # 转移表:PATCH_REJECTED 且轮数未超 → 回 PLAN 重规划(M5)再进 PROPOSE;重试计入轮数
-            update["round_no"] = state["round_no"] + 1
-        return update
 
     def route_apply(self, state: TaskState) -> str:
         if state["status"] == "VERIFY":
             return "verify"
-        # PATCH_REJECTED:轮数未超 → 回 PLAN 重规划(builder 里 retry→plan);
-        # 超了 → BUDGET_EXCEEDED(企划书 4.2)
-        if state["round_no"] < self.max_rounds:
-            return "retry"
-        return "exhausted"
+        # S04/F5:门禁拒绝的下一跳统一是 rollback——"还剩不剩下一轮"的判定与
+        # round_no 递增只存在于 rollback 一处(拒绝与验证失败共用同一条单线失败
+        # 路径:保全 preserved_diff → reset → 至多一次递增 → 耗尽则 BUDGET_EXCEEDED)。
+        return "rollback"
 
     # ---------- VERIFY ----------
 
@@ -1252,10 +1251,11 @@ class TaskNodes:
             output_summary={"rolled_back": True, "preserved_diff_bytes": len(preserved)},
         )
         if state["round_no"] >= self.max_rounds:
+            # 候选尝试耗尽:门禁拒绝与验证失败共用此终态(S04 统一单线失败路径)
             return {
                 "status": "BUDGET_EXCEEDED",
                 "outcome": "failed",
-                "error": "rounds exhausted after failed verify",
+                "error": "rounds exhausted after failed candidate",
                 "preserved_diff": preserved,
             }
         # 卡5b:轮数耗尽优先终止(上面已 return),之后才考虑分支一次

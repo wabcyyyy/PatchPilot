@@ -1094,3 +1094,31 @@ END 恢复零模型调用零新事件;取消优先不 resolved;next=verify 的 r
 
 全量离线 pytest(闸记录见提交);ruff/format 绿;ADR-0009 锚点随 S03 重构同步
 (resume.py 缺陷现场锚点改钉修复位 REVALIDATE_NODES:67)。
+
+## S04 统一轮次递增与拒绝后重试(F5 关闭)(2026-10-09,产品卡 6/13)
+
+缺陷(review F5,P1):apply 节点把 round_no 从 1 预增到 2,route_apply 再拿**更新后**
+的值比较 `< max_rounds`——max_rounds=2 的首轮门禁拒绝被直接判耗尽,第二轮永远不发生。
+门禁拒绝与验证失败两条失败路径的轮次语义不一致(前者 apply 内预增、后者 rollback 递增)。
+
+**修法(spec S04:单点递增+统一单线失败路径)**:
+- apply 节点拒绝分支**不再返回 round_no**;route_apply 的门禁拒绝下一跳统一是
+  rollback(builder 边表从 {verify, retry→plan, exhausted→rollback} 收敛为
+  {verify, rollback});
+- rollback 成为唯一递增点:保全 preserved_diff → reset(已拒绝候选复位,**不泄漏
+  到下一轮**)→ round_no < max_rounds 则 +1 回 plan(M5 的"先重规划"语义由
+  rollback→plan 既有边保持)→ 耗尽则 BUDGET_EXCEEDED("rounds exhausted after
+  failed candidate",消息从 verify 专属改为候选语义);
+- 副作用修正(向文档语义收敛):门禁拒绝从此也会经过 `_should_branch`——
+  nodes.py 的分支触发注释本来就声明"verify 失败与门禁拒绝共用 repeat_streak",
+  旧流程下门禁拒绝根本到不了分支判定;FakeLLM 回放(无 branch factory)不受影响。
+- 阶段内 max_turns 含义不动;分支合流的递增路径( APPLY_PATCH→apply )不变。
+
+**回归**(tests/test_round_transitions.py 8 例):F5 精确复现——max_rounds=2 首轮
+门禁拒绝后第二轮必须真的发生(resolved 且 rounds==2、apply_gate×2、坏补丁不泄漏);
+两轮全拒=恰好两次尝试+每轮 rollback 保全+第三次不执行;max_rounds=1 单次;
+max_rounds=3 末轮翻盘;验证失败路径同样单点递增并恢复;首轮成功不进 rollback;
+节点级:route_apply 拒绝统一交 rollback、apply 拒绝返回值不再含 round_no。
+既有 test_graph 的拒绝重试/耗尽用例原样通过(语义收敛的旁证)。
+
+全量离线 pytest(闸记录见提交);ruff/format 绿。

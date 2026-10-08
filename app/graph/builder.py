@@ -38,9 +38,10 @@ def build_graph(nodes: TaskNodes, checkpointer: Any | None = None) -> Any:
     graph.add_conditional_edges(
         "apply",
         nodes.route_apply,
-        # M5:门禁拒绝的重试边指向 plan——被拒的那一轮要**先重规划**再动手,
-        # 而不是带着同一份旧计划把同一个补丁形状再赌一次
-        {"verify": "verify", "retry": "plan", "exhausted": "rollback"},
+        # S04/F5:门禁拒绝统一进 rollback(保全→复位→至多一次递增→重试回 plan/
+        # 耗尽终止);M5 的"先重规划"语义由 rollback→plan 这条既有边保持——
+        # 被拒的那一轮仍要先修订计划再动手,只是递增不再发生在 apply 里
+        {"verify": "verify", "rollback": "rollback"},
     )
     graph.add_conditional_edges(
         "verify",
