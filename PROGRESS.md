@@ -695,3 +695,11 @@ M11.3 要的是生产影响评估,结果它先推翻了我自己登记的 M11.1:
 - **全量确认**:改完之后 `pytest -q --basetemp=D:/tmp/pt-full-m116b` →
   **708 passed / 3 skipped**(1229.21s;比上一轮多出的 2 例就是 `test_basetemp_isolation.py`),
   `ruff check .` 全绿,工作区无残留。
+- **ACL 我这边做不到,已探到底**:`pytest-of-wabcy` 能 `dir`(空目录)但 `icacls`/`ren`/
+  `icacls /grant` 一律"拒绝访问" —— 当前令牌连安全描述符都读不到,没有 WRITE_DAC 也没有 DELETE。
+  需要管理员终端执行,命令写在 TODO M11.6.5。`pytest-of-SYSTEM` 是当年 SYSTEM 身份跑 pytest 的残留,
+  pytest 按 `getuser()` 取目录名,我们的运行永远不碰它。
+- **配置搬家会把工具晃倒**:`measure_retrieval_domain.py` 原来只扫 `.pytest-tmp/`,
+  落点搬到仓库外之后它会"如实报 0 题"——**这是一种假干净**(读起来像没缓存,其实是找错地方)。
+  现在默认扫所有 `.pytest-tmp*` 并支持 `--root=`,报 0 时把扫过的落点打出来。
+  复跑数字与 M13 逐项一致(12 个仓库、20 个必改文件、旧上限下不可见 5、位次最大 1168、AST 20/20)。

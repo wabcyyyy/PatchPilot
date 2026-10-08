@@ -4,10 +4,12 @@
 文件对模型彻底不可见。M3.6 把遍历域与输出体量分设上限(`Settings.max_search_files`),
 这条脚本就是**用真实仓库复查分界是否真的生效** —— 单测只能证明形状,证明不了真实仓库的位次。
 
-跑法(需要 `.pytest-tmp/base-SWE-*/repo` 这份基线缓存在场,它是定向用例跑出来的临时产物,
-不在场时会如实报告"可测题数为 0"而不是假装通过):
+跑法(需要 `base-SWE-*/repo` 这份基线缓存在场,它是定向用例跑出来的临时产物,
+落点跟着套件的 `--basetemp` 走:默认扫仓库根下的 `.pytest-tmp*`,仓库外落点用 `--root=` 补;
+不在场时会如实报告"可测题数为 0"并把扫过的落点打出来,而不是假装通过):
 
     PYTHONPATH=. python scripts/measure_retrieval_domain.py
+    PYTHONPATH=. python scripts/measure_retrieval_domain.py --root=D:/tmp/pt
 
 判读口径:每一题每个必改文件给出它在遍历域里的位次;位次 ≥ 旧上限 500 的记为
 "旧上限下不可见"(即被这条缺陷挡在门外的文件),`truncated=True` 表示连新上限都不够。
@@ -29,14 +31,23 @@ from app.tools.files import MAX_LIST_FILES, search_scope  # noqa: E402
 DATASETS = ("data/swe_hard10.jsonl", "data/swe10.jsonl")
 
 
-def cached_repos() -> dict[str, Path]:
-    """基线缓存目录名 = `base-SWE-<instance_id 里 / 换 ->` + mktemp 的序号后缀。"""
+def cached_repos(extra_roots: list[Path]) -> tuple[dict[str, Path], list[Path]]:
+    """基线缓存目录名 = `base-SWE-<instance_id 里 / 换 ->` + mktemp 的序号后缀。
+
+    返回 (缓存映射, 扫过的落点) —— 落点要跟着报出来,否则"0 题可测"会被读成"没有缓存"
+    而实际是"找错地方"。落点不再固定 `.pytest-tmp`:2026-10-08 起主套件不把 basetemp
+    钉进共享配置(见 `pyproject.toml` 注释与 M11.6),缓存位置随 `--basetemp` 走,
+    所以默认扫仓库根下所有 `.pytest-tmp*` 兄弟目录,再用 `--root=` 补仓库外的落点。
+    """
+    roots = sorted(p for p in REPO_ROOT.glob(".pytest-tmp*") if p.is_dir())
+    roots += [path for path in extra_roots if path.is_dir()]
     out: dict[str, Path] = {}
-    for path in REPO_ROOT.joinpath(".pytest-tmp").glob("base-SWE-*"):
-        repo = path / "repo"
-        if repo.is_dir():
-            out[path.name] = repo
-    return out
+    for root in roots:
+        for path in root.glob("base-SWE-*"):
+            repo = path / "repo"
+            if repo.is_dir():
+                out[path.name] = repo
+    return out, roots
 
 
 def repo_for(instance_id: str, cache: dict[str, Path]) -> Path | None:
@@ -52,9 +63,14 @@ def gold_files(patch: str) -> list[str]:
 
 
 def main() -> int:
-    cache = cached_repos()
+    extra = [Path(arg.split("=", 1)[1]) for arg in sys.argv[1:] if arg.startswith("--root=")]
+    cache, roots = cached_repos(extra)
     if not cache:
-        print("没有 base-SWE-* 基线缓存,无法度量(先跑一次 corpus 定向用例)")
+        print(
+            "没有 base-SWE-* 基线缓存,无法度量(先跑一次 corpus 定向用例;"
+            f"扫过的落点:{', '.join(str(p) for p in roots) or '(无)'},"
+            "仓库外落点用 --root=<basetemp 目录> 传入)"
+        )
         return 0
     limit = get_settings().max_search_files
     print(

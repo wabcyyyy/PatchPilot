@@ -307,9 +307,23 @@
       单独包住(以前是裸 `WinError 5` 站在那儿,看不出该做什么)。
       实测:裸 `pytest -q` 现在是**清楚的报错且不再先删 `.pytest-tmp`**;
       带仓库外落点 3 passed。PM-004 追加"后续"一节,把这次的反噬写进去。
-- [x] M11.6.5 遗留(不动机器):本机 `%TEMP%\pytest-of-wabcy` 仍"拒绝访问"、
-      旁边留着 `pytest-of-SYSTEM`。清理需要管理员权限且影响本机所有项目,
-      由你在方便的时候做;仓库侧已经不再依赖那个根可用。
+- [x] M11.6.5 机器侧 ACL:非管理员能做的都试过了,**做不了**(2026-10-08 13:05)。
+      实测:`%TEMP%\pytest-of-wabcy` 目录本身能 `dir`(空目录),但
+      `icacls`/`ren`/`icacls /grant wabcy:(OI)(CI)F` 全部"拒绝访问" ——
+      连安全描述符都读不到,当前令牌既无 WRITE_DAC 也无 DELETE。
+      旁边 `pytest-of-SYSTEM` 的 ACL 是 `NT AUTHORITY\SYSTEM / BUILTIN\Administrators / OWNER RIGHTS`,
+      即当年以 SYSTEM 身份跑过 pytest 留下的;pytest 用 `pytest-of-<getuser()>`,
+      这个目录我们的运行**永远不碰**,属于纯残留,可留可清。
+      留给你的两条命令(管理员终端,二选一;都是删临时产物,不影响任何项目源码):
+      `icacls "%TEMP%\pytest-of-wabcy" /reset /t /c` 之后 `rmdir /s /q`,
+      或直接 `rmdir /s /q "%TEMP%\pytest-of-wabcy"`。
+      修好之后本机的 `pytest -q` 也可以不带 `--basetemp`(仓库侧已不依赖那个根可用:
+      `a127b28`/`94d558b` 之后落点由调用方给,防线只拦"仓库内")。
+- [x] M11.6.6 配置改动的连带后果已补:`scripts/measure_retrieval_domain.py` 原来只扫
+      `.pytest-tmp/`,而落点搬出仓库后它会"如实报 0 题"——那是一种**假干净**。
+      现在默认扫仓库根下所有 `.pytest-tmp*`、并支持 `--root=<basetemp>` 指仓库外落点,
+      报 0 题时把扫过的落点打出来。复跑数字与 M13 一致(12 个缓存仓库、20 个必改文件、
+      旧上限下不可见 5、域内缺失 0、全域最大位次 1168、AST 20/20 与 2263 符号)。
 
 ### M11.7 实现时顺手查出的潜伏坑(只登记,未动)
 
