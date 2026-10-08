@@ -397,6 +397,23 @@
   转移表补 `plan` 一步;`app/graph/checkpoint.py`、ADR-0001、design.md 三处
   "checkpointer 仅留档、不提供崩溃恢复"的旧声称改成实际语义(M6 后事实变了才改文案,
   历史审计文档 `interview-audit-*` 不动——那是时间戳证据而非当前主张)。
+## M8 接线级行为证据(2026-10-08 00:40)
+
+- 收口后自查发现两处"机制在,链路没证":压缩只在 `run_plain_loop` 直调下测过、
+  骨架进 PLAN 只有源码级断言(`extra_system=` 三处)。**新增 `tests/test_context_wiring.py` 4 例**
+  把这两条补成行为证据:①小阈值下压缩真的发生、`context_compact` 事件带 `stubbed>0` 且循环仍能
+  `finish`;②跑真图时 PLAN 那次请求的第一条 system 里同时有 `<repo_skeleton>` 和真符号
+  `def parse_date(`(计划段要能点名要改谁);③`repo_map_enabled/context_window_tokens/
+  plan_stage_enabled/loop_snapshot_enabled` 四个开关同时关闭 ⇒ `verdict=resolved` 与
+  `changed_files=['src/dateparse.py']` 与引入前同形;④`PLAN_MARKER` 由提示词与 FakeLLM
+  共用一个常量(两处各写字面量迟早漂移,这条是防自己)。
+- 阈值仍是用例里显式调小(1500),不是 16000:fake 语料每题 7-9 轮、够不到生产默认,
+  **所以这条证据只支撑"链路通",不支撑"默认值省了多少额度"** —— 后者要真实模型批。
+- 写这卡时自己踩了两个低级错并被工具当场抓住:断言字符串里嵌了裸双引号(语法错)、
+  以及留了一条无意义的占位断言(`block(TARGET, ["placeholder"])`)和一行假 monkeypatch ——
+  复核自己的测试文件和复核子代理的文件一样必要。
+- 证据:本卡 4 例绿;全量复跑 **`691 passed, 3 skipped`(15:30,exit 0)**(前值 687 + 本卡 4 例)。
+
 ## M7.1 零成本回放对照(2026-10-08 00:36,唯一还没做完的证据项已补上)
 
 - 跑法:`PATCHPILOT_LLM_ENABLED=false`,graph 引擎逐题 `run_single --model fake --engine graph`,
