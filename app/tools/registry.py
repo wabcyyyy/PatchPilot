@@ -260,5 +260,10 @@ def _summarize_output(name: str, result: ToolResult) -> object:
         summary["diff"] = f"<{len(summary['diff'])} chars, see patches>"
         return summary
     if isinstance(output, dict):
-        return {k: output[k] for k in list(output)[:8]}
+        keys = list(output)
+        summary = {k: output[k] for k in keys[:8]}
+        if len(keys) > 8:
+            # 丢键必须留痕:静默截断会让"模型当时看到过什么"在证据链里不可复原(M16.9 同族)
+            summary["_omitted_keys"] = f"+{len(keys) - 8} keys omitted"
+        return summary
     return output

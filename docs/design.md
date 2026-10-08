@@ -134,11 +134,14 @@ regression 必须绿)由生成器与测试双重把关——回归集在基线�
   竞态,语义为"需要人看",不谎报失败;
 - **sock 模式的路径命名空间**:compose 下 docker 执行后端要求 runs 目录
   "容器内路径 = 宿主守护进程视角路径"的 bind 挂载,见 docker-backend-notes.md。
-- **轨迹摘要里"无声丢失"这一族:M16.9 修掉了一处,还剩一处是边界**
-  (2026-10-08 把整条摘要链扫过一遍的结论):`_summarize_input`(`app/tools/registry.py:248`)截长字符串时
-  留 `... (N chars)` 标记,`_record_thought`(`app/graph/plain_loop.py:93`)同理,而
-  **`_summarize_output`(`registry.py:263`)只保留前 8 个键且不留任何标记**。今天不丢东西——
-  实测 941 条 `run_tests` 轨迹事件的输出键数**正好是 8**(`app/tools/execution.py:50` 那八个字段),
-  但这意味着任何工具结果加第 9 个键,它就会静默从证据链里消失,而报告上看不出缺了什么。
-  它当时是被"diff 单独转 `patches/`"那条设计顺带盖住的,不是有意评审过的取舍;
-  改它属 `app/tools/` 的边界校验范围,**登记待裁决**(TODO M19.1),本卡只把边界写明。
+- **轨迹摘要里"无声丢失"这一族:两处都已修掉(2026-10-08)**
+  (把整条摘要链扫一遍的结论):`_summarize_input`(`app/tools/registry.py:248`)截长字符串时
+  留 `... (N chars)` 标记,`_record_thought`(`app/graph/plain_loop.py:93`)同理;
+  而 `_summarize_output`(`registry.py:262`)原先只保留**前 8 个键且不留标记** ——
+  扫全 `runs/*/*/trajectory.jsonl`(fake 与真实批次都在内)得到 **941 条 `run_tests` 轨迹事件,
+  输出键数全部正好是 8**(源是 `app/tools/execution.py:50` 那八个字段),
+  也就是"天花板正在起作用但没人注意到"。
+  现在超 8 键会写 `_omitted_keys: "+N keys omitted"`,**8 键以内一字不动 ⇒ 现有轨迹形状零变化**;
+  摘要链本身也补了直接用例(`tests/test_trajectory_summary.py`,此前该函数零覆盖)。
+  仍然剩下的边界:`_summarize_input` 的 300 字符上限只保证**长度**可复原,不保证全文可见 ——
+  要全文得单独落附件,那是另一个决定(M16.9 的取舍即止于此);
