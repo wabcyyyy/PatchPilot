@@ -68,6 +68,7 @@ def run_task_graph(
         model_name,
         get_settings().llm_enabled and getattr(model, "provider", "") != "fake-replay",
     )
+    from app.evals.bugset import load_replay_script
     from app.evals.driver import TaskResult  # 延迟导入,避免循环依赖
     from app.evals.pricing import estimate_cost
     from app.evals.provenance import build_provenance
@@ -119,6 +120,47 @@ def run_task_graph(
         checkpointer = (
             make_sqlite_checkpointer(run_dir / "checkpoints.sqlite") if use_checkpoint else None
         )
+        # S05a:受理即冻结的完整任务契约(F4 前半)。同一 task_id 再次执行
+        # (含恢复)必须对照**受理时落盘**的契约重算源指纹:不一致 =
+        # INVALID_TASK/source_changed,不静默执行新内容;一致则复用原契约
+        # (身份不随重跑漂移,恢复也不得借重读配置换模型/预算)。契约先落盘再调模型。
+        from app.task_spec import (
+            TaskSpec,
+            build_task_spec,
+            fingerprint_source_dir,
+            write_task_spec_file,
+        )
+
+        current_fingerprint = fingerprint_source_dir(bug.repo_dir)
+        spec_file = run_dir / "task_spec.json"
+        if spec_file.exists():
+            try:
+                task_spec = TaskSpec.read_file(spec_file)
+            except (ValueError, OSError) as exc:
+                raise TaskError(f"accepted task_spec unreadable: {exc}") from exc
+            if task_spec.source_snapshot_hash != current_fingerprint:
+                raise TaskError(
+                    f"source_changed: {bug.repo_dir} content differs from accepted"
+                    f" fingerprint ({task_spec.source_snapshot_hash[:12]} ->"
+                    f" {current_fingerprint[:12]})"
+                )
+        else:
+            task_spec = build_task_spec(
+                bug,
+                engine="graph",
+                arm="agent",
+                model_provider=getattr(model, "provider", "unknown"),
+                model_name=model_name,
+                max_turns=max_turns,
+                max_rounds=nodes.max_rounds,
+                replay=(
+                    load_replay_script(bug, kind="graph")
+                    if getattr(model, "provider", "") == "fake-replay"
+                    and bug.replay_script_path is not None
+                    else None
+                ),
+            )
+            write_task_spec_file(run_dir, task_spec)
         graph = build_graph(nodes, checkpointer=checkpointer)
 
         initial: TaskState = {

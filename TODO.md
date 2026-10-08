@@ -664,7 +664,7 @@
       call_id 入账、超限结构化收尾、graph/plain 同一验收面、report_schema_version=2。
 - [x] S02b 持久时间与执行边界:deadline 建立并持久化、恢复不重授、
       每次 run_pytest 前后复查(含最后一次 rerun 之后)。
-- [ ] S05a 规范 TaskSpec 数据模型与迁移(F4 前半):app/task_spec.py 规范化 JSON+SHA256、
+- [x] S05a 规范 TaskSpec 数据模型与迁移(F4 前半):app/task_spec.py 规范化 JSON+SHA256、
       SQLite 增量列、runner 生成完整任务契约;暂不宣称 API custom 可恢复。
 - [ ] S03 候选工件与恢复再验证(F2):app/graph/candidate.py 冻结 diff+manifest,
       恢复=重应用+重门禁+重测试,ResumeDecision 四态,服务恢复判定接合法边界。

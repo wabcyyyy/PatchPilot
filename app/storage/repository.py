@@ -102,6 +102,39 @@ class Repository:
             ).fetchone()
         return _task_out(row)
 
+    def set_task_spec(
+        self, task_id: str, *, spec_json: str, spec_hash: str, schema_version: int
+    ) -> bool:
+        """回填规范任务契约(S05a);仅非终态可写,返回 False=任务已终态。
+
+        spec_json 必须已经是规范序列化形态(canonical_json),哈希由调用方按
+        app.task_spec 的同一算法计算——本层不做第二种哈希口径。
+        """
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "UPDATE tasks SET task_spec_json=?, task_spec_hash=?, task_spec_schema_version=?"
+                " WHERE id=? AND status NOT IN"
+                f" ({','.join('?' * len(TERMINAL_STATUSES))})",
+                (spec_json, spec_hash, schema_version, task_id, *TERMINAL_STATUSES),
+            )
+        return cur.rowcount > 0
+
+    def get_task_spec(self, task_id: str) -> dict[str, Any] | None:
+        """读契约三列;未落契约的旧行返回 None(调用方按"不可自动恢复"处理)。"""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT task_spec_json, task_spec_hash, task_spec_schema_version"
+                " FROM tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+        if row is None or row["task_spec_json"] is None:
+            return None
+        return {
+            "task_spec_json": row["task_spec_json"],
+            "task_spec_hash": row["task_spec_hash"],
+            "task_spec_schema_version": row["task_spec_schema_version"],
+        }
+
     def set_status_unless_terminal(self, task_id: str, status: str) -> bool:
         """非终态流转写入(RUNNING 等,N-7/R2 整改):任务已到终态(含并发取消)
         时写入不生效并返回 False——此前 create_task 置 RUNNING 是无条件写,

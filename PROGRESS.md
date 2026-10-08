@@ -1018,3 +1018,38 @@ test_plain_loop 更名 without_deadline,test_resume 的 stub state 补 deadline_
 (新格式合法检查点的夹具义务)。
 
 全量离线 pytest(闸记录见提交);ruff/format 绿。
+
+## S05a 规范任务契约 TaskSpec(F4 前半)(2026-10-09,产品卡 4/13)
+
+缺陷(review F4,P1):custom 任务 ID 把 failed/regression/allowed_paths 元素**裸拼接**
+后散列——failed=[a],regression=[b,c] 与 failed=[a,b],regression=[c] 得到同一个 ID,
+基线/验收契约不同的两个任务可能命中同一个在途幂等键;持久化只存截 500 字符的 issue,
+测试清单/回放脚本不落盘,任务不可忠实重建。
+
+**修法**:
+- 新增 `app/task_spec.py`(schema_version=1,身份唯一权威,两卡共用同一套哈希算法):
+  具名字段分组(输入/源码/执行/环境/回放/溯源);canonical 形态 =
+  `json.dumps(sort_keys=True, separators=(",",":"))` 取 SHA256——**字段边界由 JSON
+  结构表达,永不分隔符拼接**;`created_at` 与哈希本身不入内容身份;测试列表按实际
+  执行顺序参与身份;allowed_paths 空列表按既有 None 语义规范化;
+  `effective_policy` 整份冻结(token/timeout/context/plan/branching 全键具名),
+  恢复不得重读 .env 换策略;prompts_hash 钉住提示词模板原文;
+  `from_json_dict` 校验 schema 版本与哈希自洽,篡改/旧版本一律拒绝。
+- 源码身份:`fingerprint_source_dir` = 排序 (相对路径, 类型, sha256(字节)) 清单的总哈希
+  ——实际文件字节,不随 mtime,不跟随符号链接,排除 .git,不可读留痕不静默跳过;
+  `source_commit` 无 .git 返回 None 不编造。S06 冻结快照落地前如实只称"目录内容指纹"。
+- graph runner 接线:同一 task_id 再次执行(含恢复)必须对照**受理时落盘**的
+  run_dir/task_spec.json 重算指纹——不一致 = INVALID_TASK/source_changed 且模型零调用、
+  原契约不被改写;一致则复用原契约(身份不随重跑漂移)。tmp+os.replace 原子写。
+- 存储:tasks 表增量三列(task_spec_json/hash/schema_version),PRAGMA 现状补列——
+  迁移可重复、事务化、旧行 NULL 可查询;Repository.set_task_spec 仅非终态可写,
+  get_task_spec 对未落契约的旧行返回 None(调用方按"不可自动恢复"处理)。
+
+**回归**:tests/test_task_spec.py 16 例(F4 的两种分组得到不同哈希/同输入稳定/
+顺序与 issue 与策略与模型与 replay 各自改身份/issue>500 忠实重建/NULL 规范化/
+roundtrip/篡改与旧版本拒绝/指纹六态/落盘规范形态/runner 契约落盘/source_changed
+拒绝且模型零调用且现场保全);tests/test_storage.py +2(契约列回读、旧库迁移幂等
+且保行)。ADR 锚点随 runner 行号位移同步(:188)。
+
+全量离线 pytest(闸记录见提交);ruff/format 绿。S05b(S03/S04 后)接 API 幂等与
+完整持久化端到端,不重复定义哈希。

@@ -164,3 +164,57 @@ def test_finalize_cannot_revive_needs_review(tmp_path: Path) -> None:
     assert repo.finalize_task("T1", "FINISHED", "resolved") is False
     row = repo.get_task("T1")
     assert row["status"] == "NEEDS_REVIEW" and row["verdict"] == "needs_review"
+
+
+# ---------- S05a:task_spec 契约列与可重复迁移 ----------
+
+
+def test_task_spec_columns_roundtrip(tmp_path: Path) -> None:
+    from app.task_spec import SCHEMA_VERSION, canonical_json
+
+    repo = Repository(tmp_path / "t.sqlite3")
+    _make_task(repo, "T1", "idem-1")
+    assert repo.get_task_spec("T1") is None, "旧行未落契约时返回 None(不可自动恢复)"
+    payload = canonical_json({"source_kind": "manifest", "issue_text": "x"})
+    assert repo.set_task_spec(
+        "T1", spec_json=payload, spec_hash="a" * 64, schema_version=SCHEMA_VERSION
+    )
+    got = repo.get_task_spec("T1")
+    assert got["task_spec_hash"] == "a" * 64
+    assert got["task_spec_schema_version"] == SCHEMA_VERSION
+    assert got["task_spec_json"] == payload
+    # 终态后不可再写(契约不因终态回写而漂移)
+    repo.finalize_task("T1", "FINISHED", "resolved")
+    assert not repo.set_task_spec(
+        "T1", spec_json=payload, spec_hash="b" * 64, schema_version=SCHEMA_VERSION
+    )
+    assert repo.get_task_spec("T1")["task_spec_hash"] == "a" * 64
+
+
+def test_migration_is_repeatable_and_preserves_rows(tmp_path: Path) -> None:
+    import sqlite3
+
+    from app.storage.db import _migrate
+
+    path = tmp_path / "old.sqlite3"
+    conn = sqlite3.connect(str(path))
+    conn.execute(
+        "CREATE TABLE tasks (id TEXT PRIMARY KEY, idem_key TEXT, bug_id TEXT NOT NULL,"
+        " repo_path TEXT, issue_text TEXT, max_rounds INTEGER, engine TEXT,"
+        " model_provider TEXT, status TEXT NOT NULL, verdict TEXT, run_dir TEXT,"
+        " created_at TEXT, finished_at TEXT)"
+    )
+    conn.execute("INSERT INTO tasks (id, bug_id, status) VALUES ('OLD-1', 'BUG-001', 'FINISHED')")
+    conn.commit()
+    # 直接在旧库上跑迁移:幂等(重复执行不抛),旧行可查询
+    _migrate(conn)
+    _migrate(conn)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(tasks)")}
+    assert {"task_spec_json", "task_spec_hash", "task_spec_schema_version"} <= cols
+    row = conn.execute("SELECT id, bug_id, status FROM tasks").fetchone()
+    assert tuple(row) == ("OLD-1", "BUG-001", "FINISHED")  # 裸连接无 Row 工厂,按位置读
+    conn.close()
+    # Repository.connect 在同一库上照常打开(迁移已就位,不重复加列)
+    repo = Repository(path)
+    assert repo.get_task("OLD-1") is not None
+    assert repo.get_task_spec("OLD-1") is None
