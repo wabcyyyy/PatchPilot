@@ -1,0 +1,77 @@
+# 测量产物(UTF-8,直接由脚本 stdout 落盘,未手改数字)
+# 数据语料:runs/swe-* 的 25 份真实模型 run,它们跑于 commit 80981f04(升级前,压缩未介入)
+# 测量代码:master b06cf51 之后的工作树(本卡 commit 见 git log)
+# 命令:PYTHONPATH=. .venv/Scripts/python.exe scripts/measure_context_counterfactual.py
+# 日期:2026-10-08 13:4x(本机)
+# 注:同一份代码改完再重跑,量的就不是同一个东西 —— 见 PROGRESS 的 M11.5 教训
+
+corpus: 25 LOCALIZE instances
+
+=== 判死分类(按 report.error 原文,不猜) ===
+  swe-hard-graph      SWE-sphinx-doc__sphinx-7590       localize/token-gate  417,894 > 400,000
+  swe-hard-graph      SWE-sphinx-doc__sphinx-7748       localize/token-gate  418,802 > 400,000
+  swe-hard-graph2     SWE-sphinx-doc__sphinx-7590       propose/token-gate  182,293 > 168,836
+  swe-hard-graph3     SWE-sphinx-doc__sphinx-7590       propose/token-gate  182,241 > 155,652
+  swe-hard-oneshot    SWE-astropy__astropy-8707         one_shot/max-turns  max_turns=6
+  swe-hard-oneshot    SWE-pydata__xarray-3095           one_shot/max-turns  max_turns=12
+  swe-hard-oneshot    SWE-sphinx-doc__sphinx-7590       one_shot/max-turns  max_turns=12
+  swe-hard-oneshot    SWE-sphinx-doc__sphinx-8548       one_shot/max-turns  max_turns=12
+  swe-hard-oneshot    SWE-sphinx-doc__sphinx-8593       one_shot/max-turns  max_turns=6
+  swe-hard-oneshot    SWE-sphinx-doc__sphinx-9461       one_shot/max-turns  max_turns=12
+  swe-hard-oneshot2   SWE-astropy__astropy-8707         one_shot/token-gate  433,297 > 400,000
+  合计 11:{'localize/token-gate': 2, 'propose/token-gate': 2, 'one_shot/max-turns': 6, 'one_shot/token-gate': 1}
+
+=== V1 锚点:代码当时算出的估算值 vs 我的重建(同口径、零换算) ===
+  ok  swe-hard-graph/SWE-sphinx-doc__sphinx-7590    代码=  29,679 重建=  29,426 误差=  0.9%  负对照=  1,613
+  ok  swe-hard-graph/SWE-sphinx-doc__sphinx-7748    代码=  23,838 重建=  23,638 误差=  0.8%  负对照=  1,411
+  锚点 2/2 命中(门槛:全部 ≤15%,且负对照须明显偏离)
+
+=== V2 逐实例尺度 real/est:median=1.471 min=1.264 max=1.899 ===
+
+=== 扫描:每个 (阈值, 保留回合) 单元格的表现 ===
+    thr  keep     触发      首次触发      节省/触发      节省/全体       压不到阈值         额度死存活      非法请求            锚点 全/降级/没了
+      0     4      -         -         -         -           -             -         0  0/0/0(分母 0,其中 0 个本来就没读到)
+   8000     4     17         7       31%       20%         52%           2/2         0  37/1/4(分母 43,其中 1 个本来就没读到)
+  16000     4     11        12        6%        0%          0%           2/2         0  41/0/1(分母 43,其中 1 个本来就没读到)
+  24000     4      3        16        3%        0%          0%           1/2         0  42/0/0(分母 43,其中 1 个本来就没读到)
+  32000     4      0         -         -        0%          0%           0/2         0  42/0/0(分母 43,其中 1 个本来就没读到)
+      0     6      -         -         -         -           -             -         0  0/0/0(分母 0,其中 0 个本来就没读到)
+   8000     6     15         8       22%       10%         86%           2/2         0  38/1/3(分母 43,其中 1 个本来就没读到)
+  16000     6     11        12        6%        0%          4%           2/2         0  41/0/1(分母 43,其中 1 个本来就没读到)  <- 生产默认
+  24000     6      3        16        3%        0%          0%           1/2         0  42/0/0(分母 43,其中 1 个本来就没读到)
+  32000     6      0         -         -        0%          0%           0/2         0  42/0/0(分母 43,其中 1 个本来就没读到)
+      0     8      -         -         -         -           -             -         0  0/0/0(分母 0,其中 0 个本来就没读到)
+   8000     8     13        10       10%        1%        100%           2/2         0  39/0/3(分母 43,其中 1 个本来就没读到)
+  16000     8     11        12        6%        0%         23%           2/2         0  41/0/1(分母 43,其中 1 个本来就没读到)
+  24000     8      3        16        3%        0%          0%           1/2         0  42/0/0(分母 43,其中 1 个本来就没读到)
+  32000     8      0         -         -        0%          0%           0/2         0  42/0/0(分母 43,其中 1 个本来就没读到)
+
+=== 生产默认 (16000 / keep=6) 逐实例 ===
+bug                                turns                判死   off末 est   on末 est     节省         锚点全/降级/没了
+SWE-sphinx-doc__sphinx-7590           16localize/token-gate     29,426    14,358    25%  3/0/0
+SWE-pydata__xarray-3095               18                 -     28,159    13,554    24%  2/0/0
+SWE-astropy__astropy-8707             19one_shot/token-gate     27,622    15,190    26%  2/0/0
+SWE-sphinx-doc__sphinx-7748           19localize/token-gate     23,638    16,439    18%  1/0/0
+SWE-sphinx-doc__sphinx-7590           14propose/token-gate     21,823    15,879    11%  3/0/0
+SWE-pydata__xarray-3095               13                 -     20,398    14,781     6%  2/0/0
+SWE-sphinx-doc__sphinx-7590           14propose/token-gate     19,449    16,071     5%  2/0/0
+SWE-astropy__astropy-8707             10one_shot/max-turns     18,224    16,349     2%  2/0/0
+SWE-sphinx-doc__sphinx-8548           12one_shot/max-turns     17,330    16,014     2%  2/0/0
+SWE-astropy__astropy-8707             11                 -     17,230    14,754     3%  2/0/0
+SWE-sphinx-doc__sphinx-7590           12one_shot/max-turns     16,456    14,478     2%  2/0/1
+SWE-sphinx-doc__sphinx-9461           12one_shot/max-turns     15,913    15,913     0%  3/0/0
+SWE-pydata__xarray-3095               12one_shot/max-turns     13,569    13,569     0%  2/0/0
+SWE-pallets__flask-5014                6                 -     12,469    12,469     0%  1/0/0
+SWE-psf__requests-1142                 5                 -     12,275    12,275     0%  1/0/0
+SWE-pytest-dev__pytest-7205            5                 -     10,264    10,264     0%  1/0/0
+SWE-pylint-dev__pylint-6903            9                 -      9,990     9,990     0%  1/0/0
+SWE-sphinx-doc__sphinx-7748            9                 -      9,760     9,760     0%  1/0/0
+SWE-pytest-dev__pytest-7205            5                 -      8,500     8,500     0%  1/0/0
+SWE-pylint-dev__pylint-6903            6                 -      8,343     8,343     0%  1/0/0
+SWE-psf__requests-1142                 4                 -      8,075     8,075     0%  1/0/0
+SWE-sphinx-doc__sphinx-8593            8one_shot/max-turns      7,643     7,643     0%  2/0/0
+SWE-pallets__flask-5014                5                 -      7,145     7,145     0%  1/0/0
+SWE-pytest-dev__pytest-5809            4                 -      3,225     3,225     0%  1/0/0
+SWE-pytest-dev__pytest-5809            3                 -      2,994     2,994     0%  1/0/0
+
+GATE V1 PASS - 锚点全部命中(负对照明显偏离,说明这个锚有牙齿)。

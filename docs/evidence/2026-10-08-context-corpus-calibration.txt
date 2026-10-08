@@ -1,0 +1,50 @@
+# 测量产物(UTF-8,直接由脚本 stdout 落盘,未手改数字)
+# 数据语料:runs/swe-* 的 25 份真实模型 run,它们跑于 commit 80981f04(升级前,压缩未介入)
+# 测量代码:master b06cf51 之后的工作树(本卡 commit 见 git log)
+# 命令:PYTHONPATH=. .venv/Scripts/python.exe scripts/context_replay.py
+# 日期:2026-10-08 13:4x(本机)
+# 注:同一份代码改完再重跑,量的就不是同一个东西 —— 见 PROGRESS 的 M11.5 教训
+
+corpus: 25 real-model runs (367 llm turns), commit 80981f04
+
+=== F1 守恒(轨迹逐轮 tokens 之和 == report.tokens_used) ===
+unexplained failures: 0
+  KNOWN DEFECT(崩溃路径把用量记成 0,4a4093e):swe-hard-oneshot/SWE-sphinx-doc__sphinx-7748 轨迹=55,526 report=0
+=== F2 动作序列对齐: 0/251 错配 (0.00%) ===
+=== F3 重建可用性(y = a*估算 + c*消息条数 + b) ===
+points=251  R2=0.9424  median|err|=13.4%
+  拟合系数 a=1.260 b=-856 c=173.1 —— 注意 est 与消息条数高度共线,b/c 的劈分不可当结论用,尺度只用下面的逐 run 比值
+=== 估算器尺度(chars//4 vs 真实计费,逐 run 比值 real/est,n=25) ===
+  median=1.470  p10=1.283  p90=1.697  min=1.263  max=1.897
+  ⇒ 生产阈值 context_window_tokens=16000(估算口径)对应的真实上下文规模 ≈ 23,519 tokens(区间 20,536 ~ 27,159)
+undercount from record form: 32,093 chars = 0.35% of estimated corpus volume
+
+GATE: PASS - 重建可用于点估计
+
+=== 逐 run(LOCALIZE 段,估算口径) ===
+bug                                turns  head tok   max tok  >16k at  real/est            status
+SWE-pydata__xarray-3095               18      1029     27629       12      1.27          FINISHED
+SWE-sphinx-doc__sphinx-7590           16       470     27328        9      1.70   BUDGET_EXCEEDED
+SWE-astropy__astropy-8707             19       539     26693       11      1.47   BUDGET_EXCEEDED
+SWE-sphinx-doc__sphinx-7748           19       448     21435       12      1.75   BUDGET_EXCEEDED
+SWE-pydata__xarray-3095               13      1029     19824       12      1.37          FINISHED
+SWE-sphinx-doc__sphinx-7590           14       470     19796       11      1.64   BUDGET_EXCEEDED
+SWE-astropy__astropy-8707             10       539     17824       10      1.35   BUDGET_EXCEEDED
+SWE-sphinx-doc__sphinx-7590           14       470     17375       13      1.66   BUDGET_EXCEEDED
+SWE-astropy__astropy-8707             11       539     16657       10      1.44          FINISHED
+SWE-sphinx-doc__sphinx-8548           12       416     16572       12      1.33   BUDGET_EXCEEDED
+SWE-sphinx-doc__sphinx-7590           12       470     16463       12      1.65   BUDGET_EXCEEDED
+SWE-sphinx-doc__sphinx-9461           12       923     14320        -      1.40   BUDGET_EXCEEDED
+SWE-pydata__xarray-3095               12      1029     13059        -      1.26   BUDGET_EXCEEDED
+SWE-pallets__flask-5014                6       371     12120        -      1.28          FINISHED
+SWE-psf__requests-1142                 5       419     11880        -      1.41          FINISHED
+SWE-pytest-dev__pytest-7205            5      1577      9782        -      1.47          FINISHED
+SWE-sphinx-doc__sphinx-7748            9       448      9766        -      1.54      NEEDS_REVIEW
+SWE-pylint-dev__pylint-6903            9       997      9556        -      1.90          FINISHED
+SWE-pytest-dev__pytest-7205            5      1577      8410        -      1.47          FINISHED
+SWE-pylint-dev__pylint-6903            6       997      8032        -      1.47          FINISHED
+SWE-psf__requests-1142                 4       419      7615        -      1.67          FINISHED
+SWE-sphinx-doc__sphinx-8593            8       500      7103        -      1.49   BUDGET_EXCEEDED
+SWE-pallets__flask-5014                5       371      6840        -      1.47          FINISHED
+SWE-pytest-dev__pytest-5809            4       566      3142        -      1.71          FINISHED
+SWE-pytest-dev__pytest-5809            3       566      2911        -      1.67          FINISHED
