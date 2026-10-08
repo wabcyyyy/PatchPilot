@@ -157,7 +157,7 @@ class TaskSpec:
     regression_tests: list[str]
     allowed_paths: list[str] | None  # None = 不设白名单(空列表按 None 规范化)
     # —— 源码 ——
-    source_path: str  # 解析后的绝对路径
+    source_path: str  # 解析后的绝对路径(逻辑定位符;custom 为用户原始目录)
     source_commit: str | None  # 可空:fixture 无 .git 不编造
     source_snapshot_hash: str  # S05a=目录内容指纹;S06 起为冻结快照身份
     # —— 执行 ——
@@ -178,6 +178,10 @@ class TaskSpec:
     # —— 溯源(不参与内容身份的部分单列在 content_dict 之外) ——
     platform_commit: str = ""
     prompts_hash: str = ""
+    # S06:冻结副本相对 run_dir 的引用(常量 "source_snapshot")——执行与恢复
+    # 只读物化这份副本;空串=未冻结(manifest 题,平台自有目录)。
+    # 引用是常量而非绝对路径,同输入重提的哈希不受时间戳影响(幂等键稳定)。
+    source_snapshot_ref: str = ""
 
     def content_dict(self) -> dict[str, Any]:
         """参与内容身份的具名字典(created_at/task_spec_hash 刻意不在内)。"""
@@ -234,6 +238,7 @@ def build_task_spec(
     replay: list[dict[str, Any]] | None = None,
     settings: Any = None,
     platform_commit: str = "",
+    source_snapshot_ref: str = "",
 ) -> TaskSpec:
     """从 BugTask + 执行参数构建冻结契约(S05a 唯一构建口径,两引擎共用)。
 
@@ -258,6 +263,7 @@ def build_task_spec(
         source_path=str(Path(bug.repo_dir).resolve()),
         source_commit=read_source_commit(bug.repo_dir),
         source_snapshot_hash=fingerprint_source_dir(bug.repo_dir),
+        source_snapshot_ref=source_snapshot_ref,
         engine=engine,
         arm=arm,
         model_provider=model_provider,

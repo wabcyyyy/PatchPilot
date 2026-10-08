@@ -184,6 +184,10 @@ EXEMPT_KEYS: frozenset[str] = frozenset(
     {
         "runs_root",
         "db_path",
+        # S06 受理冻结的体量/耗时保护:运维边界而非复现口径(超限在受理即拒绝,
+        # 不会产生"跑了但不可比"的轨迹),与 runs_root/db_path 同族进豁免
+        "intake_timeout_seconds",
+        "intake_max_files",
         "llm_base_url",
         "llm_max_tokens",
         "llm_max_retries",

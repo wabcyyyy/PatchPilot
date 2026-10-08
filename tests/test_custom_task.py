@@ -534,3 +534,83 @@ def test_f4_issue_over_500_chars_rebuilt_faithfully(tmp_path: Path) -> None:
     assert spec.issue_text == long_issue
     rebuilt = service._bug_from_row(row)
     assert rebuilt.issue_text == long_issue
+
+
+# ---------- S06:执行冻结副本 ----------
+
+
+def test_s06_execution_uses_frozen_snapshot_after_source_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """受理后改源仓库:执行的是冻结副本(基线/锚点按受理内容),源目录不被写回。
+
+    本用例要检查 workspace 内容,单独关闭终态回收(spec S08:测试单独关闭,
+    不改生产默认)。
+    """
+    monkeypatch.setenv("PATCHPILOT_RECYCLE_FINISHED_WORKSPACE", "false")
+    from app.config import get_settings as _gs
+
+    _gs.cache_clear()
+    from app.api.service import TaskService
+    from app.storage.repository import Repository
+    from tests.conftest import block
+    from tests.test_service_robustness import _TINY_FIX_DIFF, _materialize_tiny_repo
+
+    user_src = tmp_path / "user-src"
+    _materialize_tiny_repo(user_src)
+    service = TaskService(
+        repo=Repository(tmp_path / "db.sqlite3"),
+        runs_root=tmp_path / "runs",
+        bugs_root=Path("bugs"),
+    )
+    monkeypatch.setattr(service._pool, "submit", lambda *a, **k: None)  # 只受理不执行
+    replay = [
+        {"tool": "search_code", "args": {"keyword": "parse_date"}},
+        {"tool": "read_file", "args": {"path": "src/dateparse.py"}},
+        {"tool": "apply_patch", "args": {"patch_text": block(_TINY_FIX_DIFF)}},
+        {"tool": "run_tests", "args": {"test_set": "failed"}},
+        {"tool": "run_tests", "args": {"test_set": "regression"}},
+        {"tool": "finish", "args": {"success": True, "summary": "fixed on frozen copy"}},
+    ]
+    task, _created = service.create_task(
+        repo_path=str(user_src),
+        issue_text="empty string crash",
+        failed_tests=["tests/test_dateparse.py::test_empty_string_returns_none"],
+        regression_tests=[
+            "tests/test_dateparse.py::test_iso_format",
+            "tests/test_dateparse.py::test_none_returns_none",
+        ],
+        replay_script=replay,
+        engine="plain",
+    )
+    task_id = task["task_id"]
+    run_dir = Path(task["run_dir"])
+    assert (run_dir / "source_snapshot" / "src" / "dateparse.py").exists()
+    # 受理之后、执行之前:用户改自己的源目录(执行不得看到这行)
+    src_file = user_src / "src" / "dateparse.py"
+    src_file.write_text(
+        src_file.read_text(encoding="utf-8") + "\n# mutated after acceptance\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    service._execute(
+        task_id,
+        service.repo.get_task(task_id) and service._bug_from_row(service.repo.get_task(task_id)),
+        "plain",
+        "fake",
+        run_dir,
+        f"task:{service.repo.get_task(task_id)['idem_key']}",
+        None,
+        replay,
+        "",
+        False,
+    )
+    row = service.repo.get_task(task_id)
+    assert row["status"] == "FINISHED", row
+    # 工作区内容 = 冻结副本 + 修复,不含受理后的变更
+    ws_src = Path(row["run_dir"]) / "workspace" / "src" / "dateparse.py"
+    assert "mutated after acceptance" not in ws_src.read_text(encoding="utf-8")
+    assert "if not value.strip()" in ws_src.read_text(encoding="utf-8")
+    # 用户源目录保持被改后的样子(平台零写入),任务结束后 .git 只在 run_dir/workspace
+    assert "mutated after acceptance" in src_file.read_text(encoding="utf-8")
+    service.shutdown()

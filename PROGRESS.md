@@ -1150,3 +1150,41 @@ tests/test_service_robustness.py +2(custom BugTask 从持久化契约重建+源�
 DB 与文件契约哈希分叉时执行判 INVALID 且模型零调用)。既有幂等/取消/恢复用例全绿。
 
 全量离线 pytest(闸记录见提交);ruff/format 绿。F4 全部关闭。
+
+## S06 冻结执行输入与环境预检(2026-10-09,产品卡 8/13)
+
+受理之后、执行之前的窗口里用户可以改源仓库——旧行为执行的是"执行那一刻"的内容,
+与受理契约脱节;环境坏(依赖缺失/收集错误)要到引擎基线才暴露,还可能留下假 RUNNING。
+
+**修法**:
+- 新增 `app/gitops/input_snapshot.py` `freeze_input`:custom 任务受理时把源码复制进
+  `run_dir/source_snapshot`(tmp+rename 原子就位);复制范围与 materialize_repo 的
+  `_TEMPLATE_IGNORE` 同一集合(规则版本入库);**指纹对副本字节计算**——
+  "哈希实际复制进去的文件";符号链接按链接复制后统一拒绝(绝不跟随读工作区外);
+  源/快照互相包含拒绝;体量与耗时上限走新 Settings 键
+  intake_max_files/intake_timeout_seconds(进 provenance EXEMPT 三分类);
+  中途失败清理 tmp,源目录零写入。
+- 新增 `app/api/preflight.py`:受理预检(解释器存在 → pytest 可用 → 两个测试集
+  `--collect-only` 收集),**收集走受控执行流程**(executor run_tests),不在 HTTP
+  handler 裸 subprocess;分类边界钉死——收集错误/依赖缺失是**环境问题**(消息点名),
+  与业务断言失败分开;rc=4 按输出细分(带 ERROR 块=依赖缺失,否则=目标不存在);
+  容器环境只验 daemon 可用(宿主机收集结论不可信);预检失败 → 422,不建任务行、
+  不调模型、不留假 RUNNING。**收集在一次性临时副本上执行**——pytest import conftest
+  会写 `__pycache__`,直接在冻结副本上跑会污染其内容指纹(实测踩中并修复)。
+- service 受理接线:custom 任务 create_task 内完成 冻结→指纹核对(窗口内被改即拒,
+  "nothing was accepted")→ 预检 → bug.repo_dir 指向冻结副本——**执行与恢复不再读
+  用户可变源目录**;TaskSpec 增 `source_snapshot_ref`(常量相对引用,幂等键不受
+  时间戳影响);intake 耗时如实入日志;快照随可弃集回收(指纹已在取证集)。
+- 恢复重建(`_bug_from_custom_spec`)指向冻结副本并重算指纹,不一致即拒。
+- manifest 题(平台自有目录)不冻结,指纹复核照旧;本轮不做通用环境构建器,
+  API 请求不能注入 shell/Docker host/安装脚本(环境只来自平台配置与题目 manifest)。
+
+**回归**:tests/test_input_snapshot.py 8 例(同字节同指纹/.git 与缓存剥离/未跟踪与
+删除改指纹/符号链接拒绝且不留残档/包含拒绝/体量与超时上限/源目录 mtime 级零写入/
+窗口内变更进不了已接受的快照);tests/test_preflight.py 6 例(成功面/解释器缺失短路/
+依赖缺失=collection error 分类/rc=4 目标问题分类/断言失败不归预检管);
+tests/test_custom_task.py +1 e2e(**受理后改源仍执行冻结副本**:workspace 内容=
+冻结内容+修复、不含受理后变更、用户源目录零写回;本用例按 spec 单独关闭回收)。
+既有 39 个 API/service 用例全绿。
+
+全量离线 pytest(闸记录见提交);ruff/format 绿。

@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -22,10 +24,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from app.api.cancellation import CancelRegistry
+from app.api.preflight import run_preflight
 from app.api.recycle import recycle_run_dir
 from app.config import get_settings
 from app.errors import InvalidRequestError, PatchPilotError, TaskCancelled, TaskError
 from app.evals.bugset import BUGS_ROOT, BugTask, build_custom_bug, load_bug, load_replay_script
+from app.gitops.input_snapshot import SNAPSHOT_DIRNAME, freeze_input
 from app.logctx import request_id_var, reset_task_context, set_task_context
 from app.storage.locks import BaseLock, build_lock
 from app.storage.repository import TERMINAL_STATUSES, Repository
@@ -152,6 +156,8 @@ class TaskService:
                 regression_tests=regression_tests or [],
                 allowed_paths=allowed_paths,
             )
+            # S06:custom 任务的源码身份在受理时绑定(S05a 指纹),冻结副本在
+            # 拿到 run_dir 之后再生成(见下方 _freeze_custom_input);此处不动。
         else:
             bug = load_bug(bug_id, self.bugs_root)  # TaskError → 404/422 由路由层转
             # N-2 整改:bug_id 语义上只能是 bugs_root 内的题目目录;
@@ -182,6 +188,7 @@ class TaskService:
             max_turns=DEFAULT_MAX_TURNS,
             max_rounds=max_rounds if max_rounds is not None else bug.max_rounds,
             replay=replay_for_spec,
+            source_snapshot_ref=SNAPSHOT_DIRNAME if repo_path is not None else "",
         )
         idem_key = spec.task_spec_hash
 
@@ -199,6 +206,37 @@ class TaskService:
         run_dir = self.runs_root / task_id
         try:
             run_dir.mkdir(parents=True, exist_ok=True)
+            if repo_path is not None:
+                # S06:custom 任务在受理窗口冻结源码副本(执行/恢复只读这份),
+                # 预检(解释器/pytest/双集收集)对副本执行;失败即 422,不建任务行、
+                # 不调模型、不留假 RUNNING。冻结副本落在 run_dir 内,终态后随可弃集回收。
+                intake_started = time.monotonic()
+                frozen_fingerprint = freeze_input(
+                    resolved,
+                    run_dir,
+                    max_files=get_settings().intake_max_files,
+                    timeout_seconds=get_settings().intake_timeout_seconds,
+                )
+                if frozen_fingerprint != spec.source_snapshot_hash:
+                    raise TaskError(
+                        "source changed during intake; nothing was accepted"
+                        f" ({spec.source_snapshot_hash[:12]} -> {frozen_fingerprint[:12]})"
+                    )
+                bug.repo_dir = run_dir / SNAPSHOT_DIRNAME
+                run_preflight(
+                    python_exe=bug.env.python if bug.env and bug.env.python else sys.executable,
+                    workspace=run_dir / SNAPSHOT_DIRNAME,
+                    failed_tests=list(bug.failed_tests),
+                    regression_tests=list(bug.regression_tests),
+                    container_image=bug.env.image if bug.env else None,
+                    timeout_seconds=max(get_settings().intake_timeout_seconds // 2, 30),
+                )
+                log.info(
+                    "intake done for %s in %d ms (snapshot=%s)",
+                    task_id,
+                    int((time.monotonic() - intake_started) * 1000),
+                    run_dir / SNAPSHOT_DIRNAME,
+                )
             # S05b/F4:契约双写——run_dir/task_spec.json(执行与恢复读这份)与
             # tasks 表三列(重启后可查)。两边哈希同源(spec.task_spec_hash);
             # _execute 开跑前再核一次,不一致不调模型。
@@ -591,7 +629,7 @@ class TaskService:
                         " task_spec; resume impossible"
                     )
             else:
-                bug = self._bug_from_custom_spec(spec, task_id)
+                bug = self._bug_from_custom_spec(spec, task_id, Path(str(row.get("run_dir") or "")))
             row_rounds = row.get("max_rounds")
             bug.max_rounds = int(row_rounds) if row_rounds else int(spec.max_rounds)
             return bug
@@ -612,10 +650,34 @@ class TaskService:
         return bug
 
     @staticmethod
-    def _bug_from_custom_spec(spec: Any, task_id: str) -> BugTask:
-        """从持久化契约重建 custom 任务;源内容指纹必须仍与受理时一致。"""
+    def _bug_from_custom_spec(spec: Any, task_id: str, run_dir: Path) -> BugTask:
+        """从持久化契约重建 custom 任务;执行指向**冻结副本**,不读用户原始目录(S06)。
+
+        - 契约声明了快照引用 → 校验 run_dir/source_snapshot 的指纹仍与受理一致;
+        - 无快照引用的旧契约 → 退回校验原始目录(源变了即拒)。
+        """
         from app.task_spec import fingerprint_source_dir
 
+        if spec.source_snapshot_ref:
+            repo_dir = run_dir / spec.source_snapshot_ref
+            if not repo_dir.is_dir():
+                raise TaskError(f"task {task_id}: frozen source snapshot gone: {repo_dir}")
+            if fingerprint_source_dir(repo_dir) != spec.source_snapshot_hash:
+                raise TaskError(
+                    f"task {task_id}: frozen snapshot fingerprint mismatch; resume impossible"
+                )
+            return BugTask(
+                id=task_id,
+                root=repo_dir,
+                repo_dir=repo_dir,
+                issue_text=spec.issue_text,
+                failed_tests=list(spec.failed_tests),
+                regression_tests=list(spec.regression_tests),
+                allowed_paths=list(spec.allowed_paths) if spec.allowed_paths else None,
+                max_rounds=int(spec.max_rounds),
+                category="custom",
+                replay_script_path=None,
+            )
         repo_dir = Path(spec.source_path)
         if not repo_dir.is_dir():
             raise TaskError(f"task {task_id}: source dir gone: {repo_dir}")

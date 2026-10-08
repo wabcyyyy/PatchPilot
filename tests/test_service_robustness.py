@@ -389,15 +389,21 @@ def test_custom_bugtask_rebuilt_from_stored_task_spec(tmp_path: Path) -> None:
     stored = service.repo.get_task_spec(task_id)
     spec = TaskSpec.from_json_dict(_json.loads(str(stored["task_spec_json"])))
     assert spec.replay == [{"tool": "finish", "args": {"success": True, "summary": "s"}}]
-    # 源内容变了:重建拒绝(源指纹重算不一致)
+    # S06:重建指向冻结副本(用户源目录此后怎么改都影响不到本次任务的恢复)
+    assert rebuilt.repo_dir == Path(row["run_dir"]) / "source_snapshot"
     (repo / "tests" / "test_x.py").write_text(
         "def test_a():\n    assert False\n", encoding="utf-8", newline="\n"
     )
+    rebuilt_again = service._bug_from_row(row)
+    assert rebuilt_again.repo_dir == rebuilt.repo_dir, "用户源变化不改恢复正本"
+    # 冻结副本本身被篡改:重建拒绝(指纹重算不一致)
+    snap_file = Path(row["run_dir"]) / "source_snapshot" / "tests" / "test_x.py"
+    snap_file.write_text("def test_a():\n    assert tampered\n", encoding="utf-8", newline="\n")
     try:
         service._bug_from_row(row)
-        raise AssertionError("source changed must refuse rebuild")
+        raise AssertionError("snapshot tampering must refuse rebuild")
     except TaskError as exc:
-        assert "source changed" in str(exc)
+        assert "fingerprint mismatch" in str(exc)
 
 
 def test_execute_refuses_model_when_db_and_file_spec_hashes_diverge(

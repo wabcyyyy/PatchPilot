@@ -671,7 +671,7 @@
 - [x] S04 统一轮次递增与拒绝后重试(F5):round_no 单点递增,max_rounds=2 首拒后第二轮必须发生。
 - [x] S05b API 幂等/完整持久化/恢复接线(F4 收口):TaskSpec 全量落库、custom 可重建、
       执行参数与 replay 进幂等键、失败清理端到端。
-- [ ] S06 冻结执行输入与环境预检:app/gitops/input_snapshot.py + app/api/preflight.py,
+- [x] S06 冻结执行输入与环境预检:app/gitops/input_snapshot.py + app/api/preflight.py,
       受理时冻结源码身份,执行只读物化引用;preflight 不调模型不留假 RUNNING。
 - [ ] S07 运行中进度与轨迹可查:Tracker 事件 sink→SQLite 幂等入库,任务行进度字段,
       终态不可被迟到事件复活;不引入 SSE/MQ。

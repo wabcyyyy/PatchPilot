@@ -32,7 +32,9 @@ from app.storage.repository import Repository
 log = logging.getLogger(__name__)
 
 # 可弃集条目(run_dir 相对路径);其余一切默认取证、保留
-DISPOSABLE_ENTRIES: tuple[str, ...] = ("workspace", "checkpoints.sqlite")
+# S06:受理冻结的源码快照随可弃集回收(其内容指纹已在 task_spec.json/manifest 里,
+# 字节本身在终态后不再被引用);失败/取消现场不回收的策略由调用方保证,此处不变。
+DISPOSABLE_ENTRIES: tuple[str, ...] = ("workspace", "checkpoints.sqlite", "source_snapshot")
 
 
 def _make_writable(target: Path) -> None:

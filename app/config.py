@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     # FINISHED 任务的可弃集(workspace/checkpoints)回收;失败/取消现场不回收
     recycle_finished_workspace: bool = True
     recycle_grace_seconds: int = 3600  # 启动扫描只动"终于 grace 前"的行,刚结束的留人看
+    # S06 受理冻结的体量与耗时保护(本机单用户定位的如实上界,不虚构超大仓库能力):
+    # 超出即受理拒绝(422),提示方修正输入;属运维边界而非复现口径,进 EXEMPT
+    intake_timeout_seconds: int = 120
+    intake_max_files: int = 20000
 
     @field_validator("log_level")
     @classmethod
