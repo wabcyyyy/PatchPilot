@@ -226,7 +226,8 @@
       (`nodes.py:799/806` 在 `verify` 节点内顺序调用),候选并发但 `cand_reports` 按 index 分目录
       (`nodes.py:907`),跨任务是不同 run_dir(`service.py` 线程池 + `run_dir` 含 task_id)
       ⇒ **当前没有"同 basetemp 并发"的真实路径**。所以 M11.2 的紧迫性不能靠推定,要靠测量。
-- [ ] M11.5.1 真机测量(`scripts/measure_basetemp_contention.py`,走 `run_pytest` 真实路径,不起 LLM):
+- [x] M11.5.1 真机测量已跑完(2026-10-08 11:41→11:52,零成本、无模型;
+      原始输出 `D:\tmp\m115-basetemp.txt`,工作目录 `Temp\m115-basetemp-8mrwedep`):
       变量只有一个——**report_dir 是否共享**;工作区每次都另拷贝一份(排除工作区复用这个混淆项)。
       ①控制组:单执行 1 次,确立"这题本来能过"(all_passed=True)基线;
       ②同 report_dir 并发 K=2、K=4;③不同 report_dir 并发 K=2、K=4;各 3 轮;
@@ -239,6 +240,72 @@
       (B) ②为 0 且③为 0 ⇒ 现有串行拓扑下无实际损害,把"basetemp 按执行唯一"降级为
           **不变量用例 + 注释**(防未来新增并发时踩坑),不做语义变更;
       (C) ④显示执行前后机器根有新增 ⇒ M11.5.0 的更正还不完备,回头继续查是哪条路径没走 `run_pytest`。
+
+- [x] M11.5.2 实测数字(判据 (A) 成立,放大器不承重):
+
+      | 组 | 同 report_dir 并发 | 隔离 report_dir 并发 |
+      |---|---|---|
+      | 快版(无 sleep,单跑 2.13s) | **伪失败 9/18**(K=2:3/6,K=4:6/12) | 0/18 |
+      | 慢版(sleep 15ms,单跑 6.1s) | 伪失败 7/18(K=2:1/6,K=4:6/12) | 0/18 |
+
+      控制组两边都 `all_passed=True`。失败形态两类,都会把判定翻成"没修好":
+      - 测试中途 `FileNotFoundError`(先起步的执行,它的 `tmp_path` 文件被后起步者
+        在 session setup 的 `rm_rf` 连带删掉)⇒ `rc=1 failed=1`;
+      - 会话级 `errors=1`(被删的一侧连收集/收尾都做不完)⇒ `rc=1 passed=0 failed=0 errors=1`。
+      快版比率反而**高于**慢版 ⇒ 竞争窗口就在"后起步执行的 `rm_rf`"这一刻,与测试跑多久无关,
+      放大器只是把它放大到肉眼可见;结论不依赖放大器(判据里预先登记的那条)。
+
+      机器默认临时根:执行前后编号目录 **4 → 4**,一次都没新增 ⇒ M11.5.0 的更正成立,
+      走 `run_pytest` 的本地执行**不落机器根**(判据 (C) 不触发)。
+- [x] M11.5.3 今天能不能被踩到(把"缺陷"和"事故"分开):主流程 verify 的 4 次 pytest 串行、
+      Best-of-N 候选按 `cand{i}` 分目录、跨任务按 `run_dir` 分目录 ⇒ **当前无可达路径**。
+      但有一条**今天已存在的**可达变体:超时的 pytest 被 `_kill_tree` 杀不干净时
+      (`local_runner.py:144-156` 自己注释了"逃逸出进程组的分离孙子进程"),孤儿进程仍在写
+      共享 basetemp,下一轮执行在同一个 `run_dir/reports/basetemp` 上 `rm_rf` ⇒ 同一任务内
+      并发共享,踩中的就是刚测出的这个形态。
+- [x] M11.5.4 暴露面(数出来的,不是推的):35 道宿主题里,被执行到的测试文件用到
+      `tmp_path/tmpdir/tempfile` 的只有 **1 道(BUG-015)**;12 道容器题的临时根在容器内,与本缺陷无关。
+      但暴露面不能只按现有语料算:平台定位是"诊断用户的任意本地仓库",
+      那类仓库用 `tmp_path` 的比例远高于我们的合成题(BUG-015 就是唯一一道而它恰好红过)。
+      同一套件里真正共用机器默认根的是 `tests/test_bugset.py:53` 的**裸 subprocess pytest**
+      (基线校验不经适配器,不带 `--basetemp`)—— 这才是本夜 `os.scandir(pytest-of-wabcy)`
+      PermissionError 的完整出处;`_isolated_nested_temp` 之所以有效就是因为它透传 TEMP。
+- [ ] M11.5.5 待裁决(M11.2 的具体形态,现在有数据了):把
+      `--basetemp={(junit.parent / "basetemp")}` 改成**每次执行唯一**
+      (`junit.parent / f"{junit.stem}.basetemp"`),一处 1 行,动的是"必须掌握"区。
+      代价:每次执行多一个临时目录(仍随 run_dir 清理);报告目录布局从"每 report_dir 一个
+      `basetemp`"变成"每个 junit 一个",`docs/design.md:42` 的"副产物落工作区外的报告目录"仍成立;
+      现无任何用例或文档钉住旧的 basetemp 路径(已 grep:`app/tests/docs` 里只有 PM-004 叙述它)。
+      收益:把刚测出的 50% 伪失败形态从"靠拓扑不踩"变成"结构上不可能踩"。
+
+### M11.6 我自己在 M10.5 装的防线与 M0 的 addopts 冲掉了"文档里那条命令"(2026-10-08 11:55)
+
+- [x] M11.6.1 事实:`pyproject.toml:26` 是 `addopts = "-ra --basetemp=.pytest-tmp"`,
+      basetemp **在仓库内**(`.gitignore` 第 6 行收着);M10.5 的会话级防线
+      `tests/conftest.py:55 _basetemp_outside_repo` 见到仓库内 basetemp 就整体报错。
+      于是 `AGENTS.md:35` 与 `README.md:43/84` 写的 `pytest -q` 现在**必然失败**,
+      而且是先 `rm_rf` 掉 `.pytest-tmp`(当前 408 个测试期仓库副本,含 `base-SWE-*` 缓存)再报错。
+      实测:显式给仓库内 basetemp → `AssertionError: basetemp 在仓库内` + 整会话 error;
+      给仓库外 → 正常 1 passed。我夜里那些全量跑都是显式传了仓库外 basetemp 才绿的,
+      这件事当时没写下来,所以防线与配置的冲突被我的个人操作习惯掩盖了一整天。
+- [x] M11.6.2 为什么不能简单地"删掉 addopts 里的 pin":这台机器的系统临时根**至今不可用**
+      (PM-004 的 ACL 损坏没修)。实测 `-o addopts=-ra` 退回默认根 →
+      `tests/conftest.py:63 PermissionError`;`icacls %TEMP%\pytest-of-wabcy` 直接"拒绝访问",
+      同级还留着 `pytest-of-SYSTEM`(当年以管理员/SYSTEM 跑过 pytest 留下的)。
+      所以 pin 不是随意加的,它是对一台坏机器的适配 —— 但它被写进了**仓库配置**,
+      于是换任何人/CI 都会撞上,而防线又正确地拒绝了仓库内落点。
+- [ ] M11.6.3 待裁决的收口方案(我给的推荐项 + 代价,三选一):
+      ①**推荐**:把 pin 移出仓库配置 —— 本机用 `pytest -q --basetemp=D:/tmp/pt` 这类
+        **仓库外**落点,并把这条写进 `AGENTS.md:35` 与 `README.md:43`(改文档不是我一个人的事,
+        AGENTS.md 是你的会话约定文件);同时删掉 addopts 里的 `--basetemp`,让 CI 用默认根
+        (CI 的 /tmp 没有这个 ACL 问题)。代价:每台本地机器要自己知道落点,配置里少了一个"兜底"。
+      ②把 addopts 改成仓库外的相对落点 `--basetemp=../.patchpilot-pytest-tmp`(仓库父目录)。
+        代价:仓库被放在文件系统根或父目录不可写时失效;CI 上落点变成长在 workspace 里的一坨。
+      ③先修机器再谈配置:以管理员权限删掉 `%TEMP%\pytest-of-wabcy` 与 `pytest-of-SYSTEM`
+        (或 icacls /reset),然后 addopts 的 pin 直接删掉、防线照常。
+        代价:**动的是你这台机器上所有项目的临时目录**,且需要管理员窗口;
+        我不主动做(与 Docker 迁盘同一类:机器级、可影响别的服务)。
+      无论选哪条,`M11.2/M11.5.5` 与它独立:basetemp 落点粒度是平台代码的事,addopts 是跑法的事。
 
 ### M12 补上缺失的那篇 ADR:补丁协议(2026-10-08 01:59)
 

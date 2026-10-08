@@ -503,6 +503,12 @@
 
 - **`test_bugset.py::test_bug_baseline[BUG-015]` 红:先归错,后更正。**
   嵌套 pytest 不接 `--basetemp`,所以它用机器默认根 `C:\Users\25924\AppData\Local\Temp\pytest-of-wabcy`。
+  **(M11.5.0 再更正:这句"嵌套 pytest 不接 --basetemp"是错的)** 适配器 `run_pytest` 一直在追加
+  `--basetemp=<报告目录>/basetemp`(`app/adapters/pytest_adapter.py:255`),而且这件事
+  `docs/postmortems/PM-004-pytest-basetemp-acl.md`(2026-09-16)就写得很清楚 —— 我登记 M11 时
+  只读了 `build_pytest_cmd` 没顺着调用方走,也没查 postmortem。真正用机器根的是
+  `tests/test_bugset.py:53` 那个**不经适配器的裸 subprocess pytest**(基线校验),
+  以及套件自身;`_isolated_nested_temp` 恰好透传 TEMP,所以修法仍然成立,只是因由换了。
   第一次红时我在套件运行期间另开了 5 个独立 pytest 进程,便把账全记在自己的并发上;
   **第二台"干净"的套件(01:32→01:51,期间没有任何会起嵌套 pytest 的并发)同一处又红了**,
   错误形态一模一样(`os.scandir(root)` → `PermissionError [WinError 5]`)。
@@ -622,3 +628,42 @@
   只留返回标注。已把断言改成事实,并另写一条用例把这条取舍写进注释;
   "是否值得保留参数标注"记进 TODO M14.2 等一次真实两臂对照,不拍脑袋改(那等于改模型
   每次请求看到的东西)。
+
+## M11.5 并发临时根:把一条"听起来对"的风险测成数字(2026-10-08 11:52,零成本)
+
+M11.3 要的是生产影响评估,结果它先推翻了我自己登记的 M11.1:
+
+- **测量结果(判据 (A) 成立)**:两条并发执行只要**共用同一个 report_dir**(basetemp 由
+  `junit.parent` 派生,所以就是共用同一个 basetemp),就会互相删对方的临时根 ——
+  快版(不 sleep)伪失败 **9/18**,慢版 **7/18**;各自隔离 report_dir 的对照组 **0/18**;
+  控制组单独跑都 `all_passed=True`。失败有两副面孔,都会把判定翻成"没修好":
+  测试中途 `FileNotFoundError`(先起步那次的 `tmp_path` 文件被后起步者在 session setup 的
+  `rm_rf` 删掉)和会话级 `errors=1`(被删的一侧连收集都做不完)。
+  **快版比率反而更高** ⇒ 窗口就在"后起步执行 `rm_rf`"那一刻,与测试跑多久无关,
+  我登记的放大器不承重 —— 这条按事先写死的规则算数,不算"是放大器造出来的"。
+- **今天够不够得着**:主流程 verify 4 次串行、候选按 `cand{i}` 分目录、跨任务按 run_dir 分目录,
+  所以没有可达路径;但 `_kill_tree` 自己有注释说超时可能有**逃逸的孙子进程**
+  (`local_runner.py:144-156`)—— 孤儿还在写、下一轮在同一个 basetemp 上 `rm_rf`,
+  这就是同一任务内的并发共享。所以它是一条**已存在触发路径的潜伏缺陷**,不是纯理论。
+  修法要 1 行且必须**每次执行唯一**(不能按 run_dir/report_dir),属禁区语义 → TODO M11.5.5 待裁决。
+- **暴露面数出来了**:35 道宿主题里被执行到的测试文件用到 `tmp_path/tempfile` 的只有 1 道
+  (就是红过的 BUG-015),12 道容器题的临时根在容器内无关。但平台卖的是"诊断任意本地仓库",
+  合成语料的 1/35 不能当成生产暴露面。
+- **机器默认根泄漏计数 4 → 4**:走 `run_pytest` 的本地执行一次都没落到 `pytest-of-<user>`,
+  证实 M11.5.0 的更正;`icacls %TEMP%\pytest-of-wabcy` 至今仍"拒绝访问"(PM-004 的 ACL 损坏
+  从未修过,旁边还留着 `pytest-of-SYSTEM`),这是下一条的背景。
+
+## M11.6 我 M10.5 装的防线,把文档里那条 `pytest -q` 冲掉了(2026-10-08 11:55)
+
+- `pyproject.toml:26` 从 M0 起就是 `addopts = "-ra --basetemp=.pytest-tmp"` —— basetemp
+  **在仓库内**;而 M10.5 的会话级防线见到仓库内 basetemp 就整体报错。于是
+  `AGENTS.md:35`/`README.md:43` 写的 `pytest -q` 现在**必然失败**,而且是先 `rm_rf` 掉
+  `.pytest-tmp`(408 个测试期仓库副本)再报错。实测:仓库内 basetemp → `basetemp 在仓库内`
+  整会话 error;仓库外 → 正常绿。
+- **为什么一整天没暴露**:我夜里每次全量都显式传了仓库外的 `--basetemp=...`
+  (仓库根那 12 个 `.pytest-tmp-*` 目录就是痕迹),把冲突用个人习惯遮住了。
+  防线本身没问题(它确实拦住了假通过那一类),问题是**配置与文档没跟着改** ——
+  登记一条防线的同时就得改掉被它否定的默认跑法,这步我漏了。
+- **不能简单删 pin**:这台机器的系统临时根不可用(PM-004 至今未修),退回默认根实测直接
+  `PermissionError`。三条收口方案(推荐项+代价)记在 TODO M11.6.3,其中"以管理员权限清理
+  `%TEMP%\pytest-of-*`"动的是机器、影响你其它项目,我不主动做。

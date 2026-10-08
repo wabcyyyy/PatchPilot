@@ -73,12 +73,14 @@ def _isolated_nested_temp(
 ) -> Iterator[None]:
     """把 TEMP/TMP/TMPDIR 指到本次会话私有目录,让**嵌套 pytest** 不再共用机器默认根。
 
-    被诊断仓库的测试不带 `--basetemp`(平台侧 `build_pytest_command` 没设,见 TODO M11),
-    它们的 `tmp_path` 因此全落在 `<机器临时>/pytest-of-<user>/pytest-N/` 这一个共享根下,
-    而 pytest 只保留最近 3 个编号目录。套件里有并发路径(候选并行、双跑复核、上一用例
-    留下的后台线程),别人的清理动作会让本次 `os.scandir` 撞
-    `PermissionError [WinError 5]` —— 本夜连续两轮同一处 `test_bugset[BUG-015]` 因此红,
-    与外层 `--basetemp` 是否互不相同无关。
+    平台侧 `run_pytest` 是给被诊断执行显式追加 `--basetemp=<报告目录>/basetemp` 的
+    (`app/adapters/pytest_adapter.py:255`,PM-004 的整改),所以走适配器的执行不落机器根。
+    真正共用机器根的是**不经适配器的那两处**:本次套件自己的 `tmp_path`,以及
+    `tests/test_bugset.py:53` 直接 subprocess 起的裸 `python -m pytest`(基线校验,没带
+    `--basetemp`)。它们都落在 `<机器临时>/pytest-of-<user>/pytest-N/` 这一个共享根下,而
+    pytest 只保留最近 3 个编号目录;套件里有并发路径,别人的清理动作会让本次
+    `os.scandir` 撞 `PermissionError [WinError 5]` —— 本夜连续两轮同一处
+    `test_bugset[BUG-015]` 因此红,与外层 `--basetemp` 是否互不相同无关。
 
     执行器的 env 白名单(`app/executor/local_runner.py` 的 `_ENV_ALLOWLIST`)本来就透传
     TEMP/TMP/TMPDIR,所以在测试侧改这三个变量即可隔离,不必动生产代码;
