@@ -105,17 +105,22 @@
 
 ### M7 证据、文档与收口
 
-- [ ] M7.1 零成本对照回放:M1(压缩开/关)、M2(骨架开/关)、M5(plan 开/关)各自的 avg_tokens/turns 差异报告。
-      测量工具已就位:`scripts/compare_batches.py <基线批> <对照批> [--tools]`
-      (判定字段逐题不等即退出码 1;成本字段只报差异;`--tools` 出逐阶段工具调用直方图与
-      `context_compact` 事件数)。基线批 = `runs/graph35-v2`(35 题,合计 turns 249 / tokens 6917)。
+- [x] M7.1 零成本对照回放(2026-10-08 00:36 完成):graph 35 题 fake 重跑 vs `runs/graph35-v2`
+      → **判定字段逐题 0 条差异**、35/35 resolved;唯一差异在成本档
+      `turns 249→284`、`tokens 6917→7445(+7.6%)`,逐题 `+1 turn` 且 `tools/PLAN: llm 0→1`
+      = M5 计划段那一次调用。`context_compact` 0 次(fake 语料只有 7-9 轮,够不到 16k 阈值)
+      ⇒ 只证明"压缩不干扰既有判定",**不证明压缩省额度**;效果主张必须真实模型批。
+      测量工具即本夜新写的 `scripts/compare_batches.py`(判定字段逐题不等即退出码 1;
+      成本字段只报差异;`--tools` 出逐阶段工具调用直方图与 `context_compact` 事件数)。
 - [x] M7.2 ADR:上下文分层与压缩策略(0004)、检索引擎(0005)、崩溃恢复两级与"闸必须重跑"(0006)、
       计划工件(0007)。每篇含反方与"未证明"条目;锚点节按 `tests/test_docs_anchors.py` 的严格形状
       (`- \`路径:行号\` — \`子串\``)逐条验真。
 - [x] M7.3 `docs/design.md`/`docs/adr/0001`/`app/graph/checkpoint.py` 与 README 索引对齐实际实现
       (recursion_limit 5N+8、转移表含 plan、checkpointer 从"仅留档"改为"留档 + 恢复位置权威");
       历史审计文档不改(时间戳证据)。
-- [ ] M7.4 全量 `ruff check . && ruff format --check . && pytest -q` 收绿 + graph 35 题回放对基线零回归。
+- [x] M7.4 全量收绿:`ruff check .` + `ruff format --check .` + `pytest -q` →
+      **687 passed, 3 skipped, exit 0**(开工基线 536,净增 151 例;第 3 条 skip 是
+      Windows 无符号链接创建权限的定向用例);graph 35 题零成本回放对基线判定零回归(见 M7.1)。
 
 ## 明确不做(需用户裁决,不自行推进)
 

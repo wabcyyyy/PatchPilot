@@ -363,7 +363,9 @@
   AGENTS.md「单次生成 ≤ 300 行」。覆盖本身是有用的(恢复这类路径不铺用例等于没做),
   但体积违规如实记在这里,拆分留给后续人工整理,不为了合规临时删覆盖。
 - 证据:定向 `29 passed`(loop_state + resume + docs 锚点)与服务/图路径在 M6 自测中通过;
-  全量数字见本条 commit 正文。
+  M6+M1.5 合并 commit(`62ced9c`)之后的全量 **`687 passed, 3 skipped`(15:37,exit 0)**
+  ——开工基线 536 → 687,净增 151 例,skip 仍是 `test_locks.py` 的两条无 Redis 常态 +
+  一条 Windows 无符号链接权限。
 
 ## M7 收口:生产默认、测试隔离、ADR 与文档债(2026-10-08 凌晨)
 
@@ -395,8 +397,29 @@
   转移表补 `plan` 一步;`app/graph/checkpoint.py`、ADR-0001、design.md 三处
   "checkpointer 仅留档、不提供崩溃恢复"的旧声称改成实际语义(M6 后事实变了才改文案,
   历史审计文档 `interview-audit-*` 不动——那是时间戳证据而非当前主张)。
-- **仍开放(不自行推进)**:压缩/骨架/计划段对真实模型修复率的影响需真实批次(付费,待授权);
-  `context_window_tokens` 阈值的实测标定;`nodes.py` 已达 1188 行的拆分(禁区文件大重构不当夜做);
+## M7.1 零成本回放对照(2026-10-08 00:36,唯一还没做完的证据项已补上)
+
+- 跑法:`PATCHPILOT_LLM_ENABLED=false`,graph 引擎逐题 `run_single --model fake --engine graph`,
+  35 题 → `runs/night-final-2026-10-08`,**resolved=35 not_resolved=0**;
+  基线 = `runs/graph35-v2`(锚 `8ab4e08→d50f251` 那批)。对照工具 = 本夜新写的
+  `scripts/compare_batches.py ... --tools`(判定字段不等即退出码 1)。
+- 结果:**判定字段逐题 0 条差异**(35 题的 status/verdict/rounds/gate_violations/changed_files/
+  baseline_*/verify_* 全等),工具退出码 0。唯一差异全在成本档且可解释:
+  `合计 turns 249 → 284`、`tokens 6917 → 7445`(+7.6%),逐题都是 `turns +1`、
+  `tools/PLAN: llm 0→1, finish 0→1`——**多出来的正是 M5 的计划段那一次调用**,
+  每题每轮 +1 次请求,这是计划工件的代价,不是抖动。
+- `context_compact` 事件 **0 次**:fake 语料每题只有 7-9 轮、上下文远不到 16k 阈值,
+  所以这条回放**只证明压缩不干扰既有判定路径,不证明压缩省了多少**——省额度/提解决率
+  需要真实模型批(待授权),这句话在 ADR-0004 的反方条目里也写着。
+- 因此本夜对"效果"的全部可主张部分仍然是:**接线正确、门禁零放松、判定零回退**;
+  修复率与 token 效率的主张一条都没提,也提不出。
+
+## M7.1 的口径提醒(写给下一个人)
+
+- FakeLLM 无视消息内容(ADR-0003 自认),所以"改了提示词/加了骨架/加了计划段"在零成本回放里
+  **永远不会**表现为 verdict 或工具调用次数的变化——它只验证管道不坏。
+  谁要是拿 fake 批的 `avg_tokens` 或 resolved 数当机制证据,就是把 plumbing 当 capability。
+- **仍开放(不自行推进)**:压缩/骨架/计划段对真实模型修复率的影响需真实批次(付费,待授权);  `context_window_tokens` 阈值的实测标定;`nodes.py` 已达 1188 行的拆分(禁区文件大重构不当夜做);
   `@`/`=` 测试 id 白名单、`metrics.py` 的 gold 结构对比、`BUG-014` reference.diff 存量缺陷照旧待裁决。
 
 
