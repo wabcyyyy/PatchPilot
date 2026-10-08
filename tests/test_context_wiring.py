@@ -19,6 +19,7 @@ import pytest
 
 from app.config import get_settings
 from app.evals.bugset import load_bug
+from app.gitops.testing import materialize_repo
 from app.graph.plain_loop import run_plain_loop
 from app.graph.runner import run_task_graph
 from app.llm.fake import FakeLLM
@@ -30,11 +31,11 @@ from tests.test_graph import BUG_ROOT, _fix_diff, _localize_script, _propose_scr
 TARGET = "src/dateparse.py"
 
 
-def _ctx(workspace: Path, tmp_path: Path) -> ToolContext:
+def _ctx(workspace: Path, baseline_commit: str, tmp_path: Path) -> ToolContext:
     return ToolContext(
         task_id="T-WIRING",
         workspace=workspace,
-        baseline_commit="",
+        baseline_commit=baseline_commit,
         tracker=Tracker(None, task_id="T-WIRING"),
         report_dir=tmp_path / "reports",
         test_sets={},
@@ -42,13 +43,20 @@ def _ctx(workspace: Path, tmp_path: Path) -> ToolContext:
     )
 
 
-def _big_repo(tmp_path: Path) -> Path:
-    """一个 400 行的文件:单次 read_file 折叠后仍有 ~3k 字符,便于用小阈值触发压缩。"""
-    root = tmp_path / "repo"
-    (root / "src").mkdir(parents=True)
+def _big_repo(tmp_path: Path) -> tuple[Path, str]:
+    """一个 400 行的文件(单次 read_file 折叠后仍有 ~3k 字符,便于用小阈值触发压缩),
+    并且是**真 git 工作区**。
+
+    `run_plain_loop` 收尾要用 `working_tree_diff` 判定 patch_applied,非 git 目录会当场抛
+    GitCmdError。本卡初版把这里写成普通临时目录,成了一条与临时目录位置相关的假通过
+    (机制与复盘见 PROGRESS 的 M10 卡),夹具必须与 basetemp 落在哪儿无关。
+    """
+    template = tmp_path / "repo-src"
+    (template / "src").mkdir(parents=True)
     body = "\n".join(f"value_{index} = {index}" for index in range(400))
-    (root / TARGET).write_text(f"{body}\n", encoding="utf-8")
-    return root
+    (template / TARGET).write_text(f"{body}\n", encoding="utf-8")
+    dest = tmp_path / "repo"
+    return dest, materialize_repo(template, dest, extra_commit=False)
 
 
 def _read_script(turns: int) -> list[dict[str, Any]]:
@@ -64,7 +72,8 @@ def test_compaction_engages_through_the_loop_and_records_a_trajectory_event(
 ) -> None:
     """链路:Settings 阈值 → run_plain_loop → 压缩 → 轨迹事件,且循环仍能收束。"""
     monkeypatch.setattr(get_settings(), "loop_snapshot_enabled", False)
-    ctx = _ctx(_big_repo(tmp_path), tmp_path)
+    workspace, baseline = _big_repo(tmp_path)
+    ctx = _ctx(workspace, baseline, tmp_path)
     model = FakeLLM(_read_script(10))
 
     outcome = run_plain_loop(
@@ -83,6 +92,7 @@ def test_compaction_engages_through_the_loop_and_records_a_trajectory_event(
     assert summary["stubbed"] > 0
     assert summary["state"] == "LOCALIZE"
     assert outcome.finish_declared, "压缩不能把循环打成不可收束"
+    assert outcome.patch_applied is False, "只读轨迹不该被判定成打过补丁(这一步真跑 git)"
 
 
 def test_skeleton_reaches_the_model_in_the_plan_stage(tmp_path: Path) -> None:
@@ -110,7 +120,9 @@ def test_skeleton_reaches_the_model_in_the_plan_stage(tmp_path: Path) -> None:
     assert "def parse_date(" in system, "骨架里要有真符号名才能点名要改谁"
 
 
-def test_disabled_switches_keep_the_old_shape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_disabled_switches_keep_the_old_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """两个新机制同时关闭时,图路径必须与引入它们之前同形(判定与补丁落点都不动)。"""
     monkeypatch.setattr(get_settings(), "repo_map_enabled", False)
     monkeypatch.setattr(get_settings(), "context_window_tokens", 0)
