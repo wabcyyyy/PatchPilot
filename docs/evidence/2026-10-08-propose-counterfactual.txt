@@ -1,0 +1,36 @@
+# 测量产物(UTF-8,由脚本 stdout 直接落盘,数字未手改)
+# 覆盖:graph 臂 PROPOSE_PATCH 实例 9 个;其中 findings 可逐字节重建的 2 个(降级路径留了
+#   findings_chars 锚),另 7 个的 findings 在轨迹里被 summary[:200] 无声截断 ⇒ 只当下界读。
+# 语料:runs/swe-real(5)+ runs/swe-hard-graph/2/3(4)的真实模型 run,跨 4 个 provenance commit,
+#   头部按各 run 自己的 commit 取模板(与 M15 的 F0 自检同一口径)。
+# 命令:PYTHONPATH=. .venv/Scripts/python.exe scripts/measure_propose_counterfactual.py
+# 两道锚(判据先写死在脚本头部):A-1 findings 字节数 == 轨迹记录值(2/2 相同);
+#   A-2 该循环已耗真值 + 重建估算 == error 原文读数(0.6% / 0.7%)。
+# 日期:2026-10-08 18:26(本机)
+
+corpus: 9 PROPOSE_PATCH instances(其中 findings 可精确重建:2 个)
+未覆盖:one-shot 臂 PROPOSE_ONE_SHOT 实例用的是 app/evals/single_shot.py 自己的提示构造,本卡不覆盖;走'定位成功'路径的补丁阶段 findings 被 summary[:200] 无声截断,头部有未知常量。
+
+=== A-1 findings 字节锚(只有降级路径的 run 留了 findings_chars) ===
+  ok  swe-hard-graph2/SWE-sphinx-doc__sphinx-7590          重建=63 记录=63
+  ok  swe-hard-graph3/SWE-sphinx-doc__sphinx-7590          重建=397 记录=397
+
+=== A-2 请求锚:补丁阶段额度判死的 error 读数 vs 重建 final_est(零换算) ===
+  ok  swe-hard-graph2/SWE-sphinx-doc__sphinx-7590    代码=  19,188 重建=  19,069 误差=  0.6%
+  ok  swe-hard-graph3/SWE-sphinx-doc__sphinx-7590    代码=  23,117 重建=  22,946 误差=  0.7%
+
+=== 反事实(阈值 16000 / keep=6,与生产默认同组参数) ===
+bug                                  turns findings     off末     on末     节省      压不到位      首次触发        下次请求撞墙
+SWE-sphinx-doc__sphinx-7590             11     397锚   22,946  14,362    15%       25%         8        撞→活
+SWE-sphinx-doc__sphinx-7590             10      63锚   19,069  13,890     7%        0%         9        撞→撞
+SWE-astropy__astropy-8707               10    2016下界   12,868  12,868     0%         -         -          -
+SWE-pylint-dev__pylint-6903             12    1447下界   10,987  10,987     0%         -         -          -
+SWE-pallets__flask-5014                  7    1073下界    9,855   9,855     0%         -         -          -
+SWE-psf__requests-1142                   9    1530下界    9,626   9,626     0%         -         -          -
+SWE-pydata__xarray-3095                  7    2016下界    7,094   7,094     0%         -         -          -
+SWE-pytest-dev__pytest-7205              4    1621下界    2,937   2,937     0%         -         -          -
+SWE-pytest-dev__pytest-5809              5     117下界    1,990   1,990     0%         -         -          -
+
+可锚定的补丁阶段实例 n=2;节省中位 15%(其余实例的头部含未知的 findings 长度,那一批只能当下界读)。
+
+GATE A-1/A-2 PASS - 头部字节锚与请求估算锚全部命中。
