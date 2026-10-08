@@ -677,7 +677,8 @@ M11.3 要的是生产影响评估,结果它先推翻了我自己登记的 M11.1:
   (ii) 旧行为的失败不止"测试中途 `FileNotFoundError`":复现脚本里还跑出
       `FileExistsError`(session setup 建目录时撞车)与清理侧 `PermissionError`
       —— 三种面孔,同一个因由。
-- **反向验证做了**:把 `_basetemp_for` monkeypatch 回旧写法,新加的并发用例 18 次里
+- **反向验证做了**:把 `_basetemp_for` monkeypatch 回旧写法
+  (`pa._basetemp_for = lambda junit: junit.parent / "basetemp"`),新加的并发用例 18 次里
   **12 次伪失败**;新行为 0 次。不做这一步,"回归用例"可能只是装饰物。
   `tests/test_basetemp_isolation.py` 跑真子进程 —— 被删的是文件系统事实,mock 不出来。
 - **跑法收口按方案①**:`pyproject.toml` 的 addopts 不再钉落点(注释里写清为什么不钉),
