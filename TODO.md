@@ -122,7 +122,7 @@
       **687 passed, 3 skipped, exit 0**(开工基线 536,净增 151 例;第 3 条 skip 是
       Windows 无符号链接创建权限的定向用例);graph 35 题零成本回放对基线判定零回归(见 M7.1)。
 
-## M8 接线级行为证据(收口后补的一卡)
+### M8 接线级行为证据(收口后补的一卡)
 
 - [x] M8.1 `tests/test_context_wiring.py` 4 例:压缩经图外真实循环触发并落 `context_compact` 事件
       (且循环仍能收束)、PLAN 那次请求的 system 里真有 `<repo_skeleton>` 与真实符号名、
@@ -131,8 +131,102 @@
       阈值仍在用例里显式调小:fake 语料每题 7-9 轮到不了生产默认 16000,
       **默认值省了多少额度不在零成本口径里主张**(ADR-0004 反方条目)。
 
-## 明确不做(需用户裁决,不自行推进)
+### M9 两臂齐证 + 真进程死亡续跑(2026-10-08 01:10,M6/M7 证据的最后一块)
 
+- [x] M9.1 plain 臂零成本回放对照:`runs/fake35-v2`(基线,锚 commit `d50f251`)vs
+      `runs/night-plain-final-2026-10-08`(现主干,锚 `b6c6d8e`,worktree 干净)→ 35 题
+      **判定字段逐题一致**,成本档 `turns 214→214`、`tokens 6225→6225` 完全相同,
+      只有 `duration_ms` 逐题 ±0.1~1.7s 抖动。与 M7.1 的 graph 臂合起来才叫"两臂对齐":
+      新机制没碰旧引擎的判定与消耗路径。
+      如实记一条口径杂音:基线批的 provenance 写着 `llm_enabled=true`(那是当时的 Settings 值),
+      但它的 `model_provider=fake-replay` 与每题 ~180 token 的量级证明实际用的就是 FakeLLM;
+      两臂都零花费,对照成立。
+- [x] M9.2 `tests/test_resume_crash.py`:崩溃方跑在**子进程**里并以 `os._exit(7)` 死亡
+      (不走 `finally`、不关 SqliteSaver 连接、不删快照),续跑在测试进程发起 ——
+      这是"真实进程被杀"而不是"抛异常被收敛",M6 之前只证过后者。
+      断言钉死:检查点能被新进程重开、A 级快照停在工作记忆第 1 轮、脏补丁落盘、
+      续跑前 `rolled_back=True` 复位、门禁/双测试集在续跑这次真重跑、已完成阶段不重放。
+- [x] M9.3 文档盲区修补:README 的能力清单("7 个受控 Agent 工具"、状态链缺 PLAN)按 M3/M5
+      的实际实现回改,并在 `test_docs_anchors.py` 加一条以 `app/tools/registry.py` 为准绳的
+      逐名对齐用例 —— file:line 锚点盯不住"条数与名单"这类漂移,得让代码当准绳。
+- [x] M9.4 生产默认阈值"会咬人"的用例(`test_token_window.py` 第 16 例):按真实 PROPOSE 轨迹形状
+      (每条 tool 回执 ≈ 窗口 1/8、20 组)压回 Settings 的 `context_window_tokens`,
+      同时钉住"pinned 头原文不动 + 最近 6 轮原文可见 + 无孤儿 tool 消息"三条请求合法性不变量。
+      尺寸全部从 Settings 推导,不写死数字。**仍不主张省了多少额度**(fake 语料到不了这个尺寸)。
+- [x] M9.5 README 数字全量对账(照 P3-7 的路子,拿代码/夹具当准绳逐条数):
+      端点 7(`app/api/routes.py` 装饰器计数)= / 题目 35(`bugs/BUG-*` 目录)= / 攻击样例 10
+      (`bugs/attacks/*` 目录)= / 隔离实验 5(`docs/docker-isolation-notes.md` 结果表行数)= /
+      hard 段 BUG-029..035 存在 = 。**只有工具条数与状态链这两条是错的**(M3/M5 之后没回改),
+      已修并由用例钉住;其余四条本轮实测核对通过,其中题数/攻击样例数也补成了用例
+      (`test_readme_dataset_counts_match_the_fixtures`,拿 `bugs/` 目录当准绳 ——
+      R3-Q1 那条"ATTACK-009 入库后「8 个」没回改"就是这类漂移,现在对着实物数)。
+
+### M10 实测替换推算,并修掉一条假通过(2026-10-08 01:30)
+
+- [x] M10.1 `tests/test_context_wiring.py` 压缩用例的夹具 `_big_repo` 原来只是普通临时目录,
+      而 `run_plain_loop` 收尾要跑 `working_tree_diff` 判 `patch_applied` → 非 git 目录必抛
+      `GitCmdError`。它此前能绿几乎可以确定是因为 basetemp 落在本仓库的 gitignored 目录内
+      (假通过,与临时目录位置绑定)。改为 `materialize_repo` 的真 git 工作区,并补
+      `outcome.patch_applied is False` 把那一步 git 判定纳入证据。
+- [x] M10.2 `recursion_limit = 5N+8` 的斜率实测化:新用例读检查点 `metadata.step`,
+      N=2/3/6 实测 13/18/33 ⇒ 每轮 5 步、固定段 3 步、余量恒 5 且与轮数无关;
+      runner.py 里那段自称"前缀 4 步+每轮 5 步+收尾 1 步"(=5N+5,与实物不符)的推算注释
+      改为实测口径,**只动注释、行为零改动**(禁区)。
+- [x] M10.3 流程红线补记:套件在跑时**不得**另开 pytest —— 嵌套 pytest 用机器默认 basetemp 根,
+      并发会让 `os.scandir` 撞 `PermissionError [WinError 5]`(本夜 `test_bugset[BUG-015]` 即此因,
+      非主干缺陷)。**M11.4 更正:另开进程只是放大器** —— 第二轮没有任何并发时同一处仍红,
+      根因是所有嵌套执行共用同一个机器默认临时根(加上套件自身有并发路径)。
+- [x] M10.4 同类"位置相关"夹具的系统性排查:按**会碰 git 的入口**清点 —— `run_plain_loop` 在
+      tests 里的 20 个调用点(test_cancellation / test_graph / test_localize_budget_share /
+      test_plain_loop / test_context_wiring)传的 workspace 全部来自 `create_workspace` 或
+      `materialize_repo`,只有 M8 那一条是裸临时目录(已修)。另确认仓库根没被这些用例写脏
+      (`unused.jsonl` 之类不存在、`git status` 无残留 staged 项)。
+- [x] M10.5 机制化防线:`tests/conftest.py` 加 session 级 autouse 断言 —— basetemp 落在仓库之内
+      就**当场整体报错**(而不是让某些用例悄悄变绿)。CI 用默认 basetemp(系统临时目录),不受影响。
+
+### M11 发现:被诊断仓库的 pytest 没有独立临时根(2026-10-08 01:44,只登记不擅改禁区)
+
+- [x] M11.1 事实核对:`app/adapters/pytest_adapter.py:113` 造的命令是
+      `python -m pytest -q --color=no -o junit_family=xunit1 [--junitxml=…] <ids>`,**没有**
+      `--basetemp`,也没给子进程换 TMPDIR/TEMP。于是被诊断仓库自己的测试用的
+      `tmp_path` 全部落在 `<系统临时目录>/pytest-of-<user>/pytest-N/` ——
+      所有并发执行共用同一个根,而 pytest 只"保留最近 3 个编号目录"。
+- [ ] M11.2 待裁决的修法(动的是"必须掌握"区,故不自行实现):
+      ①在 `build_pytest_command` 追加 `--basetemp=<该次 run 目录>/pytest-tmp`;
+      ②或在执行器 env 白名单里把 TEMP/TMPDIR 指到 run 目录内(连非 pytest 的临时写入一起隔离)。
+      两者都能把"临时根"变成每次执行私有。代价:每次执行多一个临时目录要随 run_dir 清理,
+      且若被诊断仓库的测试硬编码 `/tmp` 路径会行为微变(方案②不覆盖 /tmp,POSIX 上要另处理)。
+- [ ] M11.3 生产影响评估(需要它才能定优先级):同一平台上并发任务数 >1 时,
+      一次长验证的 `tmp_path` 可能被更新三次执行后的清理**删掉**,那时得到的不是 flaky
+      而是**假 VERIFY_FAILED**;本夜只在 Windows 上拿到 `PermissionError` 这一半证据,
+      没做过"三个并发任务互删临时根"的正向复现。
+- [x] M11.4 更正 + 测试侧收口:第二轮全量(01:32→01:51)期间没有任何会起嵌套 pytest 的并发,
+      `test_bugset[BUG-015]` 仍以同样的 `PermissionError` 红 —— 所以根因是**共用机器默认临时根**
+      本身(套件内部就有并发路径),不是外层 `--basetemp` 挑错了值。
+      `tests/conftest.py` 加会话级 `_isolated_nested_temp`:把 TEMP/TMP/TMPDIR 指向本次会话私有目录
+      (执行器的 env 白名单本来透传这三个键,故无需动生产代码)。生产侧仍按 M11.2 等裁决。
+
+### M12 补上缺失的那篇 ADR:补丁协议(2026-10-08 01:59)
+
+- [x] M12.1 目标里"Patch/Diff 局部编辑而非全文件重写"是 ACI 层最核心的决定,但七篇 ADR 里
+      没有一篇写它(只在证据/复盘文档里被引用过)。新增 `docs/adr/0008-补丁协议-块锚定局部编辑.md`:
+      三候选对比、结论(块协议**编译到** unified diff 而非替代它,防线链零改动)、
+      `_locate` 的三个拒绝细类、`split_keepends` 禁 `splitlines()`/`read_text` 的行尾保真理由,
+      反方条目如实写:上下文重复的真实金补丁无法机械 round-trip(故这类题不入集)、
+      rename/copy 与二进制不迁移、`ambiguous_anchor` 是一轮额外消耗、
+      **协议相对裸 diff 的收益没有对照数据**(fake 照不出)。
+- [x] M12.2 四条形如 `- \`path:line\` — \`子串\`` 的验证锚点按 `blockpatch.py` 实际行号写,
+      `tests/test_docs_anchors.py` 6 例绿(逐条验真)。`docs/README.md` 索引同步"七篇→八篇"。
+      本卡只新增文档,代码零改动。
+
+## 明确不做(需用户裁决,不自行推进)
+- **LLM 语义摘要**(目标里"语义摘要"的一支):ADR-0004 已把它列为"考虑后否决"的候选
+  (多一次花费 + 摘要可能丢掉补丁要的锚点上下文),现落地的是**机械压缩**。
+  若要改做,建议形状:只对 Pass B 即将丢弃的整组 turn 发一次 summarize 请求、把结果作为
+  一条 pinned system 附加消息,并用 `context_summary_enabled` 默认关闭 + provenance 登记;
+  代价是每次压缩多一次模型调用(付费,需授权)与一次新的不确定性来源。
+- M11.2 的两条候选修法(改 `pytest_adapter` 命令或执行器 env 白名单)——"必须掌握"区的语义变更,
+  要用户点头再动;本夜只登记事实与影响面。
 - 任何真实 LLM 付费跑批(含换模型、抬 `token_budget`、难样本补齐两臂)。
 - `app/evals/metrics.py` 的"与 gold 结构对比"新判定语义;测试 id 白名单接 `@`/`=`;`PATCHPILOT_PRICE_OVERRIDES`。
 - `bugs/BUG-014/expected/reference.diff` 存量数据缺陷修复;Docker 数据盘迁 D(需停 mysql/redis/qdrant)。
