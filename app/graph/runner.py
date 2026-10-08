@@ -125,13 +125,13 @@ def run_task_graph(
             "turns": 0,
             "tokens_used": 0,
         }
-        # recursion_limit 随 max_rounds 推导(R2 整改):固定前缀 4 步(prepare/baseline/
-        # localize/plan),每轮 5 步(plan/propose/apply/verify/rollback),成功收尾 1 步;
-        # 硬编码 80 会在 max_rounds=20 的长重试任务耗尽轮数前误抛 GraphRecursionError。
-        # M5 插入 PLAN 阶段后每轮多一个 superstep(4N+8 → 5N+8):不跟着涨的话,轮数用满
-        # 的长重试任务会先撞上 LangGraph 的递归上限——那是崩溃(GraphRecursionError 被
-        # runner 收敛成 NEEDS_REVIEW),而不是我们自己的结构化终态 BUDGET_EXCEEDED,
-        # 判定语义会凭空变成"需要人看"。
+        # recursion_limit 随 max_rounds 推导(R2 整改;M5 起 5N+8)。斜率不靠推算:满轮数
+        # 重试路径实测每轮 5 个 superstep、固定段 3 个(N=2/3/6 → 13/18/33,三点共线,
+        # 见 tests/test_plan_invariants.py 的实测用例——往环里加节点会先把那条钉红)。
+        # 于是余量恒为 5 步、与轮数无关:抬 max_rounds 不会失守;而旧公式 4N+8 在 PLAN
+        # 插入后会在轮数用满前先撞上 LangGraph 递归上限——那是崩溃(GraphRecursionError
+        # 被 runner 收敛成 NEEDS_REVIEW),不是我们自己的结构化终态 BUDGET_EXCEEDED,
+        # 判定语义会凭空变成"需要人看";硬编码 80 同理会在 max_rounds=20 的长任务上更早触发。
         config = {
             "configurable": {"thread_id": task_id},
             "recursion_limit": 5 * nodes.max_rounds + 8,

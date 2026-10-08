@@ -240,3 +240,52 @@ def test_recursion_limit_covers_the_extra_plan_superstep(
     assert result.rounds == rounds
     # 每轮都重规划过:6 轮 = 6 次 PLAN 模型请求(每个计划请求都不消耗脚本步)
     assert _llm_states(Path(result.run_dir)).count("PLAN") == rounds
+
+
+def _measured_supersteps(run_dir: Path, task_id: str) -> int:
+    """从检查点库读这次执行真的烧掉多少个 superstep(LangGraph metadata.step)。"""
+    from app.graph.checkpoint import make_sqlite_checkpointer
+
+    reader = make_sqlite_checkpointer(run_dir / "checkpoints.sqlite")
+    assert reader is not None, "实测依赖检查点在场"
+    try:
+        tup = reader.get_tuple({"configurable": {"thread_id": task_id}})
+        assert tup is not None
+        return int((tup.metadata or {}).get("step", 0) or 0)
+    finally:
+        reader.conn.close()
+
+
+def test_recursion_limit_formula_matches_measured_superstep_cost(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`recursion_limit = 5N+8` 的斜率与余量以**实测**为准,不靠注释里的推算。
+
+    满轮数重试路径每轮的 superstep 成本实测为 5(N=2/3/6 → 13/18/33,三点共线),
+    固定段实测 3 步,所以余量恒等于 5 个 superstep、与轮数无关:把 max_rounds 抬到 20
+    也不会像旧公式 4N+8 那样先撞上 LangGraph 的递归上限(那会把结构化的 BUDGET_EXCEEDED
+    变成 NEEDS_REVIEW)。上一用例只证了"5N+8 在 N=6 够用",那条证明不了斜率对。
+
+    这条同时是拓扑变动的绊线:往环里加节点 → 每轮成本变 → 本用例红,逼着同步改公式,
+    而不是等某个长重试任务在生产里炸出来。pytest 全脚本化,零花费。
+    """
+    _scripted_pytest(monkeypatch, verify_green=False)
+    bug = load_bug("BUG-001", BUG_ROOT)
+    measured: dict[int, int] = {}
+    for rounds in (2, 3, 6):
+        script = _LOCALIZE + _propose(_NOOP_BLOCK) * rounds
+        result = run_task_graph(
+            bug, FakeLLM(list(script)), runs_root=tmp_path / f"r{rounds}", max_rounds=rounds
+        )
+        assert result.status == "BUDGET_EXCEEDED", (result.status, result.error)
+        measured[rounds] = _measured_supersteps(Path(result.run_dir), result.task_id)
+
+    slope = measured[3] - measured[2]
+    assert measured[6] - measured[3] == 3 * slope, f"每轮成本不线性,公式无从谈起:{measured}"
+    assert slope == 5, f"每轮 superstep 成本不再是 5,`5N+8` 的斜率要同步:{measured}"
+    intercept = measured[2] - 2 * slope
+    assert intercept == 3, f"固定段成本变了:{measured}"
+    for rounds, steps in measured.items():
+        assert 5 * rounds + 8 > steps, (rounds, steps)
+    # 余量与 N 无关:这就是"轮数上限抬高也不会失守"的全部内容
+    assert slope * 20 + intercept < 5 * 20 + 8
