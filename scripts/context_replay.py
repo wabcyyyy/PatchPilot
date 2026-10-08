@@ -44,9 +44,12 @@ from app.evals.bugset import load_bug  # noqa: E402
 from app.llm.base import messages_tokens  # noqa: E402
 from app.tools.output_filter import fold_output  # noqa: E402
 
-# 真实批次当时的代码版本(2026-10-07,升级之前)。提示词模板必须按这一版重建,
-# 否则"头部尺寸"就不是当时的请求。
+# 真实批次跑在**六个不同 commit**上(3f17a9cd / 1a2646e2 / 80981f04 / 58472254 / 293cd649 /
+# 66e6e309,见 F0 自检),所以提示词必须按**每个 run 自己的 provenance.git_commit** 取,
+# 不能钉死一个常量。这里只作 F0 的默认回退值。
 REAL_COMMIT = "80981f04b94e7212bf4e572c8b16951cd5147823"
+PROMPT_KEYS = ("SYSTEM_PROMPT", "LOCALIZE_PROMPT", "PROPOSE_PROMPT")
+_prompt_cache: dict[str, dict[str, Any]] = {}
 LOCALIZE_STATE = "LOCALIZE"
 # 循环内会进消息流的工具;节点级记录(baseline/verify/apply_gate…)不属于工作记忆。
 LOOP_TOOLS = {
@@ -118,6 +121,22 @@ def prompts_at_commit(commit: str) -> dict[str, Any]:
     ns: dict[str, Any] = {}
     exec(git_text("app/prompts.py", commit), ns)  # 读自家历史常量,不是外部输入
     return ns
+
+
+def prompts_for(commit: str) -> dict[str, Any]:
+    """按 run 自己的 commit 取提示词模板(语料跨六个 commit,不能钉死一个)。"""
+    if commit not in _prompt_cache:
+        _prompt_cache[commit] = prompts_at_commit(commit)
+    return _prompt_cache[commit]
+
+
+def prompt_signature(commit: str) -> str:
+    """F0 用的模板指纹:三段提示词拼接后的 sha256 前 12 位。"""
+    import hashlib
+
+    ns = prompts_for(commit)
+    blob = "".join(f"{k}={ns.get(k, '')}" for k in PROMPT_KEYS)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 
 
 def load_events(run_dir: Path) -> list[dict[str, Any]]:
@@ -236,6 +255,16 @@ def load_runs() -> list[Run]:
     return runs
 
 
+def head_for(commit: str) -> tuple[str, str]:
+    """(SYSTEM_PROMPT, LOCALIZE_PROMPT) —— A2 复用同一入口,保证两边头部同源。"""
+    ns = prompts_for(commit)
+    return str(ns["SYSTEM_PROMPT"]), str(ns["LOCALIZE_PROMPT"])
+
+
+def run_commit(run: Run) -> str:
+    return str((run.report.get("provenance") or {}).get("git_commit") or REAL_COMMIT)
+
+
 def rebuild_messages(
     inst: LoopInstance, system: str, user: str, settings: Any
 ) -> list[tuple[int, int, int, int]]:
@@ -334,15 +363,18 @@ def main() -> int:
     args = parser.parse_args()
 
     settings = get_settings()
-    ns = prompts_at_commit(REAL_COMMIT)
-    system_prompt = str(ns["SYSTEM_PROMPT"])
-    localize_prompt = str(ns["LOCALIZE_PROMPT"])
-
     runs = load_runs()
-    print(
-        f"corpus: {len(runs)} real-model runs "
-        f"({sum(r.llm_events for r in runs)} llm turns), commit {REAL_COMMIT[:8]}"
-    )
+    print(f"corpus: {len(runs)} real-model runs ({sum(r.llm_events for r in runs)} llm turns)")
+
+    # F0:语料跨六个 provenance commit。头部按**每个 run 自己的 commit** 取模板,
+    # 这里核对三段提示词的字节指纹是否真的同源(尺寸相同不等于内容相同)。
+    commits = sorted({run_commit(r) for r in runs})
+    sigs = {c[:8]: prompt_signature(c) for c in commits}
+    print(f"=== F0 头部同源核对:{len(commits)} 个 commit,模板指纹 {sorted(set(sigs.values()))} ===")
+    for short, sig in sigs.items():
+        print(f"  {short}  模板指纹={sig}")
+    if len(set(sigs.values())) != 1:
+        print("  ! 模板内容不一致 —— 逐 run 用自己的版本重建(尺寸相同也不算同源)")
 
     f1_bad: list[Any] = []
     f1_zero_accounting: list[Any] = []
@@ -369,6 +401,7 @@ def main() -> int:
             continue
         try:
             bug = load_bug(run.bug_id)
+            system_prompt, localize_prompt = head_for(run_commit(run))
             user_text = localize_prompt.format(
                 issue_text=bug.issue_text,
                 failed_tests="\n".join(f"- {t}" for t in bug.failed_tests),
@@ -482,7 +515,7 @@ def main() -> int:
         target.write_bytes(
             json.dumps(
                 {
-                    "commit": REAL_COMMIT,
+                    "commits": commits,
                     "gate_pass": gate,
                     "fit": {"a": a, "b": b, "c": c, "r2": r2, "median_err": med_err},
                     "f1_failed": f1_bad,

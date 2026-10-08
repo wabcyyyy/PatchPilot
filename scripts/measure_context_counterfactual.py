@@ -49,12 +49,12 @@ for _p in (str(REPO), str(REPO / "scripts")):
 
 from context_replay import (  # noqa: E402
     LOCALIZE_STATE,
-    REAL_COMMIT,
     Run,
     build_instances,
+    head_for,
     load_events,
     median,
-    prompts_at_commit,
+    run_commit,
 )
 
 from app.config import get_settings  # noqa: E402
@@ -285,17 +285,17 @@ def main() -> int:
     args = ap.parse_args()
 
     settings = get_settings()
-    ns = prompts_at_commit(REAL_COMMIT)
-    system_prompt = str(ns["SYSTEM_PROMPT"])
-    localize_prompt = str(ns["LOCALIZE_PROMPT"])
 
     cases: list[dict[str, Any]] = []
+    commits: set[str] = set()
     for run in load_runs():
+        commits.add(run_commit(run))
         inst = next((i for i in run.instances if i.state == LOCALIZE_STATE), None)
         if inst is None or not inst.turns:
             continue
         try:
             bug = load_bug(run.bug_id)
+            system_prompt, localize_prompt = head_for(run_commit(run))
             user_text = localize_prompt.format(
                 issue_text=bug.issue_text,
                 failed_tests="\n".join(f"- {t}" for t in bug.failed_tests),
@@ -315,6 +315,8 @@ def main() -> int:
                 "off": off,
                 "turns_obj": inst.turns,
                 "user": user_text,
+                "system": system_prompt,
+                "commit": run_commit(run)[:8],
                 "real_sum": real_sum,
                 "rho": real_sum / est_sum if est_sum else 1.0,
                 "gold": gold_files(run.bug_id),
@@ -323,6 +325,10 @@ def main() -> int:
         )
 
     print(f"corpus: {len(cases)} LOCALIZE instances")
+    print(
+        f"corpus commits: {sorted(c[:8] for c in commits)}"
+        " —— 头部按各 run 自己的 provenance 取(A1 的 F0 已证六个 commit 的模板字节同源)"
+    )
     deaths = [c for c in cases if c["death"]]
     print("\n=== 判死分类(按 report.error 原文,不猜) ===")
     for c in deaths:
@@ -355,7 +361,7 @@ def main() -> int:
         actual = c["death"]["gate"] - c["real_sum"]
         pred = c["off"]["final_est"]
         ctrl = replay(
-            c["turns_obj"], system_prompt, c["user"], settings, 0, args.prod_keep, drop_tools=True
+            c["turns_obj"], c["system"], c["user"], settings, 0, args.prod_keep, drop_tools=True
         )["final_est"]
         err = abs(pred - actual) / actual if actual else 1.0
         ok = err <= 0.15
@@ -390,7 +396,7 @@ def main() -> int:
             anchors = {"full": 0, "stub": 0, "lost": 0, "never_full": 0}
             for c in cases:
                 on = (
-                    replay(c["turns_obj"], system_prompt, c["user"], settings, thr, keep)
+                    replay(c["turns_obj"], c["system"], c["user"], settings, thr, keep)
                     if thr
                     else c["off"]
                 )
@@ -455,7 +461,7 @@ def main() -> int:
     )
     for c in sorted(cases, key=lambda x: -x["off"]["final_est"]):
         on = replay(
-            c["turns_obj"], system_prompt, c["user"], settings, args.prod_threshold, args.prod_keep
+            c["turns_obj"], c["system"], c["user"], settings, args.prod_threshold, args.prod_keep
         )
         off_sum = sum(r["before"] + r["resp_est"] for r in c["off"]["rows"])
         on_sum = sum(r["after"] + r["resp_est"] for r in on["rows"])

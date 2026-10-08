@@ -1,11 +1,16 @@
-# 测量产物(UTF-8,直接由脚本 stdout 落盘,未手改数字)
-# 数据语料:runs/swe-* 的 25 份真实模型 run,它们跑于 commit 80981f04(升级前,压缩未介入)
-# 测量代码:master b06cf51 之后的工作树(本卡 commit 见 git log)
+# 测量产物(UTF-8,由脚本 stdout 直接落盘,数字未手改)
+# 语料:runs/swe-* 的 25 份真实模型 run,跨六个 provenance commit
+#   (3f17a9cd / 1a2646e2 / 80981f04 / 58472254 / 293cd649 / 66e6e309,均在夜间升级之前;
+#    轨迹里 context_compact 事件 0 次 ⇒ 压缩未介入的干净前对照语料)
+# 测量代码:master 1d4b57c 之后的工作树。与 1d4b57c 那版的差别只有两处:头部改为按各 run 自己的
+#   provenance.commit 取模板,以及新增 F0 指纹自检。逐 run、逐格数字与旧版**完全相同** ——
+#   六个 commit 的提示词模板 sha256 相同(a965075e7c25)、fold 函数与 40/15/8000 参数相同、
+#   且 25/25 都是非思考模式(无 reasoning_content 字段)。教训记在 PROGRESS 的 M15 一节。
 # 命令:PYTHONPATH=. .venv/Scripts/python.exe scripts/measure_context_counterfactual.py
-# 日期:2026-10-08 13:4x(本机)
-# 注:同一份代码改完再重跑,量的就不是同一个东西 —— 见 PROGRESS 的 M11.5 教训
+# 日期:2026-10-08 14:2x(本机)
 
 corpus: 25 LOCALIZE instances
+corpus commits: ['1a2646e2', '293cd649', '3f17a9cd', '58472254', '66e6e309', '80981f04'] —— 头部按各 run 自己的 provenance 取(A1 的 F0 已证六个 commit 的模板字节同源)
 
 === 判死分类(按 report.error 原文,不猜) ===
   swe-hard-graph      SWE-sphinx-doc__sphinx-7590       localize/token-gate  417,894 > 400,000

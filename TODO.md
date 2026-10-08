@@ -432,13 +432,20 @@
 背景:M1–M14 的每个机制都只证到"接线不破行为",对外文档里"未证明"那一条一直挂着,
 理由是"fake 语料只有 7-9 轮,够不到 16000 阈值"(M1.5/M8.1/ADR-0004)。
 但 `runs/swe-*` 里躺着 **25 份真实模型 run**(13 FINISHED / 11 BUDGET_EXCEEDED / 1 NEEDS_REVIEW,
-跑在升级前 commit `80981f0`,provenance 无 `context_window_tokens`、轨迹里 `context_compact` 事件 0 次
+跑在**六个不同的 commit** 上(`3f17a9cd`/`1a2646e2`/`80981f04`/`58472254`/`293cd649`/`66e6e309`,
+全在夜间升级之前),provenance 无 `context_window_tokens`、轨迹里 `context_compact` 事件 0 次
 ⇒ 它们是**压缩未介入**的干净前对照语料)。这批数据没被用过一次。
 
 - [x] M15.0 可行性先证再主张:轨迹里 `llm` 事件存 content+tool_calls+**provider 报的逐轮 tokens**,
       工具事件存 fold **之前**的原文;`read_file`/`search_code` 的入参与回执完整,
       所以逐轮请求消息列表可以按 `plain_loop` 的构造规则重建(system/user 从
-      `git show 80981f0:app/prompts.py` + `bugs/<id>/` 题目夹具取,当时 LOCALIZE 不传 extra_system)。
+      `git show <该 run 的 provenance.git_commit>:app/prompts.py` + `bugs/<id>/` 题目夹具取,当时 LOCALIZE 不传 extra_system)。
+      **F0 自检(这条是补出来的,不是原本就有)**:我起初把语料当成"全跑在 `80981f0`"一个 commit,
+      按它取模板 —— 那是**错的来源假设**(实际跨六个 commit)。改成逐 run 按各自 provenance 取头部,
+      并加一道指纹核对:六个 commit 的 `SYSTEM_PROMPT`/`LOCALIZE_PROMPT`/`PROPOSE_PROMPT` 拼起来
+      sha256 全等于 `a965075e7c25`,且 fold 函数与 `refine_head_lines=40`/`refine_tail_lines=15`/
+      `hard_cap=8000` 也逐字节相同、25/25 都是非思考模式(`llm_thinking=""` ⇒ 没有 reasoning_content
+      这条隐藏字段)⇒ **已提交的数字一字未变**(复跑 A1/A2 全表逐格相同,见证据文件 v2)。
       已核实的记录形态限制:`fold_output` 在 JSON 上退化成 8000 字符硬截(JSON 无真空行)、
       `_summarize_input` 把 >300 字符的字符串入参截断(所以 apply_patch 正文只剩 300 字符 + 真实长度标记)、
       `_summarize_output` 只留 output 的前 8 个键、`git_diff` 的 diff 换成 `<N chars, see patches>` 占位。
