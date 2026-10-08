@@ -227,7 +227,9 @@
       (`nodes.py:907`),跨任务是不同 run_dir(`service.py` 线程池 + `run_dir` 含 task_id)
       ⇒ **当前没有"同 basetemp 并发"的真实路径**。所以 M11.2 的紧迫性不能靠推定,要靠测量。
 - [x] M11.5.1 真机测量已跑完(2026-10-08 11:41→11:52,零成本、无模型;
-      原始输出 `D:\tmp\m115-basetemp.txt`,工作目录 `Temp\m115-basetemp-8mrwedep`):
+      原始输出**已入库**:`docs/evidence/2026-10-08-basetemp-contention-prefix.txt`
+      (修复前,共享落键)与同目录 `...-postfix.txt`(修复后重跑,两臂都 0/18);
+      换机器接力时别再指 `D:\tmp\...`,那不在 git 里):
       变量只有一个——**report_dir 是否共享**;工作区每次都另拷贝一份(排除工作区复用这个混淆项)。
       ①控制组:单执行 1 次,确立"这题本来能过"(all_passed=True)基线;
       ②同 report_dir 并发 K=2、K=4;③不同 report_dir 并发 K=2、K=4;各 3 轮;
@@ -345,6 +347,38 @@
       这一轮的唯一行为改动是 `tests/conftest.py` 的 docstring 口径,数字不变即符合预期。
       注意这条绿是**手传 `--basetemp=D:/tmp/pt-full-m116`** 拿到的 —— 即 M11.6.3 里那条
       "用个人习惯遮住冲突"的老路,复跑本身不构成对 `pytest -q` 的验证。
+
+### M11.8 换机接力清单(2026-10-08 13:20,写给另一台机器上接手的我/你)
+
+- [x] M11.8.1 **代码与文档已全部在 origin**(`master` 与 `origin/master` 同步,无 stash,工作区干净)。
+      但 `.gitignore` 把这些挡在仓库外,换机后**它们不在**,别当成丢了东西:
+      `runs/`(全部批次产物,第 14 行)、`.pytest-tmp*`(测试期仓库副本与 SWE 上游仓库缓存)、
+      `.env`(第 28 行,**含 LLM 密钥,从来不入库**)。
+- [x] M11.8.2 新机要做的准备(按依赖顺序):
+      ①`python -m venv .venv && .venv/Scripts/python.exe -m pip install -r requirements.txt -r requirements-dev.txt`
+        (`pytest`/`ruff` 只在 `.venv/Scripts` 里,系统里那些不能用);
+      ②`.env` 从 `.env.example` 复制后填 `PATCHPILOT_LLM_API_KEY`(真实模型批的开关是
+        `PATCHPILOT_LLM_ENABLED`,默认 false);
+      ③要复现 M13 那组"位次"数字就得让 `rg` 在 PATH 上 —— `app/tools/search.py:75` 用
+        `shutil.which("rg")`,找不到就按 `search_engine=auto` 退回 python 引擎,
+        **检索遍历域的形状会变**,两机数字不可比;
+      ④要跑 SWE 题需要重新 `docker pull`(9/10 道难题镜像只在这台机器上),
+        以及 `docker/executor.Dockerfile` 的镜像构建。
+- [x] M11.8.3 跑法:先直接 `pytest -q`。**这台机器的 `%TEMP%\pytest-of-wabcy` ACL 坏了且非管理员修不了**
+      (见 M11.6.5),所以本机必须 `pytest -q --basetemp=D:/tmp/pt`;新机若默认临时根可用就不用传,
+      防线只拦"落点在仓库内"这一种。全量基线数字:2026-10-08 13:00 实测 **708 passed / 3 skipped**
+      (3 个 skip 是 Redis 连接与 Windows 符号链接权限这类环境依赖,不是被跳过的工作)。
+- [x] M11.8.4 当场可复现的证据(全部零成本):
+      `python scripts/compare_batches.py runs/graph35-v2 runs/night-final-2026-10-08`(两臂判定字段逐题相等)
+      —— 但 `runs/` 不入库,新机没有这些批次目录,这条只能在这台机器上跑,或重新跑批再生成;
+      `PYTHONPATH=. python scripts/measure_basetemp_contention.py`(并发临时根测量,不依赖任何缓存);
+      `PYTHONPATH=. python scripts/measure_retrieval_domain.py --root=<basetemp>`(依赖 SWE 仓库缓存,新机先跑 corpus 定向用例);
+      `pytest tests/test_resume_crash.py`(真·进程死亡续跑);
+      `pytest tests/test_basetemp_isolation.py`(临时根并发互删的回归用例,反向验证配方在 PROGRESS 的 M11.5 卡)。
+- [ ] M11.8.5 仍压着的裁决(别在新机自行推进):%TEMP% ACL 是否管理员清理、仓库根 `.pytest-tmp*`
+      缓存清不清、M11.7 的 `report_path=None` 是否改成必填、真实模型批(换模型 / 抬预算 /
+      压缩阈值与 PLAN 段的效果标定)、`metrics.py` 的 gold 结构对比、`@`/`=` 测试 id 白名单、
+      `BUG-014` 的 reference.diff 存量缺陷、Docker 数据盘迁 D 的窗口、`nodes.py` 拆分。
 
 ### M12 补上缺失的那篇 ADR:补丁协议(2026-10-08 01:59)
 

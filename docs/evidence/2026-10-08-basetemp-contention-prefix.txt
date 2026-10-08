@@ -1,0 +1,60 @@
+# 并发临时根测量(prefix):scripts/measure_basetemp_contention.py 的原始输出,UTF-8。
+# 测量时 run_pytest 的 --basetemp 仍按 report_dir 派生(共享),即 a127b28 之前;2026-10-08 11:41-11:52。
+# 判据(先写死再跑)见 TODO.md M11.5.1:共享组 9/18 伪失败、隔离组 0/18、控制组单独跑全过。
+# 原文件是控制台 GBK 落盘,此处 iconv 转 UTF-8,数字与文本未作任何改写。
+
+工作目录: C:\Users\25924\AppData\Local\Temp\m115-basetemp-8mrwedep
+
+== 慢版(放大器) ==
+  控制组: all_passed=True 耗时=6.1s basetemp=C:/Users/25924/AppData/Local/Temp/m115-basetemp-8mrwedep/control-慢版(放大器)/reports/basetemp
+  慢版(放大器)-shared 第1轮 K=2 共享report_dir: 伪失败 0/2
+  慢版(放大器)-shared 第2轮 K=2 共享report_dir: 伪失败 0/2
+  慢版(放大器)-shared 第3轮 K=2 共享report_dir: 伪失败 1/2  标记 ['FileNotFoundError']
+    慢版(放大器)-shared-r3-e0: rc=1 passed=0 failed=1 errors=0 timed_out=False markers=['FileNotFoundError']
+  慢版(放大器)-shared 第1轮 K=4 共享report_dir: 伪失败 2/4  标记 ['FileNotFoundError']
+    慢版(放大器)-shared-r1-e0: rc=1 passed=0 failed=1 errors=0 timed_out=False markers=['FileNotFoundError']
+    慢版(放大器)-shared-r1-e1: rc=1 passed=0 failed=1 errors=0 timed_out=False markers=['FileNotFoundError']
+  慢版(放大器)-shared 第2轮 K=4 共享report_dir: 伪失败 2/4  标记 []
+    慢版(放大器)-shared-r2-e2: rc=1 passed=0 failed=0 errors=1 timed_out=False markers=[]
+    慢版(放大器)-shared-r2-e3: rc=1 passed=0 failed=0 errors=1 timed_out=False markers=[]
+  慢版(放大器)-shared 第3轮 K=4 共享report_dir: 伪失败 2/4  标记 []
+    慢版(放大器)-shared-r3-e2: rc=1 passed=0 failed=0 errors=1 timed_out=False markers=[]
+    慢版(放大器)-shared-r3-e3: rc=1 passed=0 failed=0 errors=1 timed_out=False markers=[]
+  慢版(放大器)-isolated 第1轮 K=2 隔离report_dir: 伪失败 0/2
+  慢版(放大器)-isolated 第2轮 K=2 隔离report_dir: 伪失败 0/2
+  慢版(放大器)-isolated 第3轮 K=2 隔离report_dir: 伪失败 0/2
+  慢版(放大器)-isolated 第1轮 K=4 隔离report_dir: 伪失败 0/4
+  慢版(放大器)-isolated 第2轮 K=4 隔离report_dir: 伪失败 0/4
+  慢版(放大器)-isolated 第3轮 K=4 隔离report_dir: 伪失败 0/4
+
+== 快版(无 sleep) ==
+  控制组: all_passed=True 耗时=2.13s basetemp=C:/Users/25924/AppData/Local/Temp/m115-basetemp-8mrwedep/control-快版(无 sleep)/reports/basetemp
+  快版(无 sleep)-shared 第1轮 K=2 共享report_dir: 伪失败 1/2  标记 []
+    快版(无 sleep)-shared-r1-e1: rc=1 passed=0 failed=0 errors=1 timed_out=False markers=[]
+  快版(无 sleep)-shared 第2轮 K=2 共享report_dir: 伪失败 1/2  标记 []
+    快版(无 sleep)-shared-r2-e1: rc=1 passed=0 failed=0 errors=1 timed_out=False markers=[]
+  快版(无 sleep)-shared 第3轮 K=2 共享report_dir: 伪失败 1/2  标记 []
+    快版(无 sleep)-shared-r3-e1: rc=1 passed=0 failed=0 errors=1 timed_out=False markers=[]
+  快版(无 sleep)-shared 第1轮 K=4 共享report_dir: 伪失败 2/4  标记 []
+    快版(无 sleep)-shared-r1-e1: rc=1 passed=0 failed=0 errors=1 timed_out=False markers=[]
+    快版(无 sleep)-shared-r1-e3: rc=1 passed=0 failed=0 errors=1 timed_out=False markers=[]
+  快版(无 sleep)-shared 第2轮 K=4 共享report_dir: 伪失败 2/4  标记 []
+    快版(无 sleep)-shared-r2-e1: rc=1 passed=0 failed=0 errors=1 timed_out=False markers=[]
+    快版(无 sleep)-shared-r2-e3: rc=1 passed=0 failed=0 errors=1 timed_out=False markers=[]
+  快版(无 sleep)-shared 第3轮 K=4 共享report_dir: 伪失败 2/4  标记 []
+    快版(无 sleep)-shared-r3-e1: rc=1 passed=0 failed=0 errors=1 timed_out=False markers=[]
+    快版(无 sleep)-shared-r3-e3: rc=1 passed=0 failed=0 errors=1 timed_out=False markers=[]
+  快版(无 sleep)-isolated 第1轮 K=2 隔离report_dir: 伪失败 0/2
+  快版(无 sleep)-isolated 第2轮 K=2 隔离report_dir: 伪失败 0/2
+  快版(无 sleep)-isolated 第3轮 K=2 隔离report_dir: 伪失败 0/2
+  快版(无 sleep)-isolated 第1轮 K=4 隔离report_dir: 伪失败 0/4
+  快版(无 sleep)-isolated 第2轮 K=4 隔离report_dir: 伪失败 0/4
+  快版(无 sleep)-isolated 第3轮 K=4 隔离report_dir: 伪失败 0/4
+
+== 判据 ==
+(A) 慢版(放大器) 同 report_dir 并发: 伪失败 7/18
+(B) 慢版(放大器) 隔离 report_dir 并发: 伪失败 0/18
+(A) 快版(无 sleep) 同 report_dir 并发: 伪失败 9/18
+(B) 快版(无 sleep) 隔离 report_dir 并发: 伪失败 0/18
+(C) 机器默认临时根目录数: 前 4 → 后 4
+    三条判据的解释与决策规则见 TODO.md M11.5.1(本脚本只出数字)

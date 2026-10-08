@@ -1,0 +1,44 @@
+# 并发临时根测量(postfix):scripts/measure_basetemp_contention.py 的原始输出,UTF-8。
+# 同一个脚本在 a127b28(每次执行私有临时根)之后重跑:两臂都 0/18 —— 这正是修复生效的形态,不是数据冲突。
+# 2026-10-08 13:20 前后;这一次跑期间我另起了一个 23 秒的无关 pytest 调用(见交接说明),
+# 对"0 失败"的结论无影响:额外负载只会增加交错,不会掩盖失败。
+
+工作目录: C:\Users\25924\AppData\Local\Temp\m115-basetemp-nfa9mhyj
+
+== 慢版(放大器) ==
+  控制组: all_passed=True 耗时=5.44s basetemp=C:/Users/25924/AppData/Local/Temp/m115-basetemp-nfa9mhyj/control-慢版(放大器)/reports/junit-control.basetemp-ee194c43
+  慢版(放大器)-shared 第1轮 K=2 共享report_dir: 伪失败 0/2
+  慢版(放大器)-shared 第2轮 K=2 共享report_dir: 伪失败 0/2
+  慢版(放大器)-shared 第3轮 K=2 共享report_dir: 伪失败 0/2
+  慢版(放大器)-shared 第1轮 K=4 共享report_dir: 伪失败 0/4
+  慢版(放大器)-shared 第2轮 K=4 共享report_dir: 伪失败 0/4
+  慢版(放大器)-shared 第3轮 K=4 共享report_dir: 伪失败 0/4
+  慢版(放大器)-isolated 第1轮 K=2 隔离report_dir: 伪失败 0/2
+  慢版(放大器)-isolated 第2轮 K=2 隔离report_dir: 伪失败 0/2
+  慢版(放大器)-isolated 第3轮 K=2 隔离report_dir: 伪失败 0/2
+  慢版(放大器)-isolated 第1轮 K=4 隔离report_dir: 伪失败 0/4
+  慢版(放大器)-isolated 第2轮 K=4 隔离report_dir: 伪失败 0/4
+  慢版(放大器)-isolated 第3轮 K=4 隔离report_dir: 伪失败 0/4
+
+== 快版(无 sleep) ==
+  控制组: all_passed=True 耗时=2.21s basetemp=C:/Users/25924/AppData/Local/Temp/m115-basetemp-nfa9mhyj/control-快版(无 sleep)/reports/junit-control.basetemp-f5d61b94
+  快版(无 sleep)-shared 第1轮 K=2 共享report_dir: 伪失败 0/2
+  快版(无 sleep)-shared 第2轮 K=2 共享report_dir: 伪失败 0/2
+  快版(无 sleep)-shared 第3轮 K=2 共享report_dir: 伪失败 0/2
+  快版(无 sleep)-shared 第1轮 K=4 共享report_dir: 伪失败 0/4
+  快版(无 sleep)-shared 第2轮 K=4 共享report_dir: 伪失败 0/4
+  快版(无 sleep)-shared 第3轮 K=4 共享report_dir: 伪失败 0/4
+  快版(无 sleep)-isolated 第1轮 K=2 隔离report_dir: 伪失败 0/2
+  快版(无 sleep)-isolated 第2轮 K=2 隔离report_dir: 伪失败 0/2
+  快版(无 sleep)-isolated 第3轮 K=2 隔离report_dir: 伪失败 0/2
+  快版(无 sleep)-isolated 第1轮 K=4 隔离report_dir: 伪失败 0/4
+  快版(无 sleep)-isolated 第2轮 K=4 隔离report_dir: 伪失败 0/4
+  快版(无 sleep)-isolated 第3轮 K=4 隔离report_dir: 伪失败 0/4
+
+== 判据 ==
+(A) 慢版(放大器) 同 report_dir 并发: 伪失败 0/18
+(B) 慢版(放大器) 隔离 report_dir 并发: 伪失败 0/18
+(A) 快版(无 sleep) 同 report_dir 并发: 伪失败 0/18
+(B) 快版(无 sleep) 隔离 report_dir 并发: 伪失败 0/18
+(C) 机器默认临时根目录数: 前 4 → 后 4
+    三条判据的解释与决策规则见 TODO.md M11.5.1(本脚本只出数字)
