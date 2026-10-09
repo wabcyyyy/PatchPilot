@@ -52,7 +52,7 @@ HEAD 上的实测,不是沿用历史文档。能力声明分四级:**implemented
 |---|---|---|
 | `python -m demo.run_dirty_ticket --out …` | offline verified(subprocess) | tests/test_demo_smoke.py:resolved、源目录哈希不变、patch_text/diff_text 断言 |
 | `python -m demo.run_api_ticket --out …` | offline verified(TestClient) | tests/test_api_golden_path.py:全链路+取消+门禁拒绝 |
-| 本地 uvicorn+curl | **documented only(未自动化)** | demo/README.md §3 给出命令;真实 HTTP 服务演示未在本轮执行,如实声明 |
+| 本地 uvicorn+curl | 人工实跑 1 次(2026-10-09 补录,仍未进自动化) | docs/evidence/2026-10-09-uvicorn-http-demo.txt:health→POST→实时进度→FINISHED/resolved→三态验收+候选工件;命令即 demo/README.md §3 |
 
 ## 6. 恢复边界(如实声明)
 
@@ -66,7 +66,9 @@ HEAD 上的实测,不是沿用历史文档。能力声明分四级:**implemented
 
 1. **L01 真实效果实验未执行**(未授权):无任何新真实模型数据;简历不得出现修复率提升类数字;
 2. Python 3.11 兼容未实测(仅 3.14.2);
-3. 本地 uvicorn HTTP 人工演示未实跑(命令已文档化);
+3. ~~本地 uvicorn HTTP 人工演示未实跑(命令已文档化)~~ → 2026-10-09 已按 demo/README.md §3
+   实跑补录一次(docs/evidence/2026-10-09-uvicorn-http-demo.txt),真实 HTTP 栈 golden path
+   与 TestClient 结论一致;划线保留是因为它仍未进 pytest 自动化;
 4. 722→868 的收集/通过差值全部来自本轮新增回归,存量用例零删除
    (2 个旧钉子按 spec 反转并注明:graph+one_shot 从拒绝变支持、junit 夹具写实化);
 5. provider 账单对账、多实例部署、Redis 强一致:明确不做(design.md §8)。

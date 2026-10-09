@@ -1,0 +1,57 @@
+uvicorn HTTP 人工演示实跑记录(2026-10-09 11:46 本地时间)
+================================================================
+
+目的:补上 docs/release-evidence-2026-10-08.md 第 5 节如实声明的缺口
+"本地 uvicorn+curl:documented only(未自动化)"。零成本、离线(FakeLLM 回放),
+不触任何付费边界。
+
+环境
+----
+- 分支 codex/patchpilot-reliability-20261008 @ 001657961ccf2c586944a5d62ee16cc84b1a0278,工作树干净
+- uvicorn 0.53.0 / fastapi 0.141.1(既有依赖,零新装)
+- PATCHPILOT_LLM_ENABLED=false(离线回放);未设 PATCHPILOT_API_TOKEN,
+  服务启动日志给出 loopback 豁免告警(预期行为,threat-model §2/§5)
+- 端口 8001 启动前确认空闲
+
+命令(与 demo/README.md §3 逐字一致)
+------------------------------------
+PATCHPILOT_LLM_ENABLED=false python -m uvicorn app.api.app:create_app --factory \
+  --host 127.0.0.1 --port 8001
+curl -s http://127.0.0.1:8001/api/health
+curl -s -X POST http://127.0.0.1:8001/api/tasks -H "Content-Type: application/json" \
+  -d '{"bug_id":"BUG-001","engine":"graph","model":"fake"}'
+curl -s http://127.0.0.1:8001/api/tasks/<task_id>          # 5 秒一轮
+curl -s http://127.0.0.1:8001/api/tasks/<task_id>/report
+
+逐步结果
+--------
+1. health → {"status":"ok"} (200)
+2. POST → 200,task_id=BUG-001-20261009-114628-9ac58a,status=RUNNING,engine=graph,
+   model_provider=fake,run_dir=runs/BUG-001-20261009-114628-9ac58a
+3. 轮询(S07 实时进度在真实 HTTP 上可见):
+   poll1 RUNNING verdict=None stage=PROPOSE_PATCH
+   poll2 RUNNING verdict=None stage=VERIFY
+   poll3 FINISHED verdict=resolved stage=FINISH   (POST 后约 18 秒)
+   poll4..poll30 与 poll3 逐字段相同(status/verdict/stage/last_event_at 全冻结
+   —— 终态不可被迟到事件复活,直接观测成立)
+4. GET report(关键字段,JSON 原文见 run_dir/report.json):
+   verdict=resolved, report_schema_version=2,
+   validation_status=passed, gate_status=passed, resource_status=within_budget,
+   candidate_id=r1-c46e36bec2a6, candidate_hash=c46e36bec2a6bcb8…(64 hex),
+   verification_attempt_id=8b76a9f2b0064600a95b6888f5b5ad0f,
+   rounds=1, turns=8, tokens_used=204, duration_ms=15854,
+   changed_files=["src/dateparse.py"], baseline_failed=2,
+   baseline_regression_ok=true, verify_failed_ok=true, verify_regression_ok=true,
+   provenance.git_commit=001657961ccf2c586944a5d62ee16cc84b1a0278(=当时 HEAD),
+   provenance.llm_enabled=false, provenance.experiment_policy.policy=agent
+5. run_dir 工件齐全:candidates/r1-c46e36bec2a6/、diff.patch、report.json、
+   reports/、task_spec.json、trajectory.jsonl
+6. 服务停止(uvicorn 进程正常终止)
+
+结论
+----
+真实 HTTP 栈上的 golden path 全链路成立:受理→实时进度→终态 resolved→报告与
+验收三态→候选工件落盘,与 TestClient 自动化路径(tests/test_api_golden_path.py)
+结论一致。至此 demo/README.md §3 不再是"仅文档化":本文件即一次已记录的人工实跑。
+自动化边界不变:该路径仍未进 pytest,后续若要自动化应另立卡(真实端口套接字
+有并发占用风险,TestClient 路径已覆盖同一 app 工厂的全部语义)。

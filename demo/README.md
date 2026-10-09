@@ -25,6 +25,9 @@ python -m demo.run_api_ticket --out runs/demo-api
 ## 3. 本地 HTTP 人工演示(文档路径,未进自动化)
 
 上两节的 TestClient 与真实 HTTP 服务共享同一 app 工厂;要走真实 HTTP:
+(2026-10-09 已按本节命令人工实跑一次并留证:docs/evidence/2026-10-09-uvicorn-http-demo.txt,
+golden path 全链路 resolved;仍未进 pytest,自动化边界见节末说明。)
+
 
 ```bash
 # 终端 1:启动服务(离线回放模式;真实模型需先配 .env 并 PATCHPILOT_LLM_ENABLED=true)

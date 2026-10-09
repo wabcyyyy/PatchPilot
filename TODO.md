@@ -685,6 +685,10 @@
       docs/experiment-preregistration-v2-2026-10-08.md + scripts/compare_experiments.py。
 - [x] S11 全量收口:证据索引 docs/release-evidence-2026-10-08.md、简历证据
       docs/resume-evidence-2026-10-08.md、README/design 对齐 implemented/offline/planned 边界。
+      **补录(2026-10-09)**:发布证据第 5/7 节那条"本地 uvicorn HTTP 未实跑"已按
+      demo/README.md §3 命令人工实跑闭环(golden path 经真实 HTTP 栈 resolved,约 18s,
+      三态验收+候选工件齐全,终态冻结直接观测),记录 docs/evidence/2026-10-09-uvicorn-http-demo.txt;
+      该路径仍未进 pytest,自动化边界声明不变。零成本、无新依赖、不动代码。
 
 ## 明确不做(需用户裁决,不自行推进)
 - **LLM 语义摘要**(目标里"语义摘要"的一支):ADR-0004 已把它列为"考虑后否决"的候选
