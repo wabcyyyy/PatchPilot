@@ -778,6 +778,11 @@
 | #22 | `e3cec9a` | push(收卡文档本身) | `833 passed, 35 skipped` 全绿 —— 连绿到第 4 次,判据在 3 次时已满足 |
 | #23 | `4653a72` | push(表读数订正) | success |
 | #24 | `2e34bb9` | push(docker 用例加固) | `833 passed, 35 skipped` / FAILED 0 —— 测试数不变(只加断言不加用例) |
+| #25 | `a33014f` | push(台账) | success |
+
+**后续不逐条追记**:判据在第 3 次就满足了,再列只是抄 Actions 页面。至此累计连绿
+**7 次(#19..#25)**;本地全量在加固那条上重跑过一次:**876 passed, 4 skipped**
+(1534.92s = 25:34),与收卡前同一用例数 ⇒ 该改动只加断言、未加用例。
 
 **#24 的价值与 #19-#23 不同**:那条 `test_container_wrong_test_id_never_passes` 在 #5..#18
 期间一直绿是因为只断言 `not all_passed`(容器跑不起来也满足);加固后它在 ubuntu 上
