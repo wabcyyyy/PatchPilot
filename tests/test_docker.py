@@ -27,6 +27,16 @@ def test_container_wrong_test_id_never_passes(tmp_path: Path) -> None:
         report_dir=tmp_path / "reports",
     )
     assert not report.all_passed
+    assert report.passed == 0, report.passed  # 空集永远不等于通过(P3-17 立身点)
+    # 只断言 `not all_passed` 是空过的:容器**整个跑不起来**(宿主 uid 与镜像 uid 不匹配
+    # → junit 写不进 → exit 1 + 一条合成的 "no junit xml" 失败项)同样让它满足。CI
+    # run #5..#18 十四次连红里这条一直绿,而 docker 后端当时在 ubuntu 上完全不可用——
+    # docstring 声称拦得住空集陷阱,实际什么都没拦。下面三条把"pytest 确实在容器里跑了、
+    # 只是没匹配到测试"(实测 4/0/空)与"根本没跑"(实测 1/1/一条)分开。
+    # 注:`case_results` 不判别——合成的失败项落在 `failed_cases` 里,前者两边都是空。
+    assert report.exit_code == 4, report.exit_code
+    assert report.errors == 0, report.errors
+    assert report.failed_cases == [], report.failed_cases
 
 
 def test_container_pytest_baseline_and_pass(tmp_path: Path) -> None:
