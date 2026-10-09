@@ -1411,3 +1411,6 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
   - docker 修复后的本地全量:`876 passed, 4 skipped`(2383.40s = 39:43;871+5 条新增
     backend 用例正好对上),ruff check/format 227 文件全绿。该数字只证明
     "身份对齐没有把 Windows/Docker Desktop 路径改坏"——Linux 分支本地不作证。
+  - **CI run #19**(`5159d8c`)= `833 passed, 35 skipped` **全绿**:自 run #4(09-18)
+    以来第一次绿,断掉 #5..#18 共 14 次连红;对账 826+2+5=833 ⇒ docker 两条在 ubuntu
+    上真的执行并通过。uid 诊断由 CI 作证成立。M20 判据还剩 2 次连续绿。
