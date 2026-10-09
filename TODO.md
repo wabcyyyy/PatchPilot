@@ -713,24 +713,59 @@
       三态验收+候选工件齐全,终态冻结直接观测),记录 docs/evidence/2026-10-09-uvicorn-http-demo.txt;
       该路径仍未进 pytest,自动化边界声明不变。零成本、无新依赖、不动代码。
 
-### M20 CI 存量红:ubuntu/py3.11 上 6 个失败待修(2026-10-09 立卡,状态:未开工)
+### M20 CI 存量红:ubuntu/py3.11 上的失败(2026-10-09 立卡,10-09 接力轮改状态:只剩"CI 连续 3 次全绿"这一条判据)
 
-CI(run #15/#16)的 test job 自 M16 起(≥8ab15fa,2026-10-08)持续红;本地 Windows 全绿
-是因为三类环境差异。**本轮已修 1 个**(da26677 推送后新增的 S06 测试自身运算符优先级
-bug:`tmp_path / "run".glob(...)` 对 str 调 glob——该行在无 symlink 特权的 Windows 从未
-执行过,linux 首次执行即炸;已加括号,断言语义不变)。**剩余 6 个,四簇:**
+**先记一条口径教训**:立卡时对失败集合的判断有三处是错的,都在接力轮用 CI 日志 +
+容器复现实测纠正了。教训是"失败信息不足以定根因时,先取原始 stderr 再写卡"。
 
-1. `test_docker.py` ×2:容器内 pytest collected=0 + "no junit xml" —— executor 镜像与
-   当前代码脱节(依赖/入口),需重建镜像并复核容器内收集路径;
-2. `test_input_snapshot.py` 已修(见上);
-3. `test_output_filter.py` ×2:traceback 帧过滤断言按 Windows/本地解释器形态写死
-   (linux 3.11 的 traceback 多 stdlib 帧,如 enum.py;路径分隔符形态不同)——
-   修法必须是**让断言对环境鲁棒而不是删弱它**(只比 project 帧集合、或构造确定性 traceback);
-4. `test_search_tools.py` ×2(KeyError 'fallback'):ubuntu runner 预装 ripgrep,
-   本地 Windows 没有 ⇒ `search_engine=auto` 走了不同分支——测试须显式钉住引擎路径
-   或 mock rg 探测,两分支都要有覆盖。
+| 立卡时的说法 | 实测 |
+| --- | --- |
+| "自 M16 起(≥8ab15fa,2026-10-08)持续红" | 最后一次绿是 run #4(`e6fc68b`,2026-09-18);run #5(`5701e6f`,10-06)就红,且当时**只有 2 个失败,都是 docker**(#5 计 344 条测试,其余簇随后续提交长出)。docker 簇落在 `80ce1ef`(09-19,镜像非 root 化)与 `4a1d7ef`(09-20,reports 0o777→0o755)之后、run #4 之前这个窗口——之后 CI 再没绿过 |
+| docker 簇"镜像与代码脱节,需重建镜像" | 镜像正常(CI 里 `Successfully installed pytest-9.1.1`)。是**容器 uid 与宿主目录属主不匹配** |
+| search_tools 簇"ubuntu runner 预装 ripgrep、本地没有" | 方向相反:CI **没有** rg(该文件 9 条 skip 的理由就是"ripgrep 不在这台机器上"),本地 Windows **有**(Qoder 插件目录的 rg 在 PATH 上)。⇒ 任何换到无 rg 机器的本地复现都不可信 |
 
-判据:CI 转绿且**没有删弱任何断言**(逐个 diff 审查);修复后 CI 连续 3 次全绿才算收卡。
+**四簇终局(run #17 的 8 个失败 → 现剩 2)**
+
+1. `test_docker.py` ×2 —— 根因:镜像固定 `USER pp`(uid 1000),而 `docker_runner` 按
+   R2 把报告目录 chmod 成 0o755。原生 Linux 上这两个目录由本进程创建、属主 uid≠1000
+   ⇒ 容器写不进 junit。**容器复现出与 CI 逐字一致的特征**:pytest 跑完 →
+   `PermissionError` → **exit 1 且无 xml**;工作区若为 0700 则连进不去,同样 exit 1
+   无 xml。Docker Desktop 的 bind mount 不执行 unix 属主,所以本地永远绿。
+   这不是新的发现——`docs/docker-backend-notes.md` 2026-10-07 那节已记下同一件事并
+   当时选择"记为部署约束、不改代码";本轮把修复做进代码(用户点头)。
+   **已实现**:posix 且本进程非 root ⇒ `docker run --user <uid>:<gid> -e HOME=/tmp`
+   (对齐属主,工作区也随之可写;HOME 指 /tmp 是因为对齐来的 uid 不拥有镜像里的
+   /home/pp);posix 且本进程是 root(compose 部署形态,api 容器没有 USER)⇒ 保持
+   pp(1000),把本次 workspace 与 reports chown 给 1000;非 posix ⇒ 一律不加参数。
+   **0o755 未回退**——容器写得进靠身份对齐,不靠放开权限(防篡改仍成立);被测代码
+   两条分支都不拿到 root。`tests/test_backend.py` 新增 5 条(三分支 + 参数表接线 +
+   chown 遍历树)。本地 Windows 无法验证 Linux 分支,oracle 是 CI。
+2. `test_docs_anchors.py` ×2(**本轮新红,存量红之外**):`4fd9620` 把 design.md:78
+   一句改成三行(+2)使 ADR-0001 锚点 `design.md:91` 漂到 93。已重钉行号,期望子串与
+   被钉句子一字未动(= 锚点机制本来就要求的"文档改动后同步修订锚点")。
+   流程账:该提交只跑了单文件就推,漏掉了全量——本轮全量补跑,并把"改文档必跑
+   `test_docs_anchors`"写进 AGENTS 级习惯候选(见 PROGRESS)。
+3. `test_output_filter.py` ×2:夹具把外部路径写死成 Windows 形态(`C:/py`、`D:/other`),
+   posix 下这类串不是绝对路径 ⇒ 噪声帧被当项目内相对路径保留。**已修**:按 os.name
+   派生外部绝对根,断言一字未改。
+4. `test_search_tools.py` ×2:`_rg_binary()` 为空时 `resolve_engine("rg")` 直接返回
+   python ⇒ rg 分支不被调用 ⇒ `meta["fallback"]` 无从写起(KeyError)。**已修**:同时
+   monkeypatch `_rg_binary` 钉住"rg 可用",超时回落与软链让路两分支在有无 rg 的机器
+   上都真跑。选替身不选 skip:skip 会让 CI 永久丢掉这两条覆盖。
+
+**判据不变**:CI 转绿且**没有删弱任何断言**(逐个 diff 审查,本轮四处均已在 commit
+message 里留痕);修复后 **CI 连续 3 次全绿**才算收卡。当前处于第 1 次绿之前的状态,
+docker 簇的 Linux 分支只能由 CI 作证,所以这 3 次不是形式。
+
+**断言删弱审查(2026-10-09 接力轮,`git diff 4fd9620..HEAD -- tests/` 逐条过)**:
+
+- `design[90] → design[92]`:行号随文档正文移动,期望子串 "10 个" 与被钉句子一字未动;
+- `"D:/other/x.py" → outside`(= 同平台上"绝对且不在项目根内"的路径):断言的语义
+  ("外部帧必须被丢掉")没变,变的是夹具的平台形态;`"enum.py" not in refined` 原样保留;
+- search_tools 两条:断言行**一字未动**,只多加了一个 `_rg_binary` 替身;
+- docker 簇:测试文件零改动,改的是 `docker_runner` 的身份参数。
+
+四簇均未出现"放宽断言/加 skip/删用例"这三种减覆盖的做法。
 
 ## 明确不做(需用户裁决,不自行推进)
 - **LLM 语义摘要**(目标里"语义摘要"的一支):ADR-0004 已把它列为"考虑后否决"的候选

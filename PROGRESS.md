@@ -1364,5 +1364,50 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
   暴露的 1 个——S06 测试自身 `tmp_path / "run".glob(...)` 运算符优先级 bug(对 str 调
   glob;该行在 Windows 无 symlink 特权从未执行过,linux 首次执行即炸)——已修,
   断言语义不变。剩余 6 个入 TODO M20,判据:CI 转绿且零断言删弱。
+  (**"红自 ≥M16 / docker 镜像脱节 / rg 预装方向"三处已被接力轮实测纠正,见 M20 卡**)
 - **推送**:origin/master 442cd8d → da26677(S 系列+演示闭环+L01 全程),随后
   处置轮 commit 跟进;README 补 DeepSeek 端点条件提示与 Q0 口径。
+
+## M20 接力轮:锚点回归自纠 + docker 簇根因定位并落地修复(2026-10-09,产品卡 15/15)
+
+- **接力起点**:上一会话在"等新 CI run 验证失败 7→6"这条 todo 上被 5 小时额度上限
+  打断(run 37913064526 已 completed/failure,日志未取)。本轮先取日志再动手。
+- **run #17(`4fd9620`)实测 8 红,不是预期的 6**:S06 软链修复确实生效
+  (`test_input_snapshot` 已从失败列表消失),但那个提交把 design.md:78 一句改成三行
+  (**+2 行**),ADR-0001 声明的 `docs/design.md:91 — 10 个` 锚点漂到 93 ⇒
+  `test_docs_anchors` ×2 新红。**这是本仓自己的流程账**:该提交只跑了单文件就推,
+  漏了全量红线。修法=重钉行号(期望子串与被钉句子一字未动,正是锚点机制要求的
+  "文档改动后必须同步修订锚点");全 46 条锚点重审计 0 漂移。commit `1660940`。
+- **M20 立卡时三处判断被实测纠正**(详见 TODO M20 卡的对照表):起红点是 run #5
+  (10-06,当时仅 2 红全为 docker)而非 M16;docker 簇不是"镜像脱节"(CI 里
+  `Successfully installed pytest-9.1.1`);search_tools 簇的 rg 有无方向写反
+  (CI 无 rg、本地 Windows 有 —— 插件目录的 rg 在 PATH 上)。
+- **docker 簇根因定位并容器复现**:镜像固定 `USER pp`(uid 1000,`80ce1ef` 09-19)与
+  R2 把报告目录收紧到 0o755(`4a1d7ef` 09-20)相叠 ⇒ 原生 Linux 上属主 uid≠1000 时
+  容器写不进 junit。在容器里造出与 CI 逐字一致的特征:pytest 跑完 → `PermissionError`
+  → **exit 1 且无 xml**;工作区 0700 时连进去都做不到,同样 exit 1 无 xml。
+  **这件事 2026-10-07 已记在 docs/docker-backend-notes.md**,当时选择"记为部署约束、
+  不改代码";本轮按用户点头把修复做进代码。
+- **落地(用户点头的方案:身份对齐 + root 分支兜底)**:`docker_runner._container_identity_cmd_flags`
+  ——非 posix 不加参数;posix 非 root ⇒ `--user <本进程 uid:gid> -e HOME=/tmp`;
+  posix 且 root(compose 里 api 容器无 USER)⇒ 保持 pp(1000) 并把本次 workspace 与
+  reports `chown 1000:1000`(含子项)。报告目录仍是 0o755(**没有**为写得进而放开权限,
+  R2 的防篡改成立),两条 posix 分支都不给被测代码 root(M11.2 立意不变)。
+  测试 `tests/test_backend.py` +5(三分支 / 参数表接线 / chown 遍历树)。
+- **观测边界(不许当证据)**:本地 Windows 全绿不能证明 Linux 分支——Docker Desktop 的
+  bind mount 不执行 unix 属主校验。docker 簇的验收只能看 ubuntu CI,所以 M20 的
+  "CI 连续 3 次全绿"判据不是形式。
+- **output_filter / search_tools 两簇(测试侧,断言一字未删弱)** commit `ca7475c`:
+  夹具外部路径按 os.name 派生(posix 下 `C:/py` 不是绝对路径 ⇒ 噪声帧被保留);
+  rg 两簇用 `_rg_binary` 替身钉住"rg 可用",超时回落与软链让路两分支在有无 rg 的
+  机器上都真跑(选替身不选 skip,skip 会让 CI 永久丢掉覆盖)。
+- **机器证据(逐条可查,不预先写结论)**:
+  - 本地全量 @`1660940`:`871 passed, 4 skipped`(1645.11s,basetemp 落仓库外),
+    `ruff check` + `ruff format --check` 227 文件全绿;
+  - CI run **#18** @`ca7475c`(ubuntu/py3.11):`2 failed, 826 passed, 35 skipped` —
+    剩下的 2 个正是 docker 簇,docs_anchors ×2 / output_filter ×2 / search_tools ×2
+    已在 ubuntu 上转绿(立卡时"预期 8→6"的猜测是错的,实测 8→2,因为锚点回归也在
+    同一批里被修掉了);
+  - docker 修复后的本地全量:`876 passed, 4 skipped`(2383.40s = 39:43;871+5 条新增
+    backend 用例正好对上),ruff check/format 227 文件全绿。该数字只证明
+    "身份对齐没有把 Windows/Docker Desktop 路径改坏"——Linux 分支本地不作证。
