@@ -1,0 +1,39 @@
+"""钉死规则 + 验证 disabled 修复:P1/P2 定形状规则,P3 决定性。"""
+import json
+import sys
+
+from dotenv import dotenv_values
+from openai import OpenAI
+
+env = dotenv_values(".env")
+client = OpenAI(
+    base_url=env["PATCHPILOT_LLM_BASE_URL"],
+    api_key=env["PATCHPILOT_LLM_API_KEY"],
+    timeout=120,
+    max_retries=0,
+)
+MODEL = env["PATCHPILOT_LLM_MODEL"]
+snap = json.load(open(sys.argv[1], encoding="utf-8"))
+base = snap["messages"][:2]  # [system, user]
+A_RC = {"role": "assistant", "content": "分析中。", "reasoning_content": "step: check main"}
+A_NORC = {"role": "assistant", "content": "结论:入口是 main.py。"}
+
+
+def send(label: str, msgs: list[dict], extra_body: dict | None = None, tools: list | None = None) -> None:
+    body: dict = {"model": MODEL, "messages": msgs, "max_tokens": 30}
+    if extra_body:
+        body["extra_body"] = extra_body
+    if tools:
+        body["tools"] = tools
+    try:
+        client.chat.completions.create(**body)
+        print(f"{label}: 200")
+    except Exception as exc:
+        print(f"{label}: 400 -> {str(exc)[:110]}")
+
+
+send("P1 [...,asst(rc),asst(无rc)] 末尾裸assistant无rc", base + [A_RC, dict(A_NORC)])
+send("P2 [...,asst(rc),asst(rc)]   末尾assistant带rc", base + [A_RC, {**A_NORC, "reasoning_content": "step: done"}])
+send("P3 失败请求逐字 + thinking=disabled", [json.loads(json.dumps(m)) for m in snap["messages"]],
+     extra_body={"thinking": {"type": "disabled"}},
+     tools=[{"type": "function", "function": {"name": "finish", "description": "结束", "parameters": {"type": "object", "properties": {"success": {"type": "boolean"}, "summary": {"type": "string"}}, "required": ["success", "summary"]}}}])

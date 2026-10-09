@@ -162,7 +162,7 @@ PYTHONPATH=. .venv/Scripts/python.exe app/evals/run_single.py \
 8707 rep1 于 PLAN 段第 7 次请求收到 `Error code: 400 - The reasoning_content in the
 thinking mode must be passed back to the API`,驱动器按停手条件 1 立即停批(行为正确)。
 
-**诊断(探针 ≈80k tokens,脚本 runs/probe_*.py):**
+**诊断(探针 ≈80k tokens,脚本 docs/evidence/probe-thinking-400/,原始运行目录 runs/ 不入库):**
 1. 客户端**没有**丢字段:失败请求的 loop_state 快照逐条含 reasoning_content(带工具轮与纯文本轮
    都有),零次压缩(无 context_compact 事件),桩路径未参与;
 2. 逐字重放该请求 → 400 稳定复现;二分到 `[system, user, 单条 assistant]` 仍 400;

@@ -1,0 +1,40 @@
+"""单变量突变:在 bisect-8 形状 [sys,user,asst8,asst9] 上逐项改,找判别子。"""
+import json
+import sys
+
+from dotenv import dotenv_values
+from openai import OpenAI
+
+env = dotenv_values(".env")
+client = OpenAI(
+    base_url=env["PATCHPILOT_LLM_BASE_URL"], api_key=env["PATCHPILOT_LLM_API_KEY"],
+    timeout=120, max_retries=0,
+)
+MODEL = env["PATCHPILOT_LLM_MODEL"]
+snap = json.load(open(sys.argv[1], encoding="utf-8"))
+m = snap["messages"]
+base = [m[0], m[1]]
+a8, a9 = m[8], m[9]
+
+
+def short(text: str, n: int = 40) -> str:
+    return text[:n]
+
+
+def send(label: str, msgs: list[dict]) -> None:
+    try:
+        client.chat.completions.create(model=MODEL, messages=[json.loads(json.dumps(x)) for x in msgs], max_tokens=20)
+        print(f"{label}: 200")
+    except Exception as exc:
+        print(f"{label}: 400 -> {str(exc)[:90]}")
+
+
+send("T0 对照 [sys,user,8(rc),9(无rc)]", base + [a8, a9])
+send("T1 8 去掉 rc", base + [{k: v for k, v in a8.items() if k != "reasoning_content"}, a9])
+send("T2 全部内容截到 40 字符(rc 原样)", base + [
+    {**a8, "content": short(a8["content"])}, {**a9, "content": short(a9["content"])}])
+send("T3 rc 截到 40 字符(content 原样)", base + [
+    {**a8, "reasoning_content": short(a8["reasoning_content"])}, a9])
+send("T4 只发 [8(rc)] 不带 9", base + [a8])
+send("T5 [9(无rc)] 后补一条 user", base + [a9, {"role": "user", "content": "继续"}])
+send("T6 [8(rc),9(无rc),user] 末尾 user", base + [a8, a9, {"role": "user", "content": "继续"}])

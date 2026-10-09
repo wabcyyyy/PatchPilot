@@ -1,0 +1,48 @@
+"""最小探针:复现 reasoning_content 400 并验证 thinking=disabled 的绕开。"""
+import os
+import sys
+
+from dotenv import dotenv_values
+from openai import OpenAI
+
+env = dotenv_values(".env")
+client = OpenAI(
+    base_url=env["PATCHPILOT_LLM_BASE_URL"],
+    api_key=env["PATCHPILOT_LLM_API_KEY"],
+    timeout=60,
+    max_retries=0,
+)
+MODEL = env["PATCHPILOT_LLM_MODEL"]
+
+RC = "step 1: read the file; step 2: conclude"
+
+# 形状 = 失败 run 的快照:连续 assistant,最后一条无 reasoning_content
+HIST = [
+    {"role": "user", "content": "List files in src/ then tell me the entry point."},
+    {"role": "assistant", "content": "I will look at the tree first.", "reasoning_content": RC},
+    {"role": "assistant", "content": "The entry point appears to be src/main.py."},
+]
+
+
+def probe(label: str, extra_body: dict | None, history: list[dict]) -> str:
+    body: dict = {
+        "model": MODEL,
+        "messages": [
+            {"role": "system", "content": "You are a code agent. Answer briefly."},
+            *history,
+            {"role": "user", "content": "Confirm the entry point path."},
+        ],
+        "max_tokens": 50,
+    }
+    if extra_body:
+        body.update(extra_body)
+    try:
+        r = client.chat.completions.create(**body)
+        return f"{label}: 200 (finish={r.choices[0].finish_reason})"
+    except Exception as exc:
+        return f"{label}: {type(exc).__name__}: {str(exc)[:220]}"
+
+
+print(probe("A 默认(服务端缺省) + 连续assistant/末条无rc", None, HIST))
+print(probe("B thinking=disabled + 同形状", {"extra_body": {"thinking": {"type": "disabled"}}}, HIST))
+print(probe("C 默认 + 单轮正常历史", None, HIST[:1]))

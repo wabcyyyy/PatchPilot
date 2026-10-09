@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         "--arm",
         default="agent",
         choices=["agent", "one_shot"],
-        help="执行体:agent=默认工具循环;one_shot=消融对照臂(单发补丁,无执行反馈),只作用于 plain 引擎",
+        help="执行体:agent=默认工具循环;one_shot=消融对照臂(单发补丁,无执行反馈),两引擎均受控支持(S10a)",
     )
     args = parser.parse_args(argv)
 

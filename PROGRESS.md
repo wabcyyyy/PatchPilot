@@ -1320,3 +1320,28 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
   local 子进程隔离不是 OS 沙箱。
 - **未完成项(如实)**:L01 未授权未执行;Python 3.11 未实测;uvicorn HTTP 人工演示
   未实跑(命令已文档化)。
+
+## L01/Q0 付费批:预登记程序执行与判据停手(2026-10-09,用户「全部授权」后)
+
+- **程序**:docs/paid-batch-preregistration-2026-10-08.md(判据/题单/分母先于任何付费运行入库,
+  M18 卡)。fake 同参冒烟 7/7 resolved、登记参数逐字入 provenance、compare_batches 可解析
+  ——两轮冒烟(gen1/gen2)都过了才开真实模型。
+- **gen1 中止(停手条件 1 真触发)**:8707 rep1 于 PLAN 段收到端点 400"reasoning_content
+  must be passed back"。诊断链(逐字重放稳定复现→二分→同请求 40 分钟后 200)证明端点的
+  思考模式校验**间歇性**,客户端无字段可修(快照逐条含 rc、零压缩);唯一确定规避=
+  PATCHPILOT_LLM_THINKING=disabled(端点每轮 rc=None,两连轮工具环探针实证)。
+  预登记补记 A 先于 gen2 付费运行入库;gen1 的 2.5M tokens 作废为学费,不进判据分母。
+- **gen2 Q0**:21/21 完成、0 事故,判据 **k=1(xarray-3095,res=2/3)≤1 ⇒ 停止付费**,
+  Q1/Q2/Q3 按登记不启动;负结论照发("本证据集不支持任何净增益主张")。
+  总花费 ≈9.70M tokens ≈ $3.3(20M 上限内),停手省下对照臂 ≥4.1M。
+- **交付物**:scripts/run_paid_batch.py(串行/记账/三停手条件/断点续跑)、
+  scripts/summarize_paid_batch.py(res_i/k/tokens p50 判据代码化)、
+  docs/evidence/2026-10-09-q0-noise-floor-gen2.txt、双台账(runs/,gen1 单独归档)。
+- **过程抓到的自家 bug(当批修掉)**:①驱动 400 判据裸子串误中预算数字"400000"
+  (be6ad0b);②台账续跑未按 model 过滤,fake 冒烟条目占走真实 (bug,rep) 槽位(c3cde25)。
+- **Q0 三条原始事实**(判据文字外,不是新主张):判死形态同条件内近乎确定(4 题全判死,
+  tokens 极差 1.2~4.3%,判死类型逐次同款);翻转是相变不是漂移(xarray resolved 227~239k
+  vs dead 394k);resolved token 噪声 ±26%(199k~323k)——M15 静态上界 6% 在噪声下
+  一个量级,与"不启动 Q2"互相印证。
+- **claim 边界**:Q0 的产出是噪声地板与负结果,不是修复率成绩;简历不得出现净增益数字,
+  只可表述"预登记判据驱动的付费实验设计与负结果停手"(release-evidence §7/§8 已同步)。

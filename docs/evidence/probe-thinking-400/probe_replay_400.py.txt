@@ -1,0 +1,58 @@
+"""重放失败请求:loop_state.json 快照逐字重发,二分定位 400 触发形状。"""
+import json
+import sys
+
+from dotenv import dotenv_values
+from openai import OpenAI
+
+env = dotenv_values(".env")
+client = OpenAI(
+    base_url=env["PATCHPILOT_LLM_BASE_URL"],
+    api_key=env["PATCHPILOT_LLM_API_KEY"],
+    timeout=120,
+    max_retries=0,
+)
+MODEL = env["PATCHPILOT_LLM_MODEL"]
+snap = json.load(open(sys.argv[1], encoding="utf-8"))
+messages = snap["messages"]
+print("snapshot stage =", snap["stage"], "| messages =", len(messages))
+
+FINISH_SCHEMA = [
+    {
+        "type": "function",
+        "function": {
+            "name": "finish",
+            "description": "结束本轮并给出结论",
+            "parameters": {
+                "type": "object",
+                "properties": {"success": {"type": "boolean"}, "summary": {"type": "string"}},
+                "required": ["success", "summary"],
+            },
+        },
+    }
+]
+
+
+def send(label: str, msgs: list[dict], tools: list | None = None) -> bool:
+    body: dict = {"model": MODEL, "messages": [json.loads(json.dumps(m)) for m in msgs], "max_tokens": 30}
+    if tools:
+        body["tools"] = tools
+    try:
+        r = client.chat.completions.create(**body)
+        print(f"{label}: 200")
+        return True
+    except Exception as exc:
+        print(f"{label}: 400 -> {str(exc)[:150]}")
+        return False
+
+
+# 1: 逐字重放
+if not send("R0 逐字重放(带 tools)", messages, FINISH_SCHEMA):
+    # 2: 二分——去掉最老的历史,逐段逼近
+    for cut in range(2, len(messages)):
+        if send(f"R 去掉前{cut}条(从[{cut}]起)", messages[cut:], FINISH_SCHEMA):
+            print(f">>> 触发元素在被去掉的前 {cut} 条里: {[m.get('role') for m in messages[:cut]]}")
+            break
+    # 3: 逐字历史但去掉全部 reasoning_content
+    stripped = [{k: v for k, v in m.items() if k != "reasoning_content"} for m in messages]
+    send("R1 同历史但剥掉全部 reasoning_content", stripped, FINISH_SCHEMA)
