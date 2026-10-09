@@ -73,9 +73,7 @@ def test_registered_arm_difference_is_the_only_allowed_one(tmp_path: Path) -> No
 def test_unregistered_difference_raises(tmp_path: Path) -> None:
     agent_root, one_shot_root = tmp_path / "a", tmp_path / "o"
     _write_run(agent_root, "agent", "BUG-001")
-    _write_run(
-        one_shot_root, "one_shot", "BUG-001", provenance_patch={"model_name": "gpt-x"}
-    )
+    _write_run(one_shot_root, "one_shot", "BUG-001", provenance_patch={"model_name": "gpt-x"})
     with pytest.raises(SystemExit, match="model_name"):
         compare_batches(agent_root, one_shot_root)
 

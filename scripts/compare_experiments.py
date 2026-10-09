@@ -83,9 +83,7 @@ def compare_batches(batch_a: Path, batch_b: Path) -> dict[str, Any]:
         pairs.append(pair)
 
     if unregistered:
-        raise SystemExit(
-            "unregistered differences between arms:\n  " + "\n  ".join(unregistered)
-        )
+        raise SystemExit("unregistered differences between arms:\n  " + "\n  ".join(unregistered))
     return {"pairs": pairs, "batch_a": str(batch_a), "batch_b": str(batch_b)}
 
 

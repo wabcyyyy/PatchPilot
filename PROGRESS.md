@@ -1299,3 +1299,24 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
 **本卡不开真实模型。**
 
 全量离线 pytest(闸记录见提交);ruff/format 绿。
+
+## S11 全量收口、证据索引与简历稿(2026-10-09,产品卡 13/13,spec 完成)
+
+- **35+35 收口回放**:plain(driver)与 graph(逐题 run_single)各 35 题全部 resolved
+  (`runs/spec-final-{plain,graph}-20261008`,bug 去重 35);与 S00 基线批
+  compare_batches --tools 对比:**两引擎逐题判定字段 35/35 一致**、退出码 0;
+  轨迹差异全部为预期机制新增(plain 的 verify_double_run 0→1、graph 的
+  candidate_frozen/final_acceptance 0→1),turns/tokens 合计逐字一致——
+  "预先定义的缺陷修复导致的差异,原脚本继续报差异、附逐题原因",未改脚本让它静默绿。
+- **终验**:全量离线 pytest **869 passed + 4 环境 skip**(redis×2、符号链接×2)、
+  退出码 0;ruff check/format 全绿(224 files)。最终产物 README/证据文档数字全部
+  现算,不用"collected"冒充"passed"。
+- **文档**:`docs/release-evidence-2026-10-08.md`(证据索引:HEAD/commit 序列/命令/
+  退出码/F1–F8 反转证据/35 题逐题/演示三级验证/恢复边界/未完成项/claim 边界)、
+  `docs/resume-evidence-2026-10-08.md`(三条 bullet,每条锚定实现文件与回归测试,
+  使用边界明文);README 功能概览补 S 系列能力段(被钉行零改动)。
+- **claim 边界**:平台 resolved ≠ SWE-bench 官方;本轮零真实模型调用,无修复率数字;
+  恢复表述上限=PROPOSE 内部与 verify→finish 边界真进程死亡已实测;双跑只证复核一致性;
+  local 子进程隔离不是 OS 沙箱。
+- **未完成项(如实)**:L01 未授权未执行;Python 3.11 未实测;uvicorn HTTP 人工演示
+  未实跑(命令已文档化)。

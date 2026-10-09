@@ -515,5 +515,5 @@ basetemp 必须在仓库外；每卡提交并更新进度。单次生成不超�
 | S08 | done(2026-10-09) | feat(demo) commit | run_dirty_ticket 块协议+--out+非零退出;run_api_ticket 全链路+取消+门禁拒绝;demo/README;test_demo_smoke 2+test_api_golden_path 4;详见 PROGRESS S08 |
 | S09 | done(2026-10-09) | feat(metrics-v2) commit | metrics_version=2(空 touched 不再 strict 成功)+expected_coverage+v1 重算+失败分类;test_metrics +5;详见 PROGRESS S09 |
 | S10a/S10b | done(2026-10-09) | feat(experiment-policy) commit | graph 两臂策略对象+compare_experiments 未登记差异报错+预登记 v2;test_ablation_invariants 4+test_experiment_summary 4;详见 PROGRESS S10a/b |
-| S11 | pending | — | — |
+| S11 | done(2026-10-09) | docs(release-evidence) commit | 35+35 收口回放逐题判定与基线一致;869 passed+4 skip;release/resume 证据文档+README 对齐;详见 PROGRESS S11 |
 | L01 | not authorized | — | — |

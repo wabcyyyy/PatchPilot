@@ -683,7 +683,7 @@
       预算/终局验收;manifest 登记差异,未登记差异报错。
 - [x] S10b 实验预登记 v2 与离线统计:修正旧方案八条(样本固定/ITT 分母/失败分类等),
       docs/experiment-preregistration-v2-2026-10-08.md + scripts/compare_experiments.py。
-- [ ] S11 全量收口:证据索引 docs/release-evidence-2026-10-08.md、简历证据
+- [x] S11 全量收口:证据索引 docs/release-evidence-2026-10-08.md、简历证据
       docs/resume-evidence-2026-10-08.md、README/design 对齐 implemented/offline/planned 边界。
 
 ## 明确不做(需用户裁决,不自行推进)

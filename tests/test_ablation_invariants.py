@@ -123,9 +123,7 @@ def test_double_run_consistency_honored_by_both_arms(tmp_path: Path) -> None:
     bug = load_bug("BUG-001", BUG_ROOT)
     replay = _localize_script() + _fix_replay()
     agent = run_task_graph(bug, FakeLLM(replay), runs_root=tmp_path / "agent", arm="agent")
-    one_shot = run_task_graph(
-        bug, FakeLLM(replay), runs_root=tmp_path / "one-shot", arm="one_shot"
-    )
+    one_shot = run_task_graph(bug, FakeLLM(replay), runs_root=tmp_path / "one-shot", arm="one_shot")
     for result in (agent, one_shot):
         assert result.status == "FINISHED" and result.verdict == "resolved"
         names = [e["tool"] for e in _events(Path(result.run_dir))]
