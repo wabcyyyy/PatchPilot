@@ -780,11 +780,14 @@
 | #24 | `2e34bb9` | push(docker 用例加固) | `833 passed, 35 skipped` / FAILED 0 —— 测试数不变(只加断言不加用例) |
 | #25 | `a33014f` | push(台账) | success |
 
-**后续不逐条追记**:判据在第 3 次就满足了,再列只是抄 Actions 页面。至此**连绿 9 次
-(#19..#27)**;#26(`52859af`)与 #27(`0f20484`)的判定依据是 runs/jobs API 的 conclusion,
-**#27 在 CI 上的测试数没取到读数**(日志端点连续 TLS 失败,curl exit 35)⇒ 这里不写数字。
-本地全量两次重跑:`876 passed, 4 skipped`(1534.92s,加固那条)与
-**`879 passed, 4 skipped`**(1540.21s,追加 stderr 取证那条 = 876 + 新增 3 条用例)。
+**后续不逐条追记**:判据在第 3 次就满足了,再列只是抄 Actions 页面。至此**连绿 11 次
+(#19..#29)**,conclusion 全部取自 runs/jobs API 的真实返回(含 id,不是推算)。
+CI 侧实测读数:`#24` = `833 passed, 35 skipped`;**`#29`(`d6711ba`)= `837 passed,
+35 skipped`** —— 对账 833 + `0f20484` 新增 3 条 + 本轮 1 条 = 837 ✓ 数目闭合。
+(`#27` 那条的计数当时因日志端点 TLS 失败没读到,保留为"未实测";它的 conclusion 是
+success,计数可由上面这条闭合式反推但不当作读数。)
+本地全量三次重跑:`876 passed, 4 skipped`(1534.92s)、`879 passed, 4 skipped`
+(1540.21s)、**`880 passed, 4 skipped`**(1483.07s,本轮)——逐次与新增用例数对得上。
 
 **#24 的价值与 #19-#23 不同**:那条 `test_container_wrong_test_id_never_passes` 在 #5..#18
 期间一直绿是因为只断言 `not all_passed`(容器跑不起来也满足);加固后它在 ubuntu 上
