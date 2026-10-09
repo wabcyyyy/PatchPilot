@@ -5,7 +5,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.evals.metrics import annotate, collect_runs, compute_metrics, latest_per_bug
+from app.evals.metrics import (
+    RunRow,
+    annotate,
+    annotate_v1,
+    collect_runs,
+    compute_metrics,
+    latest_per_bug,
+)
 
 
 def _write_report(run_dir: Path, **fields) -> Path:
@@ -162,3 +169,95 @@ def test_localized_dual_criterion(tmp_path: Path) -> None:
     for row in degraded:
         assert row.localized == bool(row.changed_files)
         assert row.localized_strict == row.localized
+
+
+# ---------- S09/F6:metrics v2 的严格定位与历史口径 ----------
+
+
+def _row_with_changes(bug_id: str, changed: list[str], tmp_path: Path) -> RunRow:
+    run_dir = tmp_path / bug_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "report.json").write_text("{}", encoding="utf-8")  # annotate 不读 report
+    return RunRow(
+        task_id=f"{bug_id}-1",
+        bug_id=bug_id,
+        run_dir=run_dir,
+        verdict="failed",
+        status="BUDGET_EXCEEDED",
+        model_provider="fake-replay",
+        engine="graph",
+        rounds=1,
+        turns=0,
+        tokens_used=0,
+        duration_ms=0,
+        changed_files=changed,
+        gate_violations=[],
+        verify_failed_ok=False,
+        verify_regression_ok=False,
+    )
+
+
+def _ref_bug(tmp_path: Path, expected: list[str]) -> str:
+    """造一个带 reference.diff 的题目目录;返回 bug_id。"""
+    bug_id = "BUG-REF-X"
+    ref_dir = tmp_path / bug_id / "expected"
+    ref_dir.mkdir(parents=True, exist_ok=True)
+    lines = [f"diff --git a/{f} b/{f}" for f in expected]
+    ref_dir.joinpath("reference.diff").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return bug_id
+
+
+def test_f6_empty_touched_is_not_strict_success_in_v2(tmp_path: Path) -> None:
+    """F6 精确复现翻转:无改动 + BUDGET_EXCEEDED,v2 strict=False(v1 曾为 True)。"""
+    bug_id = _ref_bug(tmp_path, ["src/dateparse.py"])
+    row = annotate(_row_with_changes(bug_id, [], tmp_path), tmp_path)
+    assert row.localized is False
+    assert row.localized_strict is False, "空补丁不再是严格定位成功"
+    assert row.expected_coverage == 0.0
+    # 显式 v1 重算:历史口径可复现(空集 ⊆ 期望集),但不回写产物
+    old = annotate_v1(_row_with_changes(bug_id, [], tmp_path), tmp_path)
+    assert old.localized_strict is True
+
+
+def test_strict_semantics_matrix(tmp_path: Path) -> None:
+    bug_id = _ref_bug(tmp_path, ["src/a.py", "src/b.py"])
+    # 范围内非空:strict 成功,coverage=1.0
+    inside = annotate(_row_with_changes(bug_id, ["src/a.py", "src/b.py"], tmp_path), tmp_path)
+    assert inside.localized_strict is True and inside.expected_coverage == 1.0
+    # 部分命中:strict 成功(没碰范围外),coverage=0.5
+    partial = annotate(_row_with_changes(bug_id, ["src/a.py"], tmp_path), tmp_path)
+    assert partial.localized_strict is True and partial.expected_coverage == 0.5
+    # 范围外:strict 失败
+    outside = annotate(_row_with_changes(bug_id, ["src/other.py"], tmp_path), tmp_path)
+    assert outside.localized_strict is False
+    # 混合:范围内外都碰 → strict 失败,coverage 只看命中
+    mixed = annotate(_row_with_changes(bug_id, ["src/a.py", "src/other.py"], tmp_path), tmp_path)
+    assert mixed.localized_strict is False and mixed.expected_coverage == 0.5
+
+
+def test_reference_missing_degrades_and_is_counted(tmp_path: Path) -> None:
+    """无 reference.diff:退化为"非空触碰即命中",coverage=None,汇总计数缺失项。"""
+    row = annotate(_row_with_changes("BUG-NO-REF", ["src/whatever.py"], tmp_path), tmp_path)
+    assert row.reference_missing is True
+    assert row.localized_strict is True
+    assert row.expected_coverage is None
+    rows = compute_metrics([row])
+    assert rows["reference_missing_count"] == 1
+    assert rows["expected_coverage_avg"] is None
+    assert rows["expected_coverage_denominator"] == 0
+
+
+def test_metrics_summary_carries_version_and_failure_breakdown(tmp_path: Path) -> None:
+    ok_row = _row_with_changes("BUG-OK", ["src/a.py"], tmp_path)
+    ok_row.verdict = "resolved"
+    ok_row.status = "FINISHED"
+    ok_row.verify_failed_ok = True
+    ok_row.verify_regression_ok = True
+    annotate(ok_row, tmp_path)
+    budget_row = _row_with_changes("BUG-NOCHANGE", [], tmp_path)
+    annotate(budget_row, tmp_path)
+    summary = compute_metrics([ok_row, budget_row])
+    assert summary["metrics_version"] == 2
+    assert summary["failure_breakdown"]["budget_exhausted"] == 1
+    assert summary["failure_breakdown"]["no_patch"] == 1
+    assert summary["final_resolution_rate"] == 0.5

@@ -1241,3 +1241,29 @@ tests/test_custom_task.py +1 e2e(**受理后改源仍执行冻结副本**:worksp
   取消确定性)。演示仓库测试期望零改动。
 
 全量离线 pytest(闸记录见提交);ruff/format 绿。
+
+## S09 指标 v2 与历史口径保留(F6 关闭)(2026-10-09,产品卡 11/13)
+
+缺陷(review F6,P1):`localized_strict = (touched <= expected)` 在 touched 为空时
+仍为 True——BUG-001 无改动、BUDGET_EXCEEDED 的运行被判"严格定位成功";
+且该字段语义含混("未触碰范围外文件"被读成"找全了根因")。
+
+**修法(ADR-0009 §6:指标语义变更必须带版本)**:
+- `metrics_version=2`:`localized_strict = bool(touched) and touched <= expected`
+  (空触碰不再是严格成功);docstring 与汇总字段明确写语义边界——
+  **strict = "未触碰参考范围外文件",不是找全根因**;
+- **找全程度独立度量**:`expected_coverage = |touched∩expected| / |expected|`
+  (仅对有 reference.diff 的样本,分母=|expected|;无 reference 为 None,
+  汇总带 expected_coverage_avg/denominator 与 reference_missing_count);
+- **v1 显式重算模式**(`annotate_v1`):历史口径逐字保留,只为对账存在,
+  不回写任何历史产物;
+- 失败分类 `failure_breakdown`:budget_exhausted/gate_rejected/no_patch/verify_failed
+  按真实字段计数——成本停止≠模型能力不足;
+- 评测报告标题携带 metrics_version 与 strict/coverage 口径说明;
+  coverage 只在评测层使用 reference(模型上下文零注入,与既有盲跑边界一致)。
+
+**回归**(tests/test_metrics.py +5):F6 精确翻转(空触碰 v2=False/v1=True 双向)、
+strict 语义矩阵(范围内/部分/范围外/混合 × coverage 分子分母)、
+reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全绿。
+
+全量离线 pytest(闸记录见提交);ruff/format 绿。

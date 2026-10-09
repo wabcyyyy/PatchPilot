@@ -149,7 +149,13 @@ def render(runs_root: Path, bugs_root: Path, report_out: str = "docs/eval-report
     rows = [annotate(r, bugs_root) for r in collect_runs(runs_root)]
     per_bug = latest_per_bug(rows)
     metrics = compute_metrics(per_bug)
-    generated = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+    # S09:汇总明确携带指标版本与 strict 语义边界——不允许新旧口径混排成无版本数字
+    generated = (
+        f"{datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')} · "
+        f"metrics_version={metrics.get('metrics_version')}"
+        "(localized_strict=未触碰参考范围外文件且非空;expected_coverage 仅对有 "
+        "reference.diff 的样本,分母=|expected|)"
+    )
     providers = ", ".join(metrics["by_category_providers"]) or "n/a"
     # 只有明确是真实提供方的批次才允许宣称"真实模型成绩";
     # fake/unknown(模型对象缺 provider 属性)一律按回放口径声明,不产出漂亮假数字

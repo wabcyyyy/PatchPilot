@@ -677,7 +677,7 @@
       终态不可被迟到事件复活;不引入 SSE/MQ。
 - [x] S08 演示修复与 API golden path(F7):run_dirty_ticket 改 patch_text 块协议 + --out,
       新 demo/run_api_ticket.py 全链路;离线冒烟测试钉住。
-- [ ] S09 指标 v2 与历史口径保留(F6):metrics_version=2,空 touched 不再 strict 成功,
+- [x] S09 指标 v2 与历史口径保留(F6):metrics_version=2,空 touched 不再 strict 成功,
       v1 可显式重算;expected coverage 独立指标。
 - [ ] S10a 同引擎对照接线(F8):graph 增受控 one_shot 策略,两臂共享 LOCALIZE/PLAN/上下文/
       预算/终局验收;manifest 登记差异,未登记差异报错。
