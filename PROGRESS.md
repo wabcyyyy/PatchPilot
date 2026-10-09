@@ -1425,4 +1425,29 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
   (`exit_code==4 / errors==0 / failed_cases==[]`),**两侧读数都是实测**得来的;
   顺带否掉一条我自己差点留下的假护栏:`case_results` 两边都是空,用它当断言等于装一道
   不存在的门。这条在 ubuntu 上转绿的意义与 #19-#23 不同——它正面证明容器**确实执行了**
-  pytest,而不是"没报错"。判定层要不要把"平台故障 vs 测试失败"分层,只登记为遗留②未动。
+  pytest,而不是"没报错"。判定层要不要把"平台故障 vs 测试失败"分层,只登记为遗留②未动
+  (同日追加卡见下:取证已补上,分层仍未决)。
+
+## M20 追加卡:把"容器跑不起来"的死因接进模型可见层(2026-10-09 深夜,产品卡 16/16)
+
+- **为什么做这个**:十四次 CI 连红最贵的一步不是修,是**看不见**。junit 缺失时
+  `docker_runner` 只留一句 `error: no junit xml`(症状),真因
+  (`PermissionError: '/reports/junit-….xml'`)在被丢掉的 `run.stderr_tail` 里。
+- **落点选在既有字段,不新增链路**:合成 case 的 `traceback`(它本来就是"模型可见层
+  堆栈原料"的槽位)⇒ `nodes.py:814 refine_traceback` → `prompts.py:176` 自动生效;
+  `signature` 与 `all_passed` 一字未动(判定口径不读 traceback)。
+- **分流是量出来的**:容器内那条 traceback 走 **stderr**,"哪个测试失败"走 stdout
+  ⇒ 只取 stderr,免得平台故障被读成测试结果。截 4000,与 junit 正文同口径
+  (`pytest_adapter.py:198` 实测那一行)。
+- **反向验证两件事**:(1) 经 `refine_traceback` 后原因行仍在——喂进 CI 形状的 stderr,
+  输出保留 `PermissionError: … '/reports/…xml'` 与首行退出码,site-packages 内部帧被
+  正确丢掉;(2) 判定没被改动——`report.errors==1` 与
+  `case.signature=="error: no junit xml"` 两条断言钉住。
+- **测试三条**:`tests/test_backend.py` 两例(假 `run_tests`:有 stderr / stderr 为空
+  只剩退出码),`tests/test_docker.py` 一例**真容器**(用不存在的解释器制造平台故障,
+  并断言 `reports/` 里确实没有 junit,防止这条退化成正常路径)。
+- **本地全量终态行**:`879 passed, 4 skipped` @ 1540.21s(25:40)——876 + 本轮三条新用例,
+  数目正好对上;ruff check/format 227 文件全绿。
+- **仍未决(只登记)**:把"平台没跑起来"做成独立终态(`ExecError` 直接终止)与否——
+  现在的形状是模型收到"补丁没让测试通过 + 真实原因",仍会烧轮次去改不是它的问题。
+  属判定层归类,按红线先讨论再动。

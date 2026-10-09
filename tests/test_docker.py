@@ -117,3 +117,27 @@ def test_run_pytest_docker_backend_end_to_end(tmp_path: Path, monkeypatch) -> No
         assert len(list(reports.glob("junit-*.xml"))) == 2  # junit 回传宿主,不污染工作区
     finally:
         get_settings.cache_clear()
+
+
+def test_container_platform_failure_reports_the_real_cause(tmp_path: Path) -> None:
+    """容器**根本没跑起来**时,报告不能只剩一句 "no junit xml"(症状),要带出真实原因。
+
+    这里用一个不存在的解释器制造平台故障——十四次 CI 连红看不见根因,正是因为
+    这一层把 stderr 丢了。真容器跑,不用替身。
+    """
+    work = tmp_path / "ws"
+    materialize_repo(BUG_ROOT / "BUG-003" / "repo", work, extra_commit=False)
+    reports = tmp_path / "reports"
+
+    report, run = run_tests_in_container(
+        work,
+        ["tests/test_labels.py::test_default_separator"],
+        image="patchpilot-executor:latest",
+        python_bin="patchpilot-python-that-does-not-exist",
+        report_dir=reports,
+    )
+    assert list(reports.glob("junit-*.xml")) == [], "这条用例制造的就是「没有报告」这种状态"
+    assert not report.all_passed and report.errors == 1
+    case = report.failed_cases[0]
+    assert case.signature == "error: no junit xml"  # 判定口径不许被改动
+    assert case.traceback and str(run.exit_code) in case.traceback

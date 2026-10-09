@@ -121,3 +121,22 @@ CI(run #5..#17)的 docker 簇就是上面"uid ≠ 1000"那条分支被真实触�
 **观测边界(不许当作证据)**:本地 Windows/Docker Desktop 全绿**不能**证明 Linux
 分支正确——文件共享层根本不执行 unix 属主校验。docker 簇的验收只能看 ubuntu CI,
 这也是 M20 判据里"CI 连续 3 次全绿"不是形式的原因。
+
+## 容器跑不起来时的取证(2026-10-09 同日补)
+
+上面那轮排查最贵的一步不是修,是**看不见**:junit 缺失时 `docker_runner` 只留下一句
+`error: no junit xml`(症状),真实死因(如
+`PermissionError: [Errno 13] Permission denied: '/reports/junit-….xml'`)在被我丢掉的
+`run.stderr_tail` 里。十四次 CI 连红就是十四次"只看到症状"。
+
+现在:`junit` 不存在 ⇒ 把 `docker run` 退出码 + 容器 stderr 尾巴(截 4000,与 junit
+正文同口径)写进那条合成 case 的 `traceback`。它走的是既有模型可见层链路
+(`nodes.py:814 refine_traceback` → `prompts.py:176`),**判定字段 `signature` /
+`all_passed` 不受影响**;而且实测过帧过滤不会把死因滤掉——site-packages 的内部帧被丢,
+末行 `PermissionError: …` 保留。
+
+- **为什么只取 stderr**:实测分流——容器内 pytest 的这条 traceback 走 stderr,
+  "哪个测试失败了"走 stdout。把 stdout 混进来会让平台故障看起来像测试结果。
+- **为什么仍不是分层**:这条 case 依旧算"测试没通过",模型收到的是"你的补丁没让
+  测试通过 + 真实原因",还会继续烧轮次改一个不是它的问题。要不要把"平台没跑起来"
+  做成独立终态属判定层语义,见 TODO M20 遗留②。

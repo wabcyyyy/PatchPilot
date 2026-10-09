@@ -804,17 +804,25 @@
 的写权限。今天不受影响(付费批都跑在 Docker Desktop ⇒ 非 posix 分支,不下发参数),
 但换到 Linux 宿主做真实批次前要先决定:仅对默认执行器镜像对齐身份,还是维持现状。
 
-**遗留②(本轮只把测试装上牙齿,判定层未动)**:容器"根本没跑起来"今天被
+**遗留②(诊断已补上,分层仍未决)**:容器"根本没跑起来"今天被
 `parse_junit_xml` 折算成一条**普通的失败用例**(`errors=1` + `failed_cases` 里一条
 "error: no junit xml"),于是 `all_passed=False` —— 判定是 fail-safe 的(不会伪绿,
 这点已被 #5..#18 的行为验证),但**平台故障与测试失败混在同一层**:模型看到的是
-"你的补丁没让测试通过",而真实原因是执行器没跑成。要不要把两者分层(例如 junit
-缺失 ⇒ `ExecError` 直接终止任务、不进补丁反馈)属判定层语义,不在本轮擅动。
-本轮做的是 `tests/test_docker.py::test_container_wrong_test_id_never_passes` 的
-**反向验证**:旧断言 `not all_passed` 对"没跑起来"同样成立(十四次连红里它一直绿);
-现加 `exit_code==4 / errors==0 / failed_cases==[]` 三条,真读数 4/0/空 vs 故障读数
-1/1/一条 ⇒ 三条都会红,这条用例从"空过"变成"能抓"。
-(`case_results` 不能用:两边都是空,合成失败项在 `failed_cases` 里。)
+"你的补丁没让测试通过",而真实原因是执行器没跑成。
+
+- **已补(同日第二轮)**:`docker_runner` 在 junit 缺失时把 `docker run` 退出码与容器
+  **stderr** 尾巴挂到那条合成 case 的 `traceback`(截 4000,与 junit 正文同口径),
+  走既有消费链 `nodes.py:814 refine_traceback → prompts.py:176`,`signature` 与
+  `all_passed` 一字未动。**实测**(不是推的):帧过滤之后模型仍看到
+  `容器未生成 junit 报告;docker run 退出码 1` + `PermissionError: ... '/reports/…xml'`,
+  而 site-packages 噪声帧被正确丢掉。用例三条:假 `run_tests` 两例(有 stderr /
+  空 stderr 只剩退出码)+ 真容器一例(不存在的解释器制造平台故障)。
+- **分流是量过的**:那条 PermissionError traceback 走 **stderr**,"哪个测试失败"走
+  stdout ⇒ 只取 stderr,不把失败行混进死因。
+- **仍未决(判定层语义,不自行推进)**:要不要把"平台没跑起来"做成**独立终态**
+  (如 `ExecError` 直接终止任务)。今天的形状是:模型收到"你的补丁没让测试通过"
+  (现在附带真实原因),然后**继续烧轮次**去改一个不是它的问题。分层要动终态归类
+  与门禁口径,先讨论。
 
 ## 明确不做(需用户裁决,不自行推进)
 - **LLM 语义摘要**(目标里"语义摘要"的一支):ADR-0004 已把它列为"考虑后否决"的候选

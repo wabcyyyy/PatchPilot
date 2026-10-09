@@ -27,9 +27,12 @@ from pathlib import Path
 
 from app.adapters.pytest_adapter import PytestReport, parse_junit_xml
 from app.config import get_settings
-from app.executor.local_runner import run_tests
+from app.executor.local_runner import TestRunResult, run_tests
 
 log = logging.getLogger(__name__)
+
+# 合成 case 的 traceback 上限,与 pytest_adapter 里 junit <failure> 正文的截断口径一致
+_STDERR_TAIL_CHARS = 4000
 
 # docker/executor.Dockerfile 里 `useradd --create-home --uid 1000 pp` 的固定 uid:
 # 镜像不给被测代码 root 权限,代价是它必须"看得见且写得进"宿主给它的两个目录。
@@ -99,6 +102,23 @@ def docker_available() -> bool:
         return False
 
 
+def _attach_container_stderr(report: PytestReport, run: TestRunResult) -> None:
+    """容器没交出 junit 报告时,把它的退出码与 stderr 尾巴挂到那条合成 case 上。
+
+    判定口径一个字不动(`signature`/`all_passed` 都不读 traceback),但真实死因至少
+    看得见:CI run #5..#18 十四次连红的根因(`PermissionError: '/reports/x.xml'`)
+    原本只存在于被我丢掉的 stderr 里,报告里只剩一句"no junit xml"——那是症状不是原因。
+    实测分流:这条 traceback 走 **stderr**,而"哪个测试失败了"走 stdout,所以只取 stderr。
+    """
+    if not report.failed_cases:
+        return
+    tail = (run.stderr_tail or "").strip()
+    lines = [f"容器未生成 junit 报告;docker run 退出码 {run.exit_code}"]
+    if tail:
+        lines.append(tail)
+    report.failed_cases[0].traceback = "\n".join(lines)[-_STDERR_TAIL_CHARS:]
+
+
 def run_tests_in_container(
     workspace: Path | str,
     test_ids: list[str],
@@ -163,6 +183,8 @@ def run_tests_in_container(
     log.info("docker run_tests: %s test(s) in image=%s", len(test_ids), image)
     run = run_tests(cmd, cwd=ws, timeout_seconds=timeout)
     report = parse_junit_xml(junit)
+    if not junit.exists():
+        _attach_container_stderr(report, run)
     report.requested_ids = list(test_ids)
     report.exit_code = run.exit_code
     report.duration_ms = run.duration_ms

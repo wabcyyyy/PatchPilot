@@ -295,6 +295,59 @@ def test_chown_to_executor_walks_the_tree_and_survives_unchownable(
     assert tmp_path in seen and tmp_path / "src" in seen
 
 
+def test_missing_junit_carries_container_stderr(monkeypatch, tmp_path: Path) -> None:
+    """容器没交出 junit 报告时,死因必须进模型可见层。
+
+    "no junit xml" 是症状不是原因:CI #5..#18 十四次连红的真因(容器写不进报告目录的
+    PermissionError)一直在被我丢掉的 stderr 里。这里同时钉住**判定口径不变**——
+    挂 traceback 不许动 signature,也不许把失败翻成通过。
+    """
+    from app.executor import docker_runner
+
+    def fake_run_tests(command, cwd, timeout_seconds=None):
+        return TestRunResult(
+            command=command,
+            exit_code=1,
+            stdout_tail="F\n1 failed in 0.01s",
+            stderr_tail="PermissionError: [Errno 13] Permission denied: '/reports/x.xml'",
+            duration_ms=1,
+        )
+
+    monkeypatch.setattr(docker_runner, "_host_identity", lambda: (False, -1, -1))
+    monkeypatch.setattr(docker_runner, "run_tests", fake_run_tests)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    report, _ = docker_runner.run_tests_in_container(
+        ws, ["t.py::t"], report_dir=tmp_path / "r", image="i:1"
+    )
+    case = report.failed_cases[0]
+    # 判定口径逐字不变
+    assert not report.all_passed and report.errors == 1
+    assert case.signature == "error: no junit xml"
+    # 死因带上来了,而"哪个测试失败"不是死因,不混进来
+    assert "PermissionError" in case.traceback
+    assert "1 failed" not in case.traceback
+
+
+def test_missing_junit_without_stderr_still_has_exit_code(monkeypatch, tmp_path: Path) -> None:
+    """stderr 空(容器被杀/管道关闭那类)也要留下退出码,不能又变回一句无信息的话。"""
+    from app.executor import docker_runner
+
+    def fake_run_tests(command, cwd, timeout_seconds=None):
+        return TestRunResult(
+            command=command, exit_code=137, stdout_tail="", stderr_tail="", duration_ms=1
+        )
+
+    monkeypatch.setattr(docker_runner, "_host_identity", lambda: (False, -1, -1))
+    monkeypatch.setattr(docker_runner, "run_tests", fake_run_tests)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    report, _ = docker_runner.run_tests_in_container(
+        ws, ["t.py::t"], report_dir=tmp_path / "r", image="i:1"
+    )
+    assert "137" in report.failed_cases[0].traceback
+
+
 def test_run_pytest_rejects_container_env_on_local_backend(monkeypatch, tmp_path: Path) -> None:
     """声明了容器环境的题不允许退回宿主直跑:宿主没有那套年代精确依赖,
     跑出来的"失败"分不清是缺陷还是环境坏,正是 validate_entry 要拦的那类假信号。
