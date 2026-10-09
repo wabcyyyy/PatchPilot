@@ -1,0 +1,53 @@
+== q0(openai) 尝试 21 次,事故 0 次 ==
+SWE-astropy__astropy-8707: res=3/3 tokens=[263987, 199129, 234776] 极差=64858 turns=[32, 30, 34]
+   rep1: verdict=resolved status=FINISHED turns=32 tokens=263987 error=
+   rep2: verdict=resolved status=FINISHED turns=30 tokens=199129 error=
+   rep3: verdict=resolved status=FINISHED turns=34 tokens=234776 error=
+SWE-pydata__xarray-3095: res=2/3 tokens=[239238, 226789, 393768] 极差=166979 turns=[33, 29, 42] 判死=propose: agent loop tokens 139718 exceed budget 135357...
+   rep1: verdict=resolved status=FINISHED turns=33 tokens=239238 error=
+   rep2: verdict=resolved status=FINISHED turns=29 tokens=226789 error=
+   rep3: verdict=failed status=BUDGET_EXCEEDED turns=42 tokens=393768 error=propose: agent loop tokens 139718 exceed budget 135357
+SWE-sphinx-doc__sphinx-7590: res=0/3 tokens=[389065, 386266, 399077] 极差=12811 turns=[43, 41, 41] 判死=propose: task token budget 400000 exhausted before request: ...
+   rep1: verdict=failed status=BUDGET_EXCEEDED turns=43 tokens=389065 error=propose: task token budget 400000 exhausted before request: used 389065 + pendin
+   rep2: verdict=failed status=BUDGET_EXCEEDED turns=41 tokens=386266 error=propose: task token budget 400000 exhausted before request: used 386266 + pendin
+   rep3: verdict=failed status=BUDGET_EXCEEDED turns=41 tokens=399077 error=propose: agent loop tokens 148961 exceed budget 138895
+SWE-sphinx-doc__sphinx-7748: res=0/3 tokens=[396555, 396854, 391943] 极差=4911 turns=[41, 37, 38] 判死=propose: agent loop tokens 157042 exceed budget 147404...
+   rep1: verdict=failed status=BUDGET_EXCEEDED turns=41 tokens=396555 error=propose: agent loop tokens 157042 exceed budget 147404
+   rep2: verdict=failed status=BUDGET_EXCEEDED turns=37 tokens=396854 error=propose: agent loop tokens 156852 exceed budget 146081
+   rep3: verdict=failed status=BUDGET_EXCEEDED turns=38 tokens=391943 error=propose: agent loop tokens 142376 exceed budget 135256
+SWE-sphinx-doc__sphinx-8548: res=0/3 tokens=[393105, 391576, 388532] 极差=4573 turns=[43, 37, 40] 判死=propose: agent loop tokens 294128 exceed budget 286174...
+   rep1: verdict=failed status=BUDGET_EXCEEDED turns=43 tokens=393105 error=propose: agent loop tokens 294128 exceed budget 286174
+   rep2: verdict=failed status=BUDGET_EXCEEDED turns=37 tokens=391576 error=propose: agent loop tokens 141975 exceed budget 137094
+   rep3: verdict=failed status=BUDGET_EXCEEDED turns=40 tokens=388532 error=propose: agent loop tokens 135312 exceed budget 134738
+SWE-sphinx-doc__sphinx-8593: res=3/3 tokens=[298469, 323056, 227132] 极差=95924 turns=[33, 32, 31]
+   rep1: verdict=resolved status=FINISHED turns=33 tokens=298469 error=
+   rep2: verdict=resolved status=FINISHED turns=32 tokens=323056 error=
+   rep3: verdict=resolved status=FINISHED turns=31 tokens=227132 error=
+SWE-sphinx-doc__sphinx-9461: res=0/3 tokens=[393389, 386011, 396084] 极差=10073 turns=[39, 38, 37] 判死=propose: agent loop tokens 151203 exceed budget 145077...
+   rep1: verdict=failed status=BUDGET_EXCEEDED turns=39 tokens=393389 error=propose: agent loop tokens 151203 exceed budget 145077
+   rep2: verdict=failed status=BUDGET_EXCEEDED turns=38 tokens=386011 error=propose: task token budget 400000 exhausted before request: used 386011 + pendin
+   rep3: verdict=failed status=BUDGET_EXCEEDED turns=37 tokens=396084 error=propose: agent loop tokens 162213 exceed budget 153125
+
+== Q0 判据(预登记第五节,跑完不许动) ==
+res_i 分布: {'SWE-astropy__astropy-8707': 3, 'SWE-pydata__xarray-3095': 2, 'SWE-sphinx-doc__sphinx-7590': 0, 'SWE-sphinx-doc__sphinx-7748': 0, 'SWE-sphinx-doc__sphinx-8548': 0, 'SWE-sphinx-doc__sphinx-8593': 3, 'SWE-sphinx-doc__sphinx-9461': 0}
+可判别题 k=1 ['SWE-pydata__xarray-3095']
+tokens 全批 p50=388532 合计=7114801
+判据: k<=1 ⇒ 停止付费。结论:deepseek-flash 在这档难度上的结果方差淹没有望检测的机制差异,本证据集不支持任何净增益主张。
+
+====================================================================
+批执行事实(补)
+====================================================================
+- gen2 驱动输出:21/21 完成、0 事故、退出码 0;真实尝试 tokens 合计 7,114,801
+  (台账另含 gen2 fake 冒烟 7 条 = 10,141,驱动"累计 7,124,942"含冒烟);
+- 程序级总花费(20M 上限口径):gen1 真实 2,505,508(含被停止的 7748 rep3 ≈59k,
+  台账 runs/paid-batch-ledger-2026-10-09-gen1-aborted.jsonl)+ 诊断探针 ≈80k
+  + gen2 真实 7,114,801 ≈ 9.70M tokens ≈ $3.3(按 $0.34/M 约 value);
+  触发 k<=1 停手后 Q1/Q2/Q3 未启动,省下 ≈4.1M+ 的对照臂预算;
+- resolved 子集(8 次)tokens p50 = 237k(199k~323k,极差 124k,±26%);
+  budget-dead 子集(12 次)tokens 极差仅 4,573~16,979(1.2%~4.3%)——
+  判死形态近乎确定,翻转(xarray)是相变(resolved 227~239k vs dead 394k),不是漂移;
+- 判死类型(report.error 原文,M15 分类法):任务级总额闸
+  "task token budget 400000 exhausted before request" ×3(7590 rep1/2, 9461 rep2);
+  阶段份额闸 "agent loop tokens X exceed budget Y" ×9;resolved ×9;needs_review ×0;
+- 两次条件对照(免费副产品):8707 在 server-default 思考模式下 needs_review(gen1),
+  disabled 下 3/3 resolved——模型条件是比参数更大的效应源,整批同条件重跑是必要的。
