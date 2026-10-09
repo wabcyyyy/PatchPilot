@@ -1188,3 +1188,31 @@ tests/test_custom_task.py +1 e2e(**受理后改源仍执行冻结副本**:worksp
 既有 39 个 API/service 用例全绿。
 
 全量离线 pytest(闸记录见提交);ruff/format 绿。
+
+## S07 运行中进度与轨迹可查(2026-10-09,产品卡 9/13)
+
+缺陷:轨迹 JSONL 只在任务**结束**时才整批入库——运行中查任务只有 QUEUED/RUNNING
+两个状态,用户不知道"现在在哪一步、为何失败";实时进度无从谈起。
+
+**修法(单进程最小方案,不引入 SSE/MQ/WebSocket)**:
+- **Tracker 增可选 sink**:每条事件在 JSONL 落盘之后(JSONL 是原始取证来源与真相层)、
+  **Tracker 锁之外**调用(service 把事件幂等写入 SQLite)——轮询方不持 Tracker 锁做
+  数据库操作,锁顺序倒置无从发生;sink 抛错只计数(sink_failures)不打断运行,
+  收尾 `_persist_artifacts` 的补录(INSERT OR IGNORE,返回**实际新插入数**)补齐全部
+  缺口并打 WARNING——降级可观测,不谎称实时入库成功。
+- **幂等去重**:(task_id, event_id) 唯一索引(SQLite UNIQUE 不约束 NULL,旧行照存);
+  迁移纪律=先存后删——历史重复行整体复制到 `trajectory_events_duplicates` 留档再从
+  主表去重,不为建索引静默删历史;迁移可重复、事务化。
+- **进度列**:tasks 增 `stage`/`last_event_at`,由 sink 在入账事件时推进,**守卫到
+  非终态行**——终态后迟到事件只进取证轨迹,生命周期与进度列都不被复活
+  (取消×自然完成的原子守卫照旧)。stage 与生命周期 status 是两列:LOCALIZE 永远
+  不会被误读成终态。
+- **API**:TaskOut 增 stage/last_event_at(旧行缺列=None);offset/limit 轮询面不变。
+
+**回归**(tests/test_live_progress.py 5 例):Event barrier 在 FakeLLM 内精确暂停——
+运行中查任务可见 RUNNING+LOCALIZE 进度列、轨迹表已有事件,释放后到 FINISHED;
+实时+补录并集恰好等于 JSONL 行数且 event_id 唯一;sink 全程失败仍 FINISHED 且
+补录补齐;终态后迟到事件不改 status/进度列(事件本身入轨迹);TaskOut 进度字段在场。
+既有 39 个 API/service 用例全绿。
+
+全量离线 pytest(闸记录见提交);ruff/format 绿。

@@ -12,6 +12,7 @@ import json
 import logging
 import threading
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -53,12 +54,26 @@ class TrajectoryEvent:
 
 
 class Tracker:
-    """线程安全地追加轨迹事件(内存 + JSONL 落盘)。"""
+    """线程安全地追加轨迹事件(内存 + JSONL 落盘)。
 
-    def __init__(self, path: Path | None, task_id: str = "") -> None:
+    S07:可选 sink——每条事件在 **JSONL 落盘之后**(JSONL 是原始取证来源与
+    真相层)在 Tracker 锁**之外**调用(service 把事件幂等写入 SQLite 并推进
+    进度列)。sink 抛错绝不打断运行:计数到 sink_failures,由收尾
+    insert_events 补录;失败数即"实时入库降级"的可观测证据。
+    """
+
+    def __init__(
+        self,
+        path: Path | None,
+        task_id: str = "",
+        *,
+        sink: Callable[[dict[str, object]], None] | None = None,
+    ) -> None:
         self.path = path
         self.task_id = task_id
         self.events: list[TrajectoryEvent] = []
+        self.sink = sink
+        self.sink_failures = 0
         self._lock = threading.Lock()
         if path is not None:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,10 +101,22 @@ class Tracker:
             error=error,
             timestamp=_now_iso(),
         )
+        payload = event.as_dict()
         with self._lock:
             self.events.append(event)
             if self.path is not None:
                 with self.path.open("a", encoding="utf-8") as fh:
-                    fh.write(json.dumps(event.as_dict(), ensure_ascii=False) + "\n")
+                    fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        if self.sink is not None:
+            try:
+                self.sink(payload)  # 锁外执行:SQLite 写不能持 Tracker 锁(锁序倒置)
+            except Exception as exc:  # 实时入库降级可观测;收尾补录兜底
+                self.sink_failures += 1
+                log.warning(
+                    "trajectory sink failed (%s failures, tool=%s): %s",
+                    self.sink_failures,
+                    tool,
+                    exc,
+                )
         log.debug("trajectory: %s round=%s err=%s", tool, round_no, error)
         return event.request_id

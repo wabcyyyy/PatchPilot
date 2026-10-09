@@ -400,6 +400,7 @@ class TaskService:
                     model_name=real_model_name,
                     cancel_event=cancel_event,
                     resume=resume,
+                    tracker_sink=self._live_event_sink(task_id),
                 )
             else:
                 from app.evals.driver import run_task
@@ -413,6 +414,7 @@ class TaskService:
                     run_dir=run_dir,
                     model_name=real_model_name,
                     cancel_event=cancel_event,
+                    tracker_sink=self._live_event_sink(task_id),
                 )
 
             # 先落产物,再翻终态:轮询方见到终态时轨迹/报告必然已可查。
@@ -445,6 +447,18 @@ class TaskService:
             self._cancels.unregister(task_id)
             self.lock.release(lock_key)
 
+    def _live_event_sink(self, task_id: str):
+        """S07:实时事件 sink——Tracker 每条事件(锁外)同步写入 SQLite 并推进进度列。
+
+        幂等:(task_id, event_id) 唯一索引兜底,重复事件不产生重复行;
+        失败不抛(sink 内部计数),收尾 _persist_artifacts 会补录全部缺口。
+        """
+
+        def _sink(event: dict[str, Any]) -> None:
+            self.repo.upsert_event_live(task_id, event)
+
+        return _sink
+
     def _persist_artifacts(self, task_id: str, result: Any, run_dir: Path) -> None:
         """轨迹 JSONL → 入库;补丁行 → 入库(评测读口径见 design.md §7:
         tasks=生命周期真相,report.json=引擎取证;evaluations 表已删,P3-8)。"""
@@ -454,7 +468,15 @@ class TaskService:
                 json.loads(line) for line in traj_path.read_text(encoding="utf-8").splitlines()
             ]
             if events:
-                self.repo.insert_events(task_id, events)
+                backfilled = self.repo.insert_events(task_id, events)
+                if backfilled:
+                    # S07:收尾补录数 > 0 = 运行期实时 sink 有缺口(降级可观测),
+                    # 不谎称"实时入库成功"——缺口的行在这一刻补齐,总量不缺。
+                    log.warning(
+                        "task %s: live sink missed %d event(s); backfilled at finalize",
+                        task_id,
+                        backfilled,
+                    )
         try:
             report = json.loads((Path(result.run_dir) / "report.json").read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):

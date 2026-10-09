@@ -199,6 +199,9 @@ def test_task_responses_do_not_leak_internal_fields(client: TestClient) -> None:
         "run_dir",
         "created_at",
         "finished_at",
+        # S07:运行中进度字段(stage 与生命周期 status 是两列,LOCALIZE 不是终态)
+        "stage",
+        "last_event_at",
     }
     listing = client.get("/api/tasks").json()
     assert listing["tasks"] and set(listing["tasks"][0]) == set(task)

@@ -41,6 +41,7 @@ def run_task_graph(
     cancel_event: threading.Event | None = None,
     branch_model_factory: Callable[[int], Model] | None = None,
     resume: bool = False,
+    tracker_sink: Callable[[dict[str, Any]], None] | None = None,
 ) -> Any:
     """执行一个任务(状态机引擎);返回与 plain 引擎一致的 TaskResult。
 
@@ -91,7 +92,7 @@ def run_task_graph(
     result.provenance = build_provenance(
         result.model_provider, model_name, "graph", max_turns=max_turns
     )
-    tracker = Tracker(run_dir / "trajectory.jsonl", task_id=task_id)
+    tracker = Tracker(run_dir / "trajectory.jsonl", task_id=task_id, sink=tracker_sink)
     started = time.monotonic()
     # S02b:deadline 在**执行线程启动**时建立(排队不计),墙钟持久化进 state——
     # 恢复沿用原值的剩余时间,停机间隔计入,不重授 900s

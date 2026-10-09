@@ -246,6 +246,11 @@ class Repository:
     # ---------- trajectory ----------
 
     def insert_events(self, task_id: str, events: list[dict[str, Any]]) -> int:
+        """批量入轨迹(收尾补录口径,S07 起 INSERT OR IGNORE):
+
+        (task_id, event_id) 唯一索引兜底——实时 sink 已入账的事件在此幂等跳过,
+        返回**实际新插入**的行数;补录数 > 0 即运行期 sink 有缺口(可观测降级)。
+        """
         rows = [
             (
                 e.get("event_id"),
@@ -262,13 +267,39 @@ class Repository:
             )
             for e in events
         ]
+        inserted = 0
         with self._lock, self._conn:
-            self._conn.executemany(
-                "INSERT INTO trajectory_events (event_id, task_id, round, state, tool, request_id,"
-                " input, output_summary, duration_ms, error, timestamp) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                rows,
+            for row in rows:
+                cur = self._conn.execute(
+                    "INSERT OR IGNORE INTO trajectory_events"
+                    " (event_id, task_id, round, state, tool, request_id,"
+                    " input, output_summary, duration_ms, error, timestamp)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    row,
+                )
+                inserted += cur.rowcount
+        return inserted
+
+    def upsert_event_live(self, task_id: str, event: dict[str, Any]) -> bool:
+        """运行中实时入账单条事件并推进进度列(S07);终态行不复活。
+
+        返回 False = 重复事件或任务已终态(进度列不再推进);调用方记日志继续,
+        收尾由 insert_events 补录兜底。刻意不持有 Tracker 锁(锁顺序倒置防线)。
+        """
+        inserted = self.insert_events(task_id, [event])
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "UPDATE tasks SET stage=?, last_event_at=?"
+                " WHERE id=? AND status NOT IN"
+                f" ({','.join('?' * len(TERMINAL_STATUSES))})",
+                (
+                    str(event.get("state") or ""),
+                    str(event.get("timestamp") or ""),
+                    task_id,
+                    *TERMINAL_STATUSES,
+                ),
             )
-        return len(rows)
+        return inserted > 0 and cur.rowcount > 0
 
     def get_trajectory(
         self, task_id: str, limit: int = 200, offset: int = 0

@@ -141,6 +141,7 @@ def run_task(
     cancel_event: threading.Event | None = None,
     arm: str = "agent",
     agent: AgentFn | None = None,
+    tracker_sink: Callable[[dict[str, Any]], None] | None = None,
 ) -> TaskResult:
     """执行一个任务:基线 → 工具循环 → 验证 → 判定,全程落盘。
 
@@ -179,7 +180,7 @@ def run_task(
     result.provenance = build_provenance(
         result.model_provider, model_name, engine, arm, max_turns=max_turns
     )
-    tracker = Tracker(run_dir / "trajectory.jsonl", task_id=task_id)
+    tracker = Tracker(run_dir / "trajectory.jsonl", task_id=task_id, sink=tracker_sink)
     started = time.monotonic()
     # S02b:任务级墙钟截止时刻,执行线程启动时建立(排队不计);plain 验证段
     # 从此与 graph 同口径——每次 run_pytest 前后复查,剩余时间不足不启动下一次

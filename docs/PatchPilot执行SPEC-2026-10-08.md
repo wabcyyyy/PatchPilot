@@ -511,7 +511,7 @@ basetemp 必须在仓库外；每卡提交并更新进度。单次生成不超�
 | S04 | done(2026-10-09) | fix(rounds) commit | apply 不再预增,拒绝/验证失败统一经 rollback 单点递增;max_rounds=2 首拒后第二轮必发生;test_round_transitions 8 例;详见 PROGRESS S04 |
 | S05b | done(2026-10-09) | feat(contract-wiring) commit | 幂等键=task_spec_hash、契约双写、执行前一致性闸、custom 从契约重建;test_custom+3/service_robustness+2;详见 PROGRESS S05b |
 | S06 | done(2026-10-09) | feat(intake) commit | input_snapshot 冻结+preflight 分类预检;custom 执行/恢复只读冻结副本;test_input_snapshot 8+test_preflight 6+e2e 1;详见 PROGRESS S06 |
-| S07 | pending | — | — |
+| S07 | done(2026-10-09) | feat(live-progress) commit | Tracker sink→SQLite 实时事件+进度列(终态守卫),先存后删迁移+唯一索引,收尾补录降级可观测;test_live_progress 5 例;详见 PROGRESS S07 |
 | S08 | pending | — | — |
 | S09 | pending | — | — |
 | S10a/S10b | pending | — | — |

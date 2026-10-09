@@ -68,6 +68,10 @@ class TaskOut(BaseModel):
     run_dir: str | None = None
     created_at: str | None = None
     finished_at: str | None = None
+    # S07:运行中进度(独立于生命周期 status——LOCALIZE 这类 stage 不是终态);
+    # 旧行缺列时为 None
+    stage: str | None = None
+    last_event_at: str | None = None
 
 
 class TaskListOut(BaseModel):

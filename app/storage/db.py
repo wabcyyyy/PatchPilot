@@ -68,17 +68,68 @@ _TASK_SPEC_COLUMNS: tuple[tuple[str, str], ...] = (
     ("task_spec_json", "TEXT"),
     ("task_spec_hash", "TEXT"),
     ("task_spec_schema_version", "INTEGER"),
+    # S07:运行中进度列(独立于生命周期 status——LOCALIZE 这类 stage 不是终态)
+    ("stage", "TEXT"),
+    ("last_event_at", "TEXT"),
 )
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
     existing = {row[1] for row in conn.execute("PRAGMA table_info(tasks)")}
-    if all(name in existing for name, _ in _TASK_SPEC_COLUMNS):
-        return
     with conn:
         for name, coltype in _TASK_SPEC_COLUMNS:
             if name not in existing:
                 conn.execute(f"ALTER TABLE tasks ADD COLUMN {name} {coltype}")
+    _migrate_trajectory_dedup(conn)
+
+
+def _migrate_trajectory_dedup(conn: sqlite3.Connection) -> None:
+    """S07:trajectory_events 按 (task_id, event_id) 去重并建唯一索引。
+
+    迁移纪律(spec S07):**先保存原记录再去重**——重复行整体复制到
+    trajectory_events_duplicates 留档,然后主表只保留每组第一行;
+    绝不为建唯一索引静默删历史。event_id 为 NULL 的旧行不参与唯一约束
+    (SQLite 的 UNIQUE 不约束 NULL),照常保留。
+    可重复:索引已存在即整体跳过。
+    """
+    index_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='index' AND name='uq_traj_task_event'"
+    ).fetchone()
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='trajectory_events'"
+    ).fetchone()
+    if index_exists or not table_exists:
+        return
+    with conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS trajectory_events_duplicates AS"
+            " SELECT * FROM trajectory_events WHERE 0"
+        )
+        dupes = conn.execute(
+            "SELECT COUNT(*) FROM trajectory_events"
+            " WHERE event_id IS NOT NULL"
+            " AND id NOT IN (SELECT MIN(id) FROM trajectory_events"
+            "               WHERE event_id IS NOT NULL GROUP BY task_id, event_id)"
+        ).fetchone()[0]
+        if dupes:
+            conn.execute(
+                "INSERT INTO trajectory_events_duplicates"
+                " SELECT * FROM trajectory_events"
+                " WHERE event_id IS NOT NULL"
+                " AND id NOT IN (SELECT MIN(id) FROM trajectory_events"
+                "               WHERE event_id IS NOT NULL GROUP BY task_id, event_id)"
+            )
+            conn.execute(
+                "DELETE FROM trajectory_events"
+                " WHERE event_id IS NOT NULL"
+                " AND id NOT IN (SELECT MIN(id) FROM trajectory_events"
+                "               WHERE event_id IS NOT NULL GROUP BY task_id, event_id)"
+            )
+        conn.execute(
+            "CREATE UNIQUE INDEX uq_traj_task_event"
+            " ON trajectory_events(task_id, event_id)"
+            " WHERE event_id IS NOT NULL"
+        )
 
 
 def connect(db_path: Path | str) -> sqlite3.Connection:
