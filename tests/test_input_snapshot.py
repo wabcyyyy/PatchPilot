@@ -69,11 +69,10 @@ def test_freeze_rejects_symlinks_without_following(tmp_path: Path) -> None:
         freeze_input(src, tmp_path / "run", max_files=100, timeout_seconds=60)
     # 拒绝发生在平台副本上:半份 tmp 被清理,run_dir 不留残档
     assert not (tmp_path / "run" / SNAPSHOT_DIRNAME).exists()
-    assert (
-        not list(tmp_path / "run".glob(".source_snapshot.tmp-*"))
-        if (tmp_path / "run").exists()
-        else True
-    )
+    # 括号必须显式:`tmp_path / "run".glob(...)` 是对 str 调 glob(AttributeError),
+    # 这行在无 symlink 特权的 Windows 上从未执行过,linux(CI)上首次运行即暴露
+    if (tmp_path / "run").exists():
+        assert not list((tmp_path / "run").glob(".source_snapshot.tmp-*"))
 
 
 def test_freeze_refuses_containment(tmp_path: Path) -> None:

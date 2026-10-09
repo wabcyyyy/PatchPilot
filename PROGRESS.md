@@ -1345,3 +1345,24 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
   一个量级,与"不启动 Q2"互相印证。
 - **claim 边界**:Q0 的产出是噪声地板与负结果,不是修复率成绩;简历不得出现净增益数字,
   只可表述"预登记判据驱动的付费实验设计与负结果停手"(release-evidence §7/§8 已同步)。
+
+## 「全都允许」处置轮 + CI 存量红诊断(2026-10-09,产品卡 14/14)
+
+- **BUG-014 reference.diff 存量缺陷已修**:gold diff 对格式化前旧源码生成(M10 修 replay
+  时漏掉的半边,test_blockpatch 曾绕行),对当前 repo 快照重生成(apply 干净、应用后 repo
+  测试 4 绿);全语料 47 题扫描仅此一题失同步。回归钉 tests/test_bug_corpus.py(+2):
+  **坑:bugs/*/repo 在主仓 worktree 内部,原位 `git apply` 会摸到主仓 .git,必须把被改
+  文件复制到仓库外校验**。
+- **「全都允许」≠翻转**:M11.8.5/M14.2/明确不做各项逐条处置入 TODO(不动者均有实测
+  理由:Q1 在 k=1 下算术上不可能出结论、Q0 噪声 ±26% 使 M14.2/语义摘要的裁定实验
+  无统计力、Docker 数据盘迁 D 要停用户其他项目容器等)。
+- **E3 真实模型佐证补齐**:Q0 的 8 个 resolved run 全部触发 verify_double_run,
+  mismatch 全 null(design.md §E3 指针已更新)。
+- **CI 存量红诊断(新卡 M20)**:run #15/#16 的 test job 红自 ≥M16;取回日志比对坐实
+  与本轮改动无关(442cd8d 同样失败同批用例)。7 个失败=四簇:docker 镜像脱节 ×2、
+  output_filter 环境敏感断言 ×2、search_tools 的 rg 预装分支 ×2,外加本轮推送新增
+  暴露的 1 个——S06 测试自身 `tmp_path / "run".glob(...)` 运算符优先级 bug(对 str 调
+  glob;该行在 Windows 无 symlink 特权从未执行过,linux 首次执行即炸)——已修,
+  断言语义不变。剩余 6 个入 TODO M20,判据:CI 转绿且零断言删弱。
+- **推送**:origin/master 442cd8d → da26677(S 系列+演示闭环+L01 全程),随后
+  处置轮 commit 跟进;README 补 DeepSeek 端点条件提示与 Q0 口径。

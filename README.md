@@ -36,7 +36,9 @@
 - **外部基准接入(v2)**:SWE-bench Verified 元数据 → 本地任务(`app/evals/swebench.py` +
   `scripts/import_swebench.py`),每题可自带执行环境(`env: python/image/workdir/network`,
   用官方评测镜像),复用**同一套**基线/验证/门禁判定;导入期从镜像回捞构建产物。
-  真实模型批次与"有循环 vs 无执行反馈"的两臂消融对照均已实跑,口径、负面结果与瓶颈定位
+  真实模型批次、双跑复核一致性(8/8 mismatch=null)与"有循环 vs 无执行反馈"的两臂消融
+  对照均已实跑;预登记驱动的噪声地板批(7 题 × 3 次)与负结果停手见
+  `docs/paid-batch-preregistration-2026-10-08.md`,口径、负面结果与瓶颈定位
   见 `docs/swe-ablation-evidence-2026-10-07.md`。**不声称 SWE-bench 官方跑分**:样本、
   判定规则与提交形态均为自定,任何解决率数字都必须带着该文第 2 节的局限一起读。
 

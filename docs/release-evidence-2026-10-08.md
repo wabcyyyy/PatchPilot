@@ -78,7 +78,12 @@ HEAD 上的实测,不是沿用历史文档。能力声明分四级:**implemented
    (2 个旧钉子按 spec 反转并注明:graph+one_shot 从拒绝变支持、junit 夹具写实化);
    收口后增量:2026-10-09 语料完整性钉 tests/test_bug_corpus.py +2(869→871),
    并修复 BUG-014 reference.diff 存量缺陷(全语料 47 题唯一失同步项);
-5. provider 账单对账、多实例部署、Redis 强一致:明确不做(design.md §8)。
+5. provider 账单对账、多实例部署、Redis 强一致:明确不做(design.md §8);
+6. **CI test job 在 ubuntu/py3.11 上持续红(自 ≥M16 起,run #15/#16 实证)**:6 个失败
+   分四簇(docker 镜像脱节 ×2 / output_filter 环境敏感断言 ×2 / search_tools 的 rg
+   预装分支 ×2),与本轮改动无关(442cd8d 同样失败);第 7 个(S06 测试自身运算符
+   优先级 bug,linux 首次执行暴露)已修;本地与 CI 的环境差异及修复卡见 TODO M20。
+   **在 CI 转绿前,对本文件的"本地 871 绿"陈述须带上此前提一起读。**
 
 ## 8. claim 边界(简历/面试用语约束)
 

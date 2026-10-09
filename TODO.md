@@ -713,6 +713,25 @@
       三态验收+候选工件齐全,终态冻结直接观测),记录 docs/evidence/2026-10-09-uvicorn-http-demo.txt;
       该路径仍未进 pytest,自动化边界声明不变。零成本、无新依赖、不动代码。
 
+### M20 CI 存量红:ubuntu/py3.11 上 6 个失败待修(2026-10-09 立卡,状态:未开工)
+
+CI(run #15/#16)的 test job 自 M16 起(≥8ab15fa,2026-10-08)持续红;本地 Windows 全绿
+是因为三类环境差异。**本轮已修 1 个**(da26677 推送后新增的 S06 测试自身运算符优先级
+bug:`tmp_path / "run".glob(...)` 对 str 调 glob——该行在无 symlink 特权的 Windows 从未
+执行过,linux 首次执行即炸;已加括号,断言语义不变)。**剩余 6 个,四簇:**
+
+1. `test_docker.py` ×2:容器内 pytest collected=0 + "no junit xml" —— executor 镜像与
+   当前代码脱节(依赖/入口),需重建镜像并复核容器内收集路径;
+2. `test_input_snapshot.py` 已修(见上);
+3. `test_output_filter.py` ×2:traceback 帧过滤断言按 Windows/本地解释器形态写死
+   (linux 3.11 的 traceback 多 stdlib 帧,如 enum.py;路径分隔符形态不同)——
+   修法必须是**让断言对环境鲁棒而不是删弱它**(只比 project 帧集合、或构造确定性 traceback);
+4. `test_search_tools.py` ×2(KeyError 'fallback'):ubuntu runner 预装 ripgrep,
+   本地 Windows 没有 ⇒ `search_engine=auto` 走了不同分支——测试须显式钉住引擎路径
+   或 mock rg 探测,两分支都要有覆盖。
+
+判据:CI 转绿且**没有删弱任何断言**(逐个 diff 审查);修复后 CI 连续 3 次全绿才算收卡。
+
 ## 明确不做(需用户裁决,不自行推进)
 - **LLM 语义摘要**(目标里"语义摘要"的一支):ADR-0004 已把它列为"考虑后否决"的候选
   (多一次花费 + 摘要可能丢掉补丁要的锚点上下文),现落地的是**机械压缩**。
