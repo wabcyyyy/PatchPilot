@@ -5,6 +5,10 @@
 #       python -m pytest -q
 #
 # 容器以非 root(uid 1000)运行被测代码:被测仓库的测试不应拥有容器内 root 权限。
+# 这个 uid 要与宿主给它的两个目录(工作区、报告目录)对得上,否则 Linux 宿主上
+# junit 写不进 → 表现为"容器内 collected=0 / no junit xml"。对齐由
+# app/executor/docker_runner.py 负责(非 root 宿主传 --user,root 宿主把本次目录
+# chown 给 1000),改这里的 uid 必须同时改 docker_runner.EXECUTOR_UID。
 # 注意:依赖策略见 docs/docker-backend-notes.md——--network=none 下无法 pip install,
 # 本镜像只预装 pytest;被测仓库有第三方依赖时扩展本镜像或换 PATCHPILOT_DOCKER_IMAGE。
 FROM python:3.11-slim

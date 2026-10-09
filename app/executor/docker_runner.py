@@ -10,12 +10,16 @@
 - --rm             :容器退出即销毁,不残留状态。
 
 junit 报告通过挂载的 reports 目录传回宿主(不落在被验证的工作区内)。
+容器身份与宿主目录属主必须对齐,否则宿主是原生 Linux 时容器写不进 reports——
+见 `_container_identity_cmd_flags` 与 docs/docker-backend-notes.md。
 """
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import logging
+import os
 import shutil
 import subprocess
 import uuid
@@ -26,6 +30,57 @@ from app.config import get_settings
 from app.executor.local_runner import run_tests
 
 log = logging.getLogger(__name__)
+
+# docker/executor.Dockerfile 里 `useradd --create-home --uid 1000 pp` 的固定 uid:
+# 镜像不给被测代码 root 权限,代价是它必须"看得见且写得进"宿主给它的两个目录。
+EXECUTOR_UID = 1000
+
+
+def _host_identity() -> tuple[bool, int, int]:
+    """(是否 posix, 本进程 uid, 本进程 gid)。Windows 上后两项无意义,返回 -1。"""
+    if os.name != "posix":
+        return False, -1, -1
+    return True, os.getuid(), os.getgid()
+
+
+def _chown_to_executor(path: Path) -> None:
+    """把本次运行的目录(含子项)让给镜像里的 pp(1000);只在宿主是 root 时用到。
+
+    root 有 CAP_CHOWN,能改属主;而非 root 宿主改不动别人的属主,那条路走 `--user`。
+    """
+    try:
+        os.chown(path, EXECUTOR_UID, EXECUTOR_UID, follow_symlinks=False)
+    except OSError as exc:
+        log.warning("docker: chown %s 失败,容器可能写不进该目录:%s", path, exc)
+        return
+    for dirpath, dirnames, filenames in os.walk(path):
+        for name in [*dirnames, *filenames]:
+            # 指向外部的符号链接等改不动的项:保持原状,不掀掉整次执行
+            with contextlib.suppress(OSError):
+                os.chown(Path(dirpath) / name, EXECUTOR_UID, EXECUTOR_UID, follow_symlinks=False)
+
+
+def _container_identity_cmd_flags(workspace: Path, reports: Path) -> list[str]:
+    """让容器进程与工作区/报告目录的属主是同一个身份,且两条分支都不给 root。
+
+    背景:镜像固定 uid 1000,而这两个目录由本进程创建。原生 Linux 上本进程 uid
+    ≠ 1000 时,junit 写不进 → pytest 跑完却以 exit 1 收场、报告文件不存在(表现是
+    "docker_available 通过、每次执行必败");Docker Desktop 的文件共享层不按宿主 uid
+    校验,所以本地怎么跑都是绿的。
+    - 本进程非 root:用 `--user` 把容器 uid 对齐到本进程,顺带让工作区也可写
+      (被测仓库里要落盘的测试才跑得动)。HOME 指到 /tmp:对齐来的 uid 并不拥有
+      镜像里的 /home/pp,写缓存到 $HOME 的测试会因此失败。
+    - 本进程是 root(compose 部署里 API 容器没有 USER):保持 pp(1000)不动,
+      把本次 workspace 与 reports 的属主让给 1000。
+    """
+    is_posix, uid, gid = _host_identity()
+    if not is_posix:
+        return []
+    if uid != 0:
+        return ["--user", f"{uid}:{gid}", "-e", "HOME=/tmp"]
+    _chown_to_executor(workspace)
+    _chown_to_executor(reports)
+    return []
 
 
 @functools.lru_cache(maxsize=1)
@@ -68,9 +123,10 @@ def run_tests_in_container(
     ws = Path(workspace).resolve()
     reports = Path(report_dir).resolve()
     reports.mkdir(parents=True, exist_ok=True)
-    # 容器以非 root(uid 1000)写 junit 回传;Linux 宿主上报告目录属主是本进程用户,
-    # 不放开权限则 uid 1000 写不进(Docker Desktop 的文件共享无此问题,chmod 是兜底)。
-    # R2 整改:0o777 → 0o755——报告目录对 other 只读,junit 内容不可被无关用户改写
+    # R2 整改:0o777 → 0o755——报告目录对 other 只读,junit 内容不可被无关用户改写。
+    # 容器能写它靠的不是放开这里的权限,而是下面把容器身份对齐到目录属主
+    # (`_container_identity_cmd_flags`);Docker Desktop 的文件共享层不校验宿主 uid,
+    # 所以只有原生 Linux 宿主能看出这条契约有没有满足。
     reports.chmod(0o755)
     junit = reports / f"junit-{uuid.uuid4().hex}.xml"
     image = image or get_settings().docker_image
@@ -86,6 +142,7 @@ def run_tests_in_container(
         memory,
         "--cpus",
         cpus,
+        *_container_identity_cmd_flags(ws, reports),
         "-v",
         f"{ws}:{workdir}",
         "-v",

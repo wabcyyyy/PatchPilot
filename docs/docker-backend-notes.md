@@ -43,8 +43,9 @@ export PATCHPILOT_DOCKER_IMAGE=patchpilot-executor:latest   # 默认 python:3.11
 执行器镜像以非 root 用户 `pp`(uid 1000)运行被测代码:被测仓库的 pytest
 不应拥有容器内 root 权限。配套改动:
 
-- junit 回传目录由 `docker_runner` 在宿主侧 `chmod 0o777`——Linux 宿主上报告目录
-  属主是 API 进程用户,uid 1000 直接写不进;Docker Desktop 文件共享无此限制,chmod 是兜底;
+- junit 回传目录由 `docker_runner` 在宿主侧 `chmod 0o755`(R2 整改从 0o777 收紧:
+  junit 不可被无关用户改写)。收紧后"容器写得进"就不再靠权限,而靠**身份对齐**:
+  见下面 2026-10-09 那节;
 - 被测工作区(/ws 挂载)若不可写,Python 跳过 `__pycache__` 落盘(静默,无影响),
   pytest 临时文件走容器内 /tmp。
 
@@ -98,3 +99,25 @@ junit 不可被无关用户改写),容器以 uid 1000 写 junit 回传。真机�
   缓解选项(按侵入性排序):服务进程以 uid 1000 运行;部署前置
   `chown 1000` runs 目录;或接受该边界、仅在有 Docker Desktop/同 uid 的环境
   用 docker 后端。改回 0o777 已被 R2 以安全理由否决,不重开。
+
+## 身份对齐落地(M20,2026-10-09:把上面那条"部署约束"改成代码契约)
+
+CI(run #5..#17)的 docker 簇就是上面"uid ≠ 1000"那条分支被真实触发的结果,
+容器复现与 CI 特征逐字一致:pytest 跑完 → `PermissionError` → **exit 1 且无 junit**;
+工作区若为 0700 则连进去都做不到,同样 exit 1 无 junit。
+
+`docker_runner._container_identity_cmd_flags` 现在的规则(报告目录仍是 0o755,
+**没有**为了写得进而放开权限):
+
+| 宿主 | 做法 | 被测代码是否 root |
+|---|---|---|
+| 非 posix(Docker Desktop) | 不加任何身份参数(bind mount 不校验宿主 uid,加了 `--user` 反而撞上镜像里没有的 gid) | 否(pp) |
+| posix,本进程非 root | `--user <本进程 uid:gid>` + `-e HOME=/tmp` | 否 |
+| posix,本进程是 root(compose 里 api 容器没有 USER) | 保持 pp(1000),把**本次** workspace 与 reports `chown 1000:1000`(含子项) | 否 |
+
+两条 posix 分支都不给被测代码 root 权限,M11.2 的立意不变。`HOME=/tmp` 是配套:
+对齐来的 uid 并不拥有镜像里的 `/home/pp`,写 `$HOME` 缓存的测试会因此失败。
+
+**观测边界(不许当作证据)**:本地 Windows/Docker Desktop 全绿**不能**证明 Linux
+分支正确——文件共享层根本不执行 unix 属主校验。docker 簇的验收只能看 ubuntu CI,
+这也是 M20 判据里"CI 连续 3 次全绿"不是形式的原因。

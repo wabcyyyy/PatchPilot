@@ -203,6 +203,98 @@ def test_docker_runner_uses_declared_network(monkeypatch, tmp_path: Path) -> Non
     assert captured["command"][captured["command"].index("--network") + 1] == "bridge"
 
 
+def _record_chowns(monkeypatch, docker_runner) -> list[Path]:
+    chowned: list[Path] = []
+    monkeypatch.setattr(docker_runner, "_chown_to_executor", chowned.append)
+    return chowned
+
+
+def test_container_identity_aligns_uid_on_posix_nonroot(monkeypatch, tmp_path: Path) -> None:
+    """原生 Linux 宿主(uid≠1000 且非 root):容器身份对齐目录属主,才写得进 junit。"""
+    from app.executor import docker_runner
+
+    chowned = _record_chowns(monkeypatch, docker_runner)
+    monkeypatch.setattr(docker_runner, "_host_identity", lambda: (True, 1001, 1001))
+    assert docker_runner._container_identity_cmd_flags(tmp_path, tmp_path / "r") == [
+        "--user",
+        "1001:1001",
+        "-e",
+        "HOME=/tmp",
+    ]
+    assert chowned == [], "非 root 宿主改不动别人属主,这条分支只能走 --user"
+
+
+def test_container_identity_keeps_image_user_and_hands_dirs_over_when_root(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """宿主是 root(compose 里 API 容器没有 USER):不把被测代码提成 root,
+    而是把本次 workspace 与 reports 的属主让给镜像的 pp(1000)。"""
+    from app.executor import docker_runner
+
+    chowned = _record_chowns(monkeypatch, docker_runner)
+    monkeypatch.setattr(docker_runner, "_host_identity", lambda: (True, 0, 0))
+    reports = tmp_path / "r"
+    assert docker_runner._container_identity_cmd_flags(tmp_path, reports) == []
+    assert chowned == [tmp_path, reports]
+
+
+def test_container_identity_adds_nothing_on_non_posix(monkeypatch, tmp_path: Path) -> None:
+    """Docker Desktop 的 bind mount 不按宿主 uid 校验:传 --user 只会撞上镜像里
+    不存在的 gid,所以非 posix 一律不动容器身份。"""
+    from app.executor import docker_runner
+
+    chowned = _record_chowns(monkeypatch, docker_runner)
+    monkeypatch.setattr(docker_runner, "_host_identity", lambda: (False, -1, -1))
+    assert docker_runner._container_identity_cmd_flags(tmp_path, tmp_path / "r") == []
+    assert chowned == []
+
+
+def test_docker_run_command_carries_aligned_uid(monkeypatch, tmp_path: Path) -> None:
+    """身份参数必须真的进到 docker run 的参数表,而不是只在 helper 里算对。"""
+    from app.executor import docker_runner
+
+    captured: dict = {}
+
+    def fake_run_tests(command, cwd, timeout_seconds=None):
+        captured["command"] = command
+        return TestRunResult(
+            command=command, exit_code=0, stdout_tail="", stderr_tail="", duration_ms=1
+        )
+
+    monkeypatch.setattr(docker_runner, "_host_identity", lambda: (True, 1001, 1001))
+    monkeypatch.setattr(docker_runner, "_chown_to_executor", lambda path: None)
+    monkeypatch.setattr(docker_runner, "run_tests", fake_run_tests)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    docker_runner.run_tests_in_container(ws, ["t.py::t"], report_dir=tmp_path / "r", image="i:1")
+    cmd = captured["command"]
+    assert cmd[cmd.index("--user") + 1] == "1001:1001"
+    assert cmd.index("--user") < cmd.index("-v"), "--user 必须在镜像名之前、参数表之内"
+
+
+def test_chown_to_executor_walks_the_tree_and_survives_unchownable(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """root 分支的 chown 要覆盖子项(被测仓库会往里写文件),单项失败不能掀掉整次执行。"""
+    import os as _os
+
+    from app.executor import docker_runner
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("x", encoding="utf-8")
+    seen: list[Path] = []
+
+    def fake_chown(path, uid, gid, *, follow_symlinks=True):
+        if Path(path).name == "a.py":
+            raise PermissionError(1, "Operation not permitted")
+        seen.append(Path(path))
+
+    # raising=False:Windows 的 os 根本没有 chown 这个属性,而这条分支只在 posix 才走到
+    monkeypatch.setattr(_os, "chown", fake_chown, raising=False)
+    docker_runner._chown_to_executor(tmp_path)
+    assert tmp_path in seen and tmp_path / "src" in seen
+
+
 def test_run_pytest_rejects_container_env_on_local_backend(monkeypatch, tmp_path: Path) -> None:
     """声明了容器环境的题不允许退回宿主直跑:宿主没有那套年代精确依赖,
     跑出来的"失败"分不清是缺陷还是环境坏,正是 validate_entry 要拦的那类假信号。
