@@ -40,6 +40,11 @@ Q0_BUGS = [
 # 预登记第四节的环境基线(两臂同值);阶段覆盖只许改登记表里那一个变量。
 BASE_ENV = {
     "PATCHPILOT_LLM_ENABLED": "true",
+    # 2026-10-09 钉死:端点侧对思考模式的 reasoning_content 回传校验是**间歇性**的
+    # (同一请求先 400 后 200,探针 runs/probe_mutate.py T0 实证),无法用客户端形状
+    # 确定性规避;disabled 下端点每轮 reasoning_content=None(P3/probe_disabled_effect
+    # 实证),循环语义零改动。预登记补记节有完整诊断链,先于 gen2 付费运行入库。
+    "PATCHPILOT_LLM_THINKING": "disabled",
     "PATCHPILOT_TOKEN_BUDGET": "400000",
     "PATCHPILOT_TASK_TIMEOUT_SECONDS": "1800",
     "PATCHPILOT_EXECUTION_BACKEND": "docker",

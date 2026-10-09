@@ -137,3 +137,42 @@ PYTHONPATH=. .venv/Scripts/python.exe app/evals/run_single.py \
    原始产物留 `runs/` 并在 `docs/evidence/` 放脚本导出的汇总。
 2. 判死类型沿用 M15 的分类法(额度闸 / 回合耗尽),从 `report.error` 原文取,不按 status 名猜。
 3. 负面结果照发。上一批买到的最有价值的东西就是三条缺陷和一个负面结论,不是一个好看的分数。
+
+---
+
+## 实测结果(补记 A,2026-10-09:gen1 中止与 thinking 钉死——先于 gen2 任何付费运行入库)
+
+**gen1(2026-10-09 12:29–12:58,server-default 思考模式)中止,Q0 作废重跑为 gen2。**
+判据、题单、分母(7 题 × 3 次)一字未改;改动只有环境变量一枚:PATCHPILOT_LLM_THINKING=disabled
+(预登记第四节原口径是"不设该变量 = 跟随服务端缺省",该缺省已被端点侧单方面改掉,见下)。
+
+### 时间线与花费
+
+- fake 冒烟(同参,零成本):7/7 resolved,登记参数逐字入 provenance,compare_batches 可解析。
+- gen1 真实尝试 8 次(台账 runs/paid-batch-ledger-2026-10-09-gen1-aborted.jsonl,原始产物
+  runs/q0-noise-2026-10-08-gen1-aborted/):7590×3 全 BUDGET_EXCEEDED(383k/386k/400k)、
+  7748×3 全 BUDGET_EXCEEDED(405k/375k/390k)、8707×1 NEEDS_REVIEW(109k);
+  另有 1 次驱动修复期间被人工停止(7748,8 turns,轨迹重建 ≈59k tokens,单独列示)。
+  **gen1 合计 ≈2.56M tokens ≈ $0.87,全部计入整批 20M 上限的已花费。**
+- 驱动器两处执行 bug 同批修掉(commit be6ad0b/c3cde25):400 判据误匹配预算数字"400000";
+  台账续跑未按 model 过滤(fake 冒烟条目占走真实槽位)。台账含事故条目,报告期单独列示。
+
+### 停手原因(预登记停手条件 1 的真实触发,与处置)
+
+8707 rep1 于 PLAN 段第 7 次请求收到 `Error code: 400 - The reasoning_content in the
+thinking mode must be passed back to the API`,驱动器按停手条件 1 立即停批(行为正确)。
+
+**诊断(探针 ≈80k tokens,脚本 runs/probe_*.py):**
+1. 客户端**没有**丢字段:失败请求的 loop_state 快照逐条含 reasoning_content(带工具轮与纯文本轮
+   都有),零次压缩(无 context_compact 事件),桩路径未参与;
+2. 逐字重放该请求 → 400 稳定复现;二分到 `[system, user, 单条 assistant]` 仍 400;
+3. **同一请求在 40 分钟后重发 → 200**(probe_mutate.py T0):端点对该校验是**间歇性**的
+   (灰度/负载型),不存在可确定性规避的客户端请求形状——plain_loop 的催促循环(连续 assistant
+   消息)只是让触发概率显形,不是缺陷;
+4. `thinking=disabled` 下端点每轮 `reasoning_content=None`(probe_disabled_effect.py 两连轮实证),
+   思维链从不进入客户端历史,间歇校验无从触发;同一失败请求加 disabled 即 200(P3)。
+
+**结论:2026-10-07 批次运行时的"服务端缺省=非思考"前提已被端点单方面改掉。** 把缺省显式钉回
+非思考(=disabled)是对登记条件最忠实的复原,且不触碰循环语义、不引入未登记的消息形状变化。
+gen1 的 7 次完成尝试跑在"思考常开"条件下,与 gen2 不同条件,**不并入判据分母**,只作废为学费
+(其本身复读出一个事实:两道难题 6/6 全额度判死,与 10-07 的历史死法一致)。
