@@ -76,6 +76,8 @@ HEAD 上的实测,不是沿用历史文档。能力声明分四级:**implemented
    与 TestClient 结论一致;划线保留是因为它仍未进 pytest 自动化;
 4. 722→868 的收集/通过差值全部来自本轮新增回归,存量用例零删除
    (2 个旧钉子按 spec 反转并注明:graph+one_shot 从拒绝变支持、junit 夹具写实化);
+   收口后增量:2026-10-09 语料完整性钉 tests/test_bug_corpus.py +2(869→871),
+   并修复 BUG-014 reference.diff 存量缺陷(全语料 47 题唯一失同步项);
 5. provider 账单对账、多实例部署、Redis 强一致:明确不做(design.md §8)。
 
 ## 8. claim 边界(简历/面试用语约束)

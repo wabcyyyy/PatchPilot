@@ -343,9 +343,10 @@ def _corpus() -> list[tuple[str, str, str]]:
 
     迁移前这里跑的是"原 unified ↔ 块编译产物"双应用等价(卡1 已实测 36/36 通过,
     即机械迁移未改语义的证据);迁移后语料只剩块文本,而 `expected/reference.diff`
-    不能当基准——BUG-014 的 reference.diff 存量就已与 repo 源码不符(删除行写成
+    不能当基准——BUG-014 的 reference.diff 存量就曾与 repo 源码不符(删除行写成
     `items[i:i + n + 1]`,实际是 `items[i : i + n + 1]`),拿它对比会把存量数据缺陷
-    伪装成协议缺陷。故本表钉的是回放补丁在新协议下的持久不变量:能解析、能编译、
+    伪装成协议缺陷(该缺陷已于 2026-10-09 修复并由 tests/test_bug_corpus.py 钉住,
+    但本表钉的仍是回放补丁自身的持久不变量,不依赖 gold 数据):能解析、能编译、
     能通过 `git apply --check` 并真实应用,且改动文件集合与题面 gold 范围一致。
     """
     cases: list[tuple[str, str, str]] = []

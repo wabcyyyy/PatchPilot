@@ -64,6 +64,12 @@ python -m app.evals.report --runs runs/m9 --out docs/eval-report.md
 `PATCHPILOT_LLM_MAX_TOKENS`、`PATCHPILOT_LLM_TIMEOUT_SECONDS` 与
 `PATCHPILOT_TOKEN_BUDGET`(单任务累计 token 预算)约束。
 
+**DeepSeek 系端点额外建议设 `PATCHPILOT_LLM_THINKING=disabled`**(2026-10-09 实测):
+这类端点的思考模式会返回 `reasoning_content`,且其"回传校验"是**间歇性**的——同一请求
+先 400 后 200,无法从客户端形状规避;`disabled` 下端点每轮不返回思维链,校验无从触发
+(诊断链与探针:docs/paid-batch-preregistration-2026-10-08.md 补记 A、
+docs/evidence/probe-thinking-400/)。付费跑批前建议先用单题冒烟确认端点条件。
+
 ## Docker Compose
 
 ```bash
