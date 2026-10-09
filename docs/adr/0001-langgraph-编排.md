@@ -43,7 +43,7 @@ recursion_limit 随 max_rounds 推导(M5 起 5N+8:每轮多出 PLAN 一步;恢�
 - `app/graph/checkpoint.py:3` — `恢复分两级`
 - `app/graph/resume.py:1` — `崩溃恢复的 B 级接线`
 - `docs/design.md:62` — `按 superstep 留档`
-- `docs/design.md:91` — `10 个`
+- `docs/design.md:93` — `10 个`
 - `docs/threat-model.md:45` — `攻击样例 10 个拦截`
 - `README.md:20` — `10 个攻击样例`
 - `app/graph/gates.py:1` — `七项门禁`

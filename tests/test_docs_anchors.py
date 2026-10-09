@@ -104,8 +104,9 @@ def test_p3_7_corrected_claims_are_pinned() -> None:
     # design.md 第三副本(design.md:62)
     design = _read("docs/design.md")
     assert "按 superstep 留档" in design[61], design[61]
-    # 攻击样例 10 个 ×3(design.md:91 / threat-model.md:45 / README.md:20)
-    assert "10 个" in design[90], design[90]
+    # 攻击样例 10 个 ×3(design.md:93 / threat-model.md:45 / README.md:20)
+    # design.md 行号随文档正文漂移:91→93(4fd9620 在 E3 段补真实模型佐证,+2 行)
+    assert "10 个" in design[92], design[92]
     assert "攻击样例 10 个拦截" in _read("docs/threat-model.md")[44]
     assert "10 个攻击样例" in _read("README.md")[19]
     # 七项门禁 docstring(gates.py:1 / nodes.py:apply 节点;行号随 nodes.py 每次插话漂移:
