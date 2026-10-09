@@ -91,10 +91,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reps", type=int, default=3)
     parser.add_argument("--max-turns", type=int, default=24)
     parser.add_argument("--bugs", action="append", default=None, help="缺省用该相的登记题单")
+    parser.add_argument("--out", default=None, help="覆盖该相的登记产物目录(冒烟用,免混入真实批)")
     args = parser.parse_args(argv)
 
     bugs = args.bugs if args.bugs else Q0_BUGS
-    out_root = REPO / PHASE_OUT[args.phase]
+    out_root = REPO / (args.out if args.out else PHASE_OUT[args.phase])
+    cmd_out = args.out if args.out else PHASE_OUT[args.phase]
     out_root.mkdir(parents=True, exist_ok=True)
 
     LOCK.parent.mkdir(parents=True, exist_ok=True)
@@ -136,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
                     "--max-turns",
                     str(args.max_turns),
                     "--out",
-                    PHASE_OUT[args.phase],
+                    cmd_out,
                 ]
                 print(
                     f"[run] {bug} rep{rep} phase={args.phase} arm={PHASE_ARM[args.phase]} "
