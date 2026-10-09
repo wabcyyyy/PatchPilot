@@ -439,3 +439,33 @@ def test_run_tests_timeout_fallback_closes_pipes(monkeypatch: pytest.MonkeyPatch
     assert fake.killed  # proc.kill 已尝试
     assert fake.stdout.closed  # 管道已关闭回收
     assert result.stdout_tail == ""  # 未永久挂死,按超时口径返回
+
+
+def test_local_missing_junit_carries_cause_and_keeps_verdict(monkeypatch, tmp_path: Path) -> None:
+    """local 后端(默认后端)有同一个盲点:junit 没生成时报告只剩症状没有原因。
+
+    这一条比 docker 那面墙更常碰到——**超时是被当成正常业务结果设计的**,而被杀时
+    junit 往往根本没写出来。钉两件事:(1) stderr 里的死因进 `traceback`;
+    (2) 判定层不动(`signature` 与 `all_passed` 保持原样,不会因挂原因而翻成通过)。
+    """
+    import app.adapters.pytest_adapter as adapter
+    from app.executor.local_runner import TestRunResult
+
+    def fake_run_tests(command, cwd, timeout_seconds=None):
+        return TestRunResult(
+            command=command,
+            exit_code=1,
+            stdout_tail="",
+            stderr_tail="INTERNALERROR> IndexError: conftest blew up",
+            duration_ms=1,
+        )
+
+    monkeypatch.setattr(adapter, "run_tests", fake_run_tests)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    report, _ = run_pytest(PYTHON, ws, ["t.py::t"], report_path=tmp_path / "j.xml")
+
+    assert report.errors == 1 and not report.all_passed
+    case = report.failed_cases[0]
+    assert case.signature == "error: no junit xml"  # 判定口径没被改动
+    assert "conftest blew up" in case.traceback and "退出码 1" in case.traceback

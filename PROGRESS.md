@@ -1448,6 +1448,36 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
   并断言 `reports/` 里确实没有 junit,防止这条退化成正常路径)。
 - **本地全量终态行**:`879 passed, 4 skipped` @ 1540.21s(25:40)——876 + 本轮三条新用例,
   数目正好对上;ruff check/format 227 文件全绿。
+
+## 17. 把"没生成 junit"的取证从 docker 扩到默认 local 后端,并收成一处(2026-10-09 深夜)
+
+- **为什么还要动**:16 卡只修了 `docker_runner`,而**默认后端是 local**,同一个盲点更常
+  碰到——超时是按"正常业务结果"设计的(`local_runner` 文档自述),被杀时 junit 往往根本
+  没写出来,报告同样只剩一句 `error: no junit xml`。修法不是复制一份,是把逻辑收进
+  `pytest_adapter.attach_missing_report_cause(report, run, subject=...)`,两个调用点共用
+  (全仓 `parse_junit_xml` 只有这两处调用,已 grep 确认:本地 `run_pytest` 一条 +
+  `docker_runner` 一条,没有第三条路径)。
+- **取流规则改对了**:16 卡写的是"只取 stderr"。实测那是**崩溃现场**的形态;而 local
+  超时被杀时常常只有 stdout 的 collected 行 ⇒ 规则改成 **stderr 非空用它,为空退到
+  stdout**。截断也修了一处我手滑的方向:最初写成 `[:4000]` 会把"最终异常行"切掉
+  ——长输出的原因在**末尾**,现在是留头(`退出码` header 必在)截尾。
+- **动了 AGENTS 点名的文件,说清动了哪一部分**:`app/adapters/pytest_adapter.py` 被列的是
+  **签名规则**的语义变更禁区。这次加的是新函数 + `run_pytest` 里 2 行挂载,
+  `failure_signature` / `all_passed` / `parse_junit_xml` 的判定语义**一字未动**,
+  并由测试钉住:`case.signature == "error: no junit xml"`、`report.errors == 1`、
+  `not report.all_passed` 三条断言在新行为下仍成立(挂 traceback 不会把失败翻成通过)。
+- **暴露面核过**:被测仓库的 stdout/stderr 本来就经 `local_runner._truncate` →
+  `fold_output` 进模型可见层,junit `<failure>` 正文也按 4000 截(`:198`),所以这次
+  没有新增一类信息外泄。
+- **测试**:新增 `tests/test_executor.py::test_local_missing_junit_carries_cause_and_keeps_verdict`
+  (假 `run_tests` 造 stderr 现场)。三个受影响文件合跑 **48 passed**,ruff check/format 全绿。
+- **又踩了一次锚点漂移(这次是守卫先响,不是 CI 先响)**:插入新函数把
+  `_matches_requested` 从 `pytest_adapter.py:213` 推走,ADR-0009 钉的那条锚点当场红
+  ——正是本轮早些时候在 `design.md` 上修过的同一类缺陷。按**实测行号**重钉 213→239
+  (子串 `def _matches_requested` 未动),46 条锚点全量审计 0 漂移。差别在于:这回是
+  提交前本地跑 `test_docs_anchors` 抓到的,不是推上去让 CI 抓——上一轮就是跳过了这步
+  才把回归推出去的。
+- **本地全量终态行**:`880 passed, 4 skipped`(1483.07s = 24:43)= 879 + 本轮 1 条新用例。
 - **仍未决(只登记)**:把"平台没跑起来"做成独立终态(`ExecError` 直接终止)与否——
   现在的形状是模型收到"补丁没让测试通过 + 真实原因",仍会烧轮次去改不是它的问题。
   属判定层归类,按红线先讨论再动。

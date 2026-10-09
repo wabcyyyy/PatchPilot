@@ -812,13 +812,17 @@
 这点已被 #5..#18 的行为验证),但**平台故障与测试失败混在同一层**:模型看到的是
 "你的补丁没让测试通过",而真实原因是执行器没跑成。
 
-- **已补(同日第二轮)**:`docker_runner` 在 junit 缺失时把 `docker run` 退出码与容器
-  **stderr** 尾巴挂到那条合成 case 的 `traceback`(截 4000,与 junit 正文同口径),
-  走既有消费链 `nodes.py:814 refine_traceback → prompts.py:176`,`signature` 与
-  `all_passed` 一字未动。**实测**(不是推的):帧过滤之后模型仍看到
-  `容器未生成 junit 报告;docker run 退出码 1` + `PermissionError: ... '/reports/…xml'`,
-  而 site-packages 噪声帧被正确丢掉。用例三条:假 `run_tests` 两例(有 stderr /
-  空 stderr 只剩退出码)+ 真容器一例(不存在的解释器制造平台故障)。
+- **已补(同日第二轮,并已扩到默认 local 后端)**:逻辑收在
+  `pytest_adapter.attach_missing_report_cause(report, run, subject=...)`,全仓
+  `parse_junit_xml` 的**两个**调用点都挂(本地 `run_pytest` + `docker_runner`,grep 确认
+  没有第三条路径)。junit 缺失时把**退出码 + 输出尾巴**(截 4000,与 junit 正文同口径)
+  写进那条合成 case 的 `traceback`,走既有链 `nodes.py:814 refine_traceback →
+  prompts.py:176`,`signature`/`all_passed` 一字未动并由断言钉住。
+  **取流规则**:stderr 非空用它(崩溃 traceback 在那儿),为空退到 stdout(local 被
+  超时杀掉时常常只剩 collected 行);**截断留头截尾**——最终异常行在末尾,而 header
+  (带退出码)必须留住,最初写成 `[:4000]` 会把原因切掉。
+  用例:docker 侧两例(假 `run_tests` / 真容器故障)+ local 侧一例;本地全量终态
+  **`880 passed, 4 skipped`**(1483.07s)。
 - **分流是量过的**:那条 PermissionError traceback 走 **stderr**,"哪个测试失败"走
   stdout ⇒ 只取 stderr,不把失败行混进死因。
 - **仍未决(判定层语义,不自行推进)**:要不要把"平台没跑起来"做成**独立终态**

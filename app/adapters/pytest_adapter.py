@@ -25,6 +25,9 @@ log = logging.getLogger(__name__)
 RC_OK = 0
 RC_NO_TESTS_COLLECTED = 5
 
+# 合成 case 的原因尾巴上限,与 junit `<failure>` 正文的截断口径一致(见 parse_junit_xml)
+CAUSE_TAIL_CHARS = 4000
+
 
 @dataclass(frozen=True)
 class BugEnv:
@@ -210,6 +213,29 @@ def parse_junit_xml(path: Path) -> PytestReport:
     return report
 
 
+def attach_missing_report_cause(report: PytestReport, run: TestRunResult, *, subject: str) -> None:
+    """junit 没生成时,把退出码与输出尾巴挂到那条合成 case 上(判定口径不读 traceback)。
+
+    `error: no junit xml` 是症状不是原因。docker 后端在 CI 上十四次连红期间,报告里只有
+    这一句,真因(`PermissionError: '/reports/junit-….xml'`)在被丢掉的 stderr 里;
+    local 后端同形——而且更常碰到,因为**超时是正常业务结果**,被杀时 junit 往往根本没写出来。
+
+    这不新增暴露面:被测仓库的 stdout/stderr 本来就经 `local_runner._truncate` →
+    `fold_output` 进模型可见层;junit 的 `<failure>` 正文同样按 4000 字符截断(:198)。
+    """
+    if not report.failed_cases:
+        return
+    header = f"{subject}未生成 junit 报告;退出码 {run.exit_code}"
+    # 先取 stderr(崩溃 traceback 在那儿),空则退到 stdout(超时现场常只剩 collected 行)
+    tail = (run.stderr_tail or "").strip() or (run.stdout_tail or "").strip()
+    if not tail:
+        report.failed_cases[0].traceback = header
+        return
+    # 截尾不截头:长输出里"最终异常行"在末尾,而 header 必须留住(否则又回到无信息)
+    budget = CAUSE_TAIL_CHARS - len(header)
+    report.failed_cases[0].traceback = f"{header}\n{tail[-budget:]}"
+
+
 def _matches_requested(file_attr: str, classname: str, case_name: str, requested: str) -> bool:
     """junit 的 testcase 是否对应请求的 node id(S01/F3 起委托共享解析器)。
 
@@ -303,6 +329,8 @@ def run_pytest(
     finally:
         _discard_basetemp(basetemp)
     report = parse_junit_xml(junit)
+    if not junit.exists():
+        attach_missing_report_cause(report, run, subject="被测仓库的 pytest")
     report.requested_ids = list(test_ids or [])
     report.exit_code = run.exit_code
     report.duration_ms = run.duration_ms

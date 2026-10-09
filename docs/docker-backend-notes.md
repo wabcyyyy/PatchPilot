@@ -130,13 +130,24 @@ CI(run #5..#17)的 docker 簇就是上面"uid ≠ 1000"那条分支被真实触�
 `run.stderr_tail` 里。十四次 CI 连红就是十四次"只看到症状"。
 
 现在:`junit` 不存在 ⇒ 把 `docker run` 退出码 + 容器 stderr 尾巴(截 4000,与 junit
-正文同口径)写进那条合成 case 的 `traceback`。它走的是既有模型可见层链路
+正文同口径)写进那条合成 case 的 `traceback`。走的是既有模型可见层链路
 (`nodes.py:814 refine_traceback` → `prompts.py:176`),**判定字段 `signature` /
 `all_passed` 不受影响**;而且实测过帧过滤不会把死因滤掉——site-packages 的内部帧被丢,
 末行 `PermissionError: …` 保留。
 
-- **为什么只取 stderr**:实测分流——容器内 pytest 的这条 traceback 走 stderr,
-  "哪个测试失败了"走 stdout。把 stdout 混进来会让平台故障看起来像测试结果。
+**实现位置与覆盖面(2026-10-09 同日扩大)**:这段逻辑不在 `docker_runner` 里,而是
+`pytest_adapter.attach_missing_report_cause(report, run, subject=...)`——因为
+**local 后端(默认后端)有同一个盲点,而且更常碰到**:超时是按"正常业务结果"设计的,
+被杀时 junit 往往根本没写出来,今天的报告同样只剩一句症状。全仓 `parse_junit_xml`
+只有两个调用点(本地这条 + `docker_runner` 那条),两处都挂了,`subject` 分别是
+"被测仓库的 pytest" 与"容器"。取流顺序是 **stderr 优先、为空退到 stdout**
+(崩溃 traceback 在 stderr;超时现场常只剩 stdout 的 collected 行)。截断**留头截尾**:
+最终异常行在末尾,而 header(带退出码)必须留住。
+
+- **为什么 stderr 优先**:实测分流——容器内 pytest 的这条 traceback 走 stderr,
+  "哪个测试失败了"走 stdout。两条都拼会把平台故障读成测试结果;但 stdout 不能一概不要
+  (local 后端被超时杀掉时常常只有 stdout),所以规则是 **stderr 非空就用它,为空才退到
+  stdout**,而不是"只看一条流"。
 - **为什么仍不是分层**:这条 case 依旧算"测试没通过",模型收到的是"你的补丁没让
   测试通过 + 真实原因",还会继续烧轮次改一个不是它的问题。要不要把"平台没跑起来"
   做成独立终态属判定层语义,见 TODO M20 遗留②。
