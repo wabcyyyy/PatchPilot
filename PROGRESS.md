@@ -1267,3 +1267,35 @@ strict 语义矩阵(范围内/部分/范围外/混合 × coverage 分子分母)�
 reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全绿。
 
 全量离线 pytest(闸记录见提交);ruff/format 绿。
+
+## S10a/b 同引擎对照入口与实验预登记 v2(F8 机制面关闭)(2026-10-09,产品卡 12/13)
+
+缺陷(review F8,P1):消融两臂 agent=graph、one_shot=plain 的**跨引擎混杂**——
+定位份额/PLAN/仓库骨架/verify 双跑等未登记变量混入;旧预登记还按单臂结果筛题、
+给任意 Δ≥2 定普遍增益标准。
+
+**S10a 修法(策略对象=唯一登记差异面)**:
+- 新增 `app/evals/experiment_policy.py`:agent/one_shot 两臂策略对象(工具白名单、
+  重试与分支许可全量登记);one_shot=PROPOSE 工具集去掉 run_tests/reset_workspace、
+  **第一次候选验证失败即终局**(rollback 节点按策略停止,不 reset、不耗轮次,
+  route_rollback 的 VERIFY_FAILED→end 边对 agent 臂是死代码)、禁分支。
+  one_shot 不是"只发一次请求":检索与补丁协议自纠保留;
+- graph 两臂共用同一状态机/门禁/共享终局验收(runner 接收 arm → 策略对象 →
+  TaskNodes;provenance 登记 arm 与 experiment_policy 全量描述);
+  run_single 的 `--engine graph --arm one_shot` 从"拒绝"变为受控支持
+  (旧钉子按 spec 反转并在测试内注明);plain 旧入口不动。
+- 新增 `scripts/compare_experiments.py`:两臂批次逐题 provenance 配对比较——
+  engine/model/上下文/环境/git_commit 任何未登记差异直接非零退出;arm 与其派生
+  策略描述是唯一允许差异;题单不配对、臂成分错误同样报错。
+- **回归** tests/test_ablation_invariants.py 4 例(共有阶段模型消息逐字一致/
+  one_shot 拿不到 run_tests/同一坏回放 agent 重试 one_shot 一次终局且证据不 reset/
+  双跑复核两臂都真跑)+ tests/test_experiment_summary.py 4 例(登记差异唯一/
+  未登记即报错/题单不配对报错/臂成分报错)。
+
+**S10b:docs/experiment-preregistration-v2-2026-10-08.md**(supersedes 旧版,旧文件
+保留):题单四题在看结果前固定(稳定两极题保留)、4×2×3=24 次任务运行、交错顺序
+登记、固定全题 ITT 分母+环境有效分母+失败分类、n=3 小样本不给普遍增益标准、
+预算/上下文是独立实验、L01 未授权前任何真实运行无预登记效力。
+**本卡不开真实模型。**
+
+全量离线 pytest(闸记录见提交);ruff/format 绿。

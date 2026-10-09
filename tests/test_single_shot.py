@@ -199,12 +199,24 @@ def test_patch_phase_budget_error_keeps_localize_usage(monkeypatch: pytest.Monke
     assert info.value.turns == 5
 
 
-def test_graph_engine_rejects_the_arm() -> None:
-    """状态机的循环在禁区内,对照臂不假装能在 graph 上跑。"""
-    argv = ["--bug", "BUG-001", "--model", "fake", "--engine", "graph", "--arm", "one_shot"]
-    with pytest.raises(SystemExit) as info:
-        run_single_main(argv)
-    assert info.value.code == 2
+def test_graph_engine_accepts_the_arm_as_same_engine_policy(tmp_path: Path) -> None:
+    """S10a(取代旧钉子"graph 拒绝 one_shot"):graph 两臂同引擎对照现在是受控支持——
+    one_shot 以策略对象进同一状态机(F8:跨引擎对照混杂的修法),CLI 不再拒绝。"""
+    argv = [
+        "--bug",
+        "BUG-001",
+        "--model",
+        "fake",
+        "--engine",
+        "graph",
+        "--arm",
+        "one_shot",
+        "--out",
+        str(tmp_path / "one-shot-graph"),
+    ]
+    # 空回放脚本只影响判定结果(FAILED),不改变"策略被接受并真实执行"这一事实
+    proc_info = run_single_main(argv)
+    assert proc_info in (0, 1)  # resolved=0 / 非 resolved=1,都不再是 CLI 用法错误
 
 
 def test_block_protocol_still_required_in_the_arm(tmp_path: Path) -> None:

@@ -42,6 +42,7 @@ def run_task_graph(
     branch_model_factory: Callable[[int], Model] | None = None,
     resume: bool = False,
     tracker_sink: Callable[[dict[str, Any]], None] | None = None,
+    arm: str = "agent",
 ) -> Any:
     """执行一个任务(状态机引擎);返回与 plain 引擎一致的 TaskResult。
 
@@ -80,6 +81,10 @@ def run_task_graph(
     run_dir.mkdir(parents=True, exist_ok=True)
     report_dir = run_dir / "reports"
 
+    # S10a:两臂唯一差异登记面(策略对象);arm 进 provenance 与候选 manifest
+    from app.evals.experiment_policy import policy_for
+
+    policy = policy_for(arm)
     result = TaskResult(
         task_id=task_id,
         bug_id=bug.id,
@@ -87,11 +92,14 @@ def run_task_graph(
         model_name=model_name,
         engine="graph",
         run_dir=str(run_dir),
+        arm=arm,
     )
     # 批次溯源:与 plain 引擎同口径,任务开始即取证
     result.provenance = build_provenance(
         result.model_provider, model_name, "graph", max_turns=max_turns
     )
+    result.provenance["arm"] = arm
+    result.provenance["experiment_policy"] = policy.describe()
     tracker = Tracker(run_dir / "trajectory.jsonl", task_id=task_id, sink=tracker_sink)
     started = time.monotonic()
     # S02b:deadline 在**执行线程启动**时建立(排队不计),墙钟持久化进 state——
@@ -117,6 +125,7 @@ def run_task_graph(
             deadline_epoch=deadline_epoch,
             cancel_event=cancel_event,
             branch_model_factory=branch_model_factory,
+            policy=policy,
         )
         checkpointer = (
             make_sqlite_checkpointer(run_dir / "checkpoints.sqlite") if use_checkpoint else None

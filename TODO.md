@@ -679,9 +679,9 @@
       新 demo/run_api_ticket.py 全链路;离线冒烟测试钉住。
 - [x] S09 指标 v2 与历史口径保留(F6):metrics_version=2,空 touched 不再 strict 成功,
       v1 可显式重算;expected coverage 独立指标。
-- [ ] S10a 同引擎对照接线(F8):graph 增受控 one_shot 策略,两臂共享 LOCALIZE/PLAN/上下文/
+- [x] S10a 同引擎对照接线(F8):graph 增受控 one_shot 策略,两臂共享 LOCALIZE/PLAN/上下文/
       预算/终局验收;manifest 登记差异,未登记差异报错。
-- [ ] S10b 实验预登记 v2 与离线统计:修正旧方案八条(样本固定/ITT 分母/失败分类等),
+- [x] S10b 实验预登记 v2 与离线统计:修正旧方案八条(样本固定/ITT 分母/失败分类等),
       docs/experiment-preregistration-v2-2026-10-08.md + scripts/compare_experiments.py。
 - [ ] S11 全量收口:证据索引 docs/release-evidence-2026-10-08.md、简历证据
       docs/resume-evidence-2026-10-08.md、README/design 对齐 implemented/offline/planned 边界。

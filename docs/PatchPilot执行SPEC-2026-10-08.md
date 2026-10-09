@@ -514,6 +514,6 @@ basetemp 必须在仓库外；每卡提交并更新进度。单次生成不超�
 | S07 | done(2026-10-09) | feat(live-progress) commit | Tracker sink→SQLite 实时事件+进度列(终态守卫),先存后删迁移+唯一索引,收尾补录降级可观测;test_live_progress 5 例;详见 PROGRESS S07 |
 | S08 | done(2026-10-09) | feat(demo) commit | run_dirty_ticket 块协议+--out+非零退出;run_api_ticket 全链路+取消+门禁拒绝;demo/README;test_demo_smoke 2+test_api_golden_path 4;详见 PROGRESS S08 |
 | S09 | done(2026-10-09) | feat(metrics-v2) commit | metrics_version=2(空 touched 不再 strict 成功)+expected_coverage+v1 重算+失败分类;test_metrics +5;详见 PROGRESS S09 |
-| S10a/S10b | pending | — | — |
+| S10a/S10b | done(2026-10-09) | feat(experiment-policy) commit | graph 两臂策略对象+compare_experiments 未登记差异报错+预登记 v2;test_ablation_invariants 4+test_experiment_summary 4;详见 PROGRESS S10a/b |
 | S11 | pending | — | — |
 | L01 | not authorized | — | — |

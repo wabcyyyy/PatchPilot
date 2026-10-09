@@ -151,8 +151,14 @@ class TaskNodes:
     # S02/F1:任务级资源账本——本地化/规划/补丁/分支候选的全部模型调用入账,
     # 终局验收(acceptance_from_state)读它;None 时 __post_init__ 按 Settings 建。
     ledger: ResourceLedger | None = None
+    # S10a:实验策略(两臂唯一差异登记面)。None=默认 agent 臂,与引入前逐字一致。
+    policy: Any | None = None
 
     def __post_init__(self) -> None:
+        if self.policy is None:
+            from app.evals.experiment_policy import agent_policy
+
+            self.policy = agent_policy()
         if self.ledger is None:
             settings = get_settings()
             # getattr 兜底:测试替身(部分字段的 SimpleNamespace settings)落在"无预算"一侧,
@@ -605,7 +611,7 @@ class TaskNodes:
                 round_no=state["round_no"],
                 state_label="PROPOSE_PATCH",
                 extra_system=self._persistent_context(self.workspace),
-                allowed_tools=WRITE_TOOLS,
+                allowed_tools=list(self.policy.propose_tools),
                 deadline_epoch=self.deadline_epoch,
                 token_budget=self._token_budget_for(state),
                 context_window_tokens=get_settings().context_window_tokens,
@@ -973,6 +979,8 @@ class TaskNodes:
         特别是 `branch_model_factory is None`:调用方不注入即整体降级为 V1 行为。
         """
         settings = get_settings()
+        if not getattr(self.policy, "allow_branching", True):
+            return False  # S10a:对照臂禁分支(登记差异,不是额外 best-of-N)
         if not settings.adaptive_branching_enabled:
             return False
         if state.get("branching_used", False):
@@ -1243,6 +1251,28 @@ class TaskNodes:
         from app.graph.reflection import with_discarded_patch
 
         preserved = working_tree_diff(self.workspace).diff_text
+        if not getattr(self.policy, "allow_retry_after_verify_failure", True):
+            # S10a 对照臂:第一次候选验证失败即终局——不 reset(证据原样保留),
+            # 不消耗轮次,不进入反馈重试;严格判定仍 failed。
+            self.tracker.record(
+                tool="one_shot_stop",
+                round_no=state["round_no"],
+                state="VERIFY",
+                input_payload={"round": state["round_no"]},
+                output_summary={
+                    "policy": getattr(self.policy, "name", "one_shot"),
+                    "preserved_diff_bytes": len(preserved),
+                },
+                error="one_shot policy: first verification failed; no retry",
+            )
+            return {
+                "status": "VERIFY_FAILED",
+                "outcome": "failed",
+                "error": "one_shot policy: first verification failed; no retry",
+                "preserved_diff": preserved,
+                "verify_failed_ok": state.get("verify_failed_ok", False),
+                "verify_regression_ok": state.get("verify_regression_ok", False),
+            }
         reset_workspace(self.workspace, self.baseline_commit)
         self.tracker.record(
             tool="reset_workspace",
@@ -1274,10 +1304,12 @@ class TaskNodes:
         }
 
     def route_rollback(self, state: TaskState) -> str:
-        """BUDGET_EXCEEDED → 终点;APPLY_PATCH(分支合流)→ apply 节点做图级门禁复核;
+        """BUDGET_EXCEEDED → 终点;VERIFY_FAILED(S10a 对照臂首次验证失败即终局)
+        → 终点(agent 臂的 rollback 不产出该状态,此边对默认臂是死代码);
+        APPLY_PATCH(分支合流)→ apply 节点做图级门禁复核;
         其余 → 下一轮重规划(M5:返回串仍是既有的 "propose" 键名,builder 把它接到 plan 节点,
         这样状态串与本函数返回值都不动,只有节点目标改变)。"""
-        if state["status"] == "BUDGET_EXCEEDED":
+        if state["status"] in ("BUDGET_EXCEEDED", "VERIFY_FAILED"):
             return "end"
         if state["status"] == "APPLY_PATCH":
             return "apply"

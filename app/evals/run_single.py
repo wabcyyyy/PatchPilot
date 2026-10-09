@@ -73,10 +73,9 @@ def main(argv: list[str] | None = None) -> int:
     require_model_name(real_model_name, settings.llm_enabled and args.model == "openai")
 
     if args.engine == "graph":
-        if args.arm != "agent":
-            # 对照臂消融的是"循环形状",而 graph 的循环写在状态机里(禁区)。
-            # 要在 graph 上做同样的消融得改节点转移,不能在这里顺手假称支持。
-            parser.error("--arm one_shot 只作用于 --engine plain")
+        if args.arm != "agent" and not settings.adaptive_branching_enabled:
+            # one_shot 策略本身禁分支;开关若被显式关闭,两臂仍同口径(无分支)
+            pass
         from app.graph.runner import run_task_graph
 
         result = run_task_graph(
@@ -86,6 +85,7 @@ def main(argv: list[str] | None = None) -> int:
             max_turns=args.max_turns,
             model_name=real_model_name,
             branch_model_factory=_branch_model_factory(bug, args.model, settings),
+            arm=args.arm,
         )
     else:
         # 对照臂按需 import:它的 LOCALIZE 工具集来自 app.graph.nodes(langgraph),

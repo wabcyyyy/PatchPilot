@@ -401,6 +401,7 @@ class TaskService:
                     cancel_event=cancel_event,
                     resume=resume,
                     tracker_sink=self._live_event_sink(task_id),
+                    arm="agent",
                 )
             else:
                 from app.evals.driver import run_task
