@@ -74,6 +74,27 @@ def _cumulative_tokens() -> int:
     )
 
 
+def _done_attempts(phase: str) -> set[tuple[str, int]]:
+    """该相已有 report 的 (bug, rep) —— 已入账的尝试不重做(失败计分母,预登记第五节)。"""
+    done: set[tuple[str, int]] = set()
+    if not LEDGER.exists():
+        return done
+    for line in LEDGER.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        entry = json.loads(line)
+        if entry.get("phase") == phase and entry.get("report"):
+            done.add((str(entry["bug"]), int(entry["rep"])))
+    return done
+
+
+def _is_protocol_400(error_text: str) -> bool:
+    """预登记停手条件 1 的 400 信号:openai SDK 形态 'Error code: 400 - …'
+    或思考模式 reasoning_content 协议错。不能裸匹配 "400"——预算数字(400000)会误中。"""
+    lowered = error_text.lower()
+    return "error code: 400" in lowered or "reasoning_content" in lowered
+
+
 def _latest_report(out_root: Path, bug_id: str) -> Path | None:
     candidates = sorted(out_root.glob(f"{bug_id}-*/report.json"), key=lambda p: p.stat().st_mtime)
     return candidates[-1] if candidates else None
@@ -107,15 +128,19 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     cumulative = _cumulative_tokens()
+    done = _done_attempts(args.phase)
     print(
         f"[batch] phase={args.phase} model={args.model} runs={len(bugs) * args.reps} "
-        f"已累计 tokens={cumulative}(上限 {BUDGET_CAP_TOKENS})",
+        f"已累计 tokens={cumulative}(上限 {BUDGET_CAP_TOKENS});已完成跳过={len(done & {(b, r) for b in bugs for r in range(1, args.reps + 1)})}",
         flush=True,
     )
     stop_code = 0
     try:
         for bug in bugs:
             for rep in range(1, args.reps + 1):
+                if (bug, rep) in done:
+                    print(f"[skip] {bug} rep{rep}: 台账已有该尝试(report 在),不重做。", flush=True)
+                    continue
                 if cumulative >= BUDGET_CAP_TOKENS:
                     print(
                         f"[stop] 累计 {cumulative} 触顶 {BUDGET_CAP_TOKENS},终止整批。", flush=True
@@ -194,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     cumulative += tokens
                     # 停手条件 1:400 协议错误,或"花了钱/发了请求却零回合"(出处 4a4093e)。
-                    if "400" in error_text or "reasoning_content" in error_text:
+                    if _is_protocol_400(error_text):
                         print(f"[stop] {bug} rep{rep}: 400 类协议错误 ⇒ 立刻停批。", flush=True)
                         stop_code = 3
                     elif turns == 0 and tokens > 0:
