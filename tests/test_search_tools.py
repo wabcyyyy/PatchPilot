@@ -280,12 +280,19 @@ def test_fallback_when_rg_binary_is_missing(
 
 
 def test_timeout_falls_back_to_python(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """超时只让路径变慢,不让结果变化:kill 之后照旧由 Python 定案。"""
+    """超时只让路径变慢,不让结果变化:kill 之后照旧由 Python 定案。
+
+    `_rg_binary` 必须一起钉住:这台机器没装 rg 时 `resolve_engine("rg")` 直接返回
+    python,rg 分支根本不被调用,`meta["fallback"]` 也就无从写起——ubuntu CI 上
+    这条用例就是这样以 KeyError('fallback') 红的(它验证的是"rg 跑了但超时",
+    不是"rg 装没装")。钉住探测结果,两条平台都能真正执行到被测逻辑。
+    """
     import subprocess
 
     def _boom(*args: Any, **kwargs: Any) -> Any:
         raise subprocess.TimeoutExpired(cmd=["rg"], timeout=1)
 
+    monkeypatch.setattr("app.tools.search._rg_binary", lambda: "/usr/local/bin/rg-under-test")
     monkeypatch.setattr("app.tools.search._run_rg", _boom)
     meta: dict[str, Any] = {}
     files = _iter_repo_files(repo, None)
@@ -708,8 +715,14 @@ def test_find_symbol_skips_symlinked_files_when_the_flag_is_set(
 def test_rg_engine_defers_to_python_when_a_symlink_is_in_scope(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """rg 对显式文件参数的跟随语义无契约可依 → 见到软链就整批让给 Python(基准路径)。"""
+    """rg 对显式文件参数的跟随语义无契约可依 → 见到软链就整批让给 Python(基准路径)。
+
+    同样必须钉住 `_rg_binary`:这台机器没有 rg 时 `resolve_engine("rg")` 直接返回
+    python,`_rg_files` 不被调用,软链让路那段代码一行都没执行(ubuntu CI 上以
+    KeyError('fallback') 红)。替身只回答"rg 在不在",被测的让路逻辑照原样跑。
+    """
     real_is_symlink = Path.is_symlink
+    monkeypatch.setattr("app.tools.search._rg_binary", lambda: "/usr/local/bin/rg-under-test")
     monkeypatch.setattr(
         Path, "is_symlink", lambda self: "util" in Path(self).as_posix() or real_is_symlink(self)
     )

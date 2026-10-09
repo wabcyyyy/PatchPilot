@@ -6,6 +6,7 @@ junit/stderr 原始证据必须逐字不变,所以这里同时钉住"签名没�
 
 from __future__ import annotations
 
+import os
 import textwrap
 from pathlib import Path
 
@@ -15,6 +16,13 @@ from app.adapters.pytest_adapter import parse_junit_xml
 from app.prompts import build_feedback
 from app.tools.output_filter import fold_output, refine_traceback
 
+# "另一台机器上的解释器/其他项目"根目录:噪声帧必须在**当前平台**上是绝对路径,
+# 越界判定才成立。写死 Windows 形态的 "C:/py" 在 posix 下不是绝对路径,
+# `_is_noise_path` 会把它当项目根内的相对路径保留下来——ubuntu CI 上这两条用例
+# 就是这么红的(帧没被丢,断言却要求它消失)。修法是把夹具的平台形态对齐到
+# 运行时,断言本身一字不动。
+_FOREIGN_ROOT = "C:/py" if os.name == "nt" else "/opt/py"
+
 
 @pytest.fixture()
 def root(tmp_path: Path) -> Path:
@@ -23,7 +31,7 @@ def root(tmp_path: Path) -> Path:
 
 
 PYTEST_TB = textwrap.dedent(
-    """\
+    f"""\
     ___ test_chunk ___
 
         def test_chunk():
@@ -33,9 +41,9 @@ PYTEST_TB = textwrap.dedent(
 
     src/slicing.py:6: AssertionError
 
-      File "C:/py/Lib/site-packages/_pytest/python.py", line 153, in pytest_pyfunc_call
+      File "{_FOREIGN_ROOT}/Lib/site-packages/_pytest/python.py", line 153, in pytest_pyfunc_call
         result = testfunction(**testargs)
-      File "C:/py/Lib/enum.py", line 663, in __missing__
+      File "{_FOREIGN_ROOT}/Lib/enum.py", line 663, in __missing__
         raise KeyError(name)
     KeyError: 'B2'
     """
@@ -52,9 +60,10 @@ def test_refine_keeps_project_frames_and_final_exception(root: Path) -> None:
 
 
 def test_refine_drops_frames_outside_project_root(root: Path) -> None:
-    tb = 'Traceback (most recent call last):\n  File "D:/other/x.py", line 1, in f\n    pass\nValueError: x\n'
+    outside = f"{_FOREIGN_ROOT}/other/x.py"
+    tb = f'Traceback (most recent call last):\n  File "{outside}", line 1, in f\n    pass\nValueError: x\n'
     refined = refine_traceback(tb, root)
-    assert "D:/other/x.py" not in refined
+    assert outside not in refined
     assert refined.startswith("Traceback")
     assert "ValueError: x" in refined
 
