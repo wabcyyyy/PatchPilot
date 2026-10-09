@@ -512,7 +512,7 @@ basetemp 必须在仓库外；每卡提交并更新进度。单次生成不超�
 | S05b | done(2026-10-09) | feat(contract-wiring) commit | 幂等键=task_spec_hash、契约双写、执行前一致性闸、custom 从契约重建;test_custom+3/service_robustness+2;详见 PROGRESS S05b |
 | S06 | done(2026-10-09) | feat(intake) commit | input_snapshot 冻结+preflight 分类预检;custom 执行/恢复只读冻结副本;test_input_snapshot 8+test_preflight 6+e2e 1;详见 PROGRESS S06 |
 | S07 | done(2026-10-09) | feat(live-progress) commit | Tracker sink→SQLite 实时事件+进度列(终态守卫),先存后删迁移+唯一索引,收尾补录降级可观测;test_live_progress 5 例;详见 PROGRESS S07 |
-| S08 | pending | — | — |
+| S08 | done(2026-10-09) | feat(demo) commit | run_dirty_ticket 块协议+--out+非零退出;run_api_ticket 全链路+取消+门禁拒绝;demo/README;test_demo_smoke 2+test_api_golden_path 4;详见 PROGRESS S08 |
 | S09 | pending | — | — |
 | S10a/S10b | pending | — | — |
 | S11 | pending | — | — |

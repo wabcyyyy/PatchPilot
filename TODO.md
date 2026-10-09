@@ -675,7 +675,7 @@
       受理时冻结源码身份,执行只读物化引用;preflight 不调模型不留假 RUNNING。
 - [x] S07 运行中进度与轨迹可查:Tracker 事件 sink→SQLite 幂等入库,任务行进度字段,
       终态不可被迟到事件复活;不引入 SSE/MQ。
-- [ ] S08 演示修复与 API golden path(F7):run_dirty_ticket 改 patch_text 块协议 + --out,
+- [x] S08 演示修复与 API golden path(F7):run_dirty_ticket 改 patch_text 块协议 + --out,
       新 demo/run_api_ticket.py 全链路;离线冒烟测试钉住。
 - [ ] S09 指标 v2 与历史口径保留(F6):metrics_version=2,空 touched 不再 strict 成功,
       v1 可显式重算;expected coverage 独立指标。

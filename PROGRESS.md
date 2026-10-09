@@ -1216,3 +1216,28 @@ tests/test_custom_task.py +1 e2e(**受理后改源仍执行冻结副本**:worksp
 既有 39 个 API/service 用例全绿。
 
 全量离线 pytest(闸记录见提交);ruff/format 绿。
+
+## S08 演示修复与 API golden path(F7 关闭)(2026-10-09,产品卡 10/13)
+
+缺陷(review F7,P1):当前面试演示脚本提交旧字段 diff_text,apply_patch 单入口
+只认 patch_text+块协议——真实离线运行 VERIFY_FAILED,轨迹明确记
+"missing a required argument: 'patch_text'"。
+
+**修法**:
+- `demo/run_dirty_ticket.py` 重写:回放经 `unified_to_block` 生成块协议补丁
+  (锚点取实际源文件,不借改 fixture);新增 `--out`;输出任务 ID/基线/变更文件/
+  门禁/双测试集/validation+gate+resource 三态/报告与补丁路径;非 resolved 非零退出;
+  **脚本自证演示目录零写入**(前后目录哈希比对,不一致退出 2)。
+- 新增 `demo/run_api_ticket.py` API golden path(TestClient 进程内,离线):
+  POST custom fake → 同键重提幂等(200+同 task_id)→ 轮询终态 resolved →
+  轨迹含 apply_patch/run_tests/finish → 报告与资源状态 → diff.patch+冻结候选可读 →
+  **独立任务取消(CANCELLED)** → **门禁拒绝(PATCH_REJECTED,plain 引擎——
+  graph 的拒绝是过渡态会走轮次耗尽,语义不同)**;任一步失败非零退出。
+- 新增 `demo/README.md`:两个脚本的运行命令 + 本地 uvicorn HTTP 人工演示路径
+  (端口/鉴权/curl 命令;文档入口,自动化边界只有下面两个测试文件,不互相替代)。
+- 回归:tests/test_demo_smoke.py(subprocess 真跑当前脚本:resolved、源目录哈希
+  不变、轨迹 apply_patch 事件用 patch_text 且 diff_text 零出现、坏 --out 非零退出)
+  + tests/test_api_golden_path.py(三个演示段经 TestClient 全链路 + barrier 驱动的
+  取消确定性)。演示仓库测试期望零改动。
+
+全量离线 pytest(闸记录见提交);ruff/format 绿。
