@@ -1418,3 +1418,11 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
     两次都是 `833 passed, 35 skipped`)**:三次计数的题面数字逐字相同 ⇒ 无 flaky 迹象;
     诚实边界写进 TODO——第三次是同 commit 的重放,证明的是"同一套代码可重复",
     若按"三次独立变更"口径则是 2 次。判据两条(CI 全绿 / 零断言删弱)都过,卡留档不删。
+- **收卡后回头补的那颗牙(commit `2e34bb9`,CI run #24 `833 passed / FAILED 0`)**:
+  十四次连红里唯一一直绿的 docker 用例是 `test_container_wrong_test_id_never_passes`
+  ——它只断言 `not all_passed`,而"容器整个跑不起来"(exit 1 + 合成的 no-junit 失败项)
+  同样满足,所以它的 docstring 自称拦住空集陷阱、实际什么都没拦。加固三条
+  (`exit_code==4 / errors==0 / failed_cases==[]`),**两侧读数都是实测**得来的;
+  顺带否掉一条我自己差点留下的假护栏:`case_results` 两边都是空,用它当断言等于装一道
+  不存在的门。这条在 ubuntu 上转绿的意义与 #19-#23 不同——它正面证明容器**确实执行了**
+  pytest,而不是"没报错"。判定层要不要把"平台故障 vs 测试失败"分层,只登记为遗留②未动。

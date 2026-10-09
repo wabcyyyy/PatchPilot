@@ -776,6 +776,13 @@
 | #20 | `f65d7d9` | push(仅文档) | `833 passed, 35 skipped` 全绿(351.09s) |
 | #21 | `f65d7d9` | **workflow_dispatch(同一 commit 重放)** | `833 passed, 35 skipped` 全绿 |
 | #22 | `e3cec9a` | push(收卡文档本身) | `833 passed, 35 skipped` 全绿 —— 连绿到第 4 次,判据在 3 次时已满足 |
+| #23 | `4653a72` | push(表读数订正) | success |
+| #24 | `2e34bb9` | push(docker 用例加固) | `833 passed, 35 skipped` / FAILED 0 —— 测试数不变(只加断言不加用例) |
+
+**#24 的价值与 #19-#23 不同**:那条 `test_container_wrong_test_id_never_passes` 在 #5..#18
+期间一直绿是因为只断言 `not all_passed`(容器跑不起来也满足);加固后它在 ubuntu 上
+读到的必须是 `exit_code=4 / errors=0 / failed_cases=[]` ——**这才是"容器真的执行了 pytest"
+的正面证据**,而不是"没报错"。
 
 这是自 run #4(09-18)以来第一次绿并连到三次,中断了 #5..#18 共 14 次连红。
 数字对账:#18 的 `826 passed + 2 failed` + 本轮新增 5 条 backend 用例 = 833,
