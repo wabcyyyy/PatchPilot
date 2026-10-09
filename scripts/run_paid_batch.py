@@ -74,8 +74,9 @@ def _cumulative_tokens() -> int:
     )
 
 
-def _done_attempts(phase: str) -> set[tuple[str, int]]:
-    """该相已有 report 的 (bug, rep) —— 已入账的尝试不重做(失败计分母,预登记第五节)。"""
+def _done_attempts(phase: str, model: str) -> set[tuple[str, int]]:
+    """该相该模型已有 report 的 (bug, rep) —— 已入账的尝试不重做(失败计分母,
+    预登记第五节)。必须按 model 过滤:台账共享,fake 冒烟条目不得占走真实批的槽位。"""
     done: set[tuple[str, int]] = set()
     if not LEDGER.exists():
         return done
@@ -83,7 +84,7 @@ def _done_attempts(phase: str) -> set[tuple[str, int]]:
         if not line.strip():
             continue
         entry = json.loads(line)
-        if entry.get("phase") == phase and entry.get("report"):
+        if entry.get("phase") == phase and entry.get("model") == model and entry.get("report"):
             done.add((str(entry["bug"]), int(entry["rep"])))
     return done
 
@@ -128,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     cumulative = _cumulative_tokens()
-    done = _done_attempts(args.phase)
+    done = _done_attempts(args.phase, args.model)
     print(
         f"[batch] phase={args.phase} model={args.model} runs={len(bugs) * args.reps} "
         f"已累计 tokens={cumulative}(上限 {BUDGET_CAP_TOKENS});已完成跳过={len(done & {(b, r) for b in bugs for r in range(1, args.reps + 1)})}",
