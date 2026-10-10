@@ -179,7 +179,9 @@ def run_task(
         arm=arm,
         run_dir=str(run_dir),
     )
-    # 批次溯源:任务开始即取证,后续任何崩溃路径的 report.json 都带复现口径
+    # 批次溯源:任务开始即取证,后续任何崩溃路径的 report.json 都带复现口径。
+    # 策略登记面(experiment_policy)只在 graph 引擎被真实消费(S10a 的两臂都在 graph),
+    # plain 路径不伪造一份"看起来注册过"的策略,protocol_identity 记 None。
     result.provenance = build_provenance(
         result.model_provider, model_name, engine, arm, max_turns=max_turns
     )

@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "manifest_id": "EXP-TEMPLATE-REPLACE-ME",
+  "question": "这批要回答什么(一句话)。写不出可判定的问题就不要发起——尤其不要为了「看看会不会变好」起批。",
+  "engine": "graph",
+  "model": {
+    "provider": "fake-replay",
+    "name": ""
+  },
+  "arms": [
+    {
+      "name": "agent",
+      "variables": {}
+    },
+    {
+      "name": "one_shot",
+      "variables": {
+        "PATCHPILOT_CONTEXT_WINDOW_TOKENS": "0"
+      }
+    }
+  ],
+  "bugs": [
+    "BUG-001",
+    "BUG-002"
+  ],
+  "repetitions": 3,
+  "budget": {
+    "budget_mode": "tokens",
+    "token_budget": 400000,
+    "cost_budget_micro_usd": 0,
+    "max_model_calls": 0,
+    "model_context_tokens": 0,
+    "batch_cap_tokens": 20000000,
+    "batch_cap_cost_micro_usd": 0,
+    "max_turns": 24
+  },
+  "stop_conditions": [
+    "protocol_400:端点明确拒绝 ⇒ 先停批再诊断,不重发碰运气",
+    "spend_without_booking:turns=0 但 tokens>0(花了钱不入账)⇒ 立刻停",
+    "batch_cap:累计 tokens 或 micro-USD 触到登记上限"
+  ],
+  "authorization": {
+    "granted_by": "offline-template(未授权;真实批必须换成人名与日期)",
+    "scope": "零网络、零模型调用",
+    "max_cost_micro_usd": 0
+  },
+  "outputs_root": "runs/exp-template-dryrun",
+  "registered_upgrades": [],
+  "source_doc": "docs/PatchPilot修复Agent升级SPEC-2026-10-10.md",
+  "notes": "模板使用说明:①一臂只改一个变量——两个变量起一批,结论归因不到任何一个;②协议或策略升级本身(B0/G01、B1/G02-G04 之类)必须写进 registered_upgrades,否则跨升级比较会把源码差异读成「同一条件下的两次结果」;③repetitions >= 2,n=1 只是冒烟,不算机制证据;④在线批要把 model.provider 改成 openai,并填 authorization 的 granted_by/scope/max_cost_micro_usd,缺任何一项校验与驱动器都会拒绝(SPEC §7 G17:本文档不授权任何真实调用);⑤先跑 --dry-run 看矩阵与额度包,确认 planned_runs 与预算再花钱;⑥比较一律走 scripts/compare_experiments.py --manifest,摘要只描述观测分布,不写「修复率提升」。"
+}

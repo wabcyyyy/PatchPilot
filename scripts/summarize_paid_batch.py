@@ -1,10 +1,14 @@
-"""付费批台账汇总(预登记判据的代码化计算,不靠眼睛)。
+"""付费批台账汇总。
 
-用法:
-  PYTHONPATH=. python scripts/summarize_paid_batch.py --phase q0 --model openai
-输出:逐题逐次一行 + Q0 判据(res_i 分布、可判别题 k、k>=2 是否允许启动 Q1)、
-tokens 极差/p50,以及无 report 的事故条目单列。判据原文见
-docs/archive/paid-batch-preregistration-2026-10-08.md 第五节,本脚本不改判据,只执行它。
+两条路径,分得很清:
+
+- `--manifest-hash <hash>`(G04 起的新口径):按 manifest 聚合逐题逐次结果,只描述
+  **观测分布**(每次运行的 verdict/tokens/cost),不套用任何批的判据,也不写"修复率提升";
+- `--phase q0 --model openai`(历史只读口径):Q0 预登记判据的代码化计算,原文见
+  docs/archive/paid-batch-preregistration-2026-10-08.md 第五节。它只适用于那份 7 题 × 3 次
+  的旧批;**新批不得继承它**——这正是 SPEC §7 G04 要结束的"隐式选择旧 Q0 判据"。
+
+本脚本不改判据也不改台账,只读。
 """
 
 from __future__ import annotations
@@ -13,20 +17,60 @@ import argparse
 import json
 import statistics
 from pathlib import Path
+from typing import Any
 
 REPO = Path(__file__).resolve().parent.parent
 LEDGER = REPO / "runs" / "paid-batch-ledger-2026-10-09.jsonl"
 
 
+def _entries() -> list[dict[str, Any]]:
+    if not LEDGER.exists():
+        return []
+    return [
+        json.loads(line) for line in LEDGER.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+
+
+def _summarize_manifest(entries: list[dict[str, Any]], manifest_hash: str) -> int:
+    """按 (bug, arm, rep) 列出该 manifest 的每一次运行:一条都不折、一条都不丢。"""
+    rows = [e for e in entries if e.get("manifest_hash") == manifest_hash]
+    if not rows:
+        print(f"[manifest] 台账里没有 manifest_hash={manifest_hash} 的运行")
+        return 1
+    cells: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for entry in rows:
+        cells.setdefault((str(entry["bug"]), str(entry["arm"])), []).append(entry)
+    costs = [int(((e.get("resources") or {}).get("cost_micro_usd")) or 0) for e in rows]
+    tokens = [int(e.get("tokens_used") or 0) for e in rows]
+    print(
+        f"== manifest_hash={manifest_hash[:12]} runs={len(rows)} cells={len(cells)} "
+        f"tokens p50={statistics.median(tokens):.0f} 合计={sum(tokens)} "
+        f"费用合计={sum(costs)} micro-USD =="
+    )
+    for (bug, arm), runs in sorted(cells.items()):
+        runs_sorted = sorted(runs, key=lambda e: int(e["rep"]))
+        print(
+            f"{bug} @{arm}: reps={len(runs_sorted)} "
+            f"verdicts={[str(e.get('verdict')) for e in runs_sorted]} "
+            f"tokens={[int(e.get('tokens_used') or 0) for e in runs_sorted]}"
+        )
+        for e in runs_sorted:
+            print(
+                f"   rep{e['rep']}: status={e.get('status')} turns={e.get('turns')} "
+                f"cost={((e.get('resources') or {}).get('cost_micro_usd'))} "
+                f"error={str(e.get('error') or '')[:80]}"
+            )
+    print(
+        "\n说明:以上是观测分布,不是机制结论。要把差异归因到某个改动,"
+        "必须该改动已登记为变量并另建配对批(SPEC §7 G04/G17)。"
+    )
+    return 0
+
+
 def _load(phase: str, model: str) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     attempts: list[dict[str, object]] = []
     incidents: list[dict[str, object]] = []
-    if not LEDGER.exists():
-        return attempts, incidents
-    for line in LEDGER.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        entry = json.loads(line)
+    for entry in _entries():
         if entry.get("phase") != phase or entry.get("model") != model:
             continue
         if entry.get("report"):
@@ -37,10 +81,17 @@ def _load(phase: str, model: str) -> tuple[list[dict[str, object]], list[dict[st
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--phase", default="q0")
+    parser = argparse.ArgumentParser(description="台账汇总(新批按 manifest,旧批按 phase)")
+    parser.add_argument("--manifest-hash", default="", help="G04 新口径:按 manifest 聚合每次运行")
+    parser.add_argument("--phase", default="", help="历史只读口径(如 q0)")
     parser.add_argument("--model", default="openai")
     args = parser.parse_args(argv)
+
+    entries = _entries()
+    if args.manifest_hash:
+        return _summarize_manifest(entries, args.manifest_hash)
+    if not args.phase:
+        parser.error("必须指定 --manifest-hash(新批)或 --phase(历史批)")
 
     attempts, incidents = _load(args.phase, args.model)
     by_bug: dict[str, list[dict[str, object]]] = {}

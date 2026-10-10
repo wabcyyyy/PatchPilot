@@ -193,6 +193,17 @@ def test_provenance_carries_new_traceability_fields() -> None:
         "max_model_calls",
         "model_context_tokens",
         "capacity_margin_tokens",
+        # G04 重分类:这些键决定"模型能看到多少/能写多少/一次请求花多少",不是复现豁免
+        # (SPEC §7 G04:"文本裁剪/输出上限不是复现豁免")。从 EXEMPT 移入,分类仍三选一
+        "llm_max_tokens",
+        "llm_max_retries",
+        "llm_thinking",
+        "max_read_lines",
+        "max_search_results",
+        "max_output_chars",
+        "refine_head_lines",
+        "refine_tail_lines",
+        "docker_image",
     } == set(SNAPSHOT_KEYS)
     started = datetime.fromisoformat(prov["started_at"])
     assert started.tzinfo is not None
