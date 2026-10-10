@@ -32,6 +32,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from app.errors import TaskError
 from app.prompts import (
     LOCALIZE_PROMPT,
     ONE_SHOT_PROPOSE_PROMPT,
@@ -119,10 +120,44 @@ def read_source_commit(repo_dir: Path | str) -> str | None:
     return commit if out.returncode == 0 and commit else None
 
 
+def validate_budget_policy(settings: Any, model_name: str, *, online: bool) -> None:
+    """按 §5 检查预算模式的可执行性;不满足就在**受理处**拒绝,不发起任何请求。
+
+    为什么在受理时判而不是跑到一半再判:`cost|hybrid` 的意义是"现金上限真的会拦",
+    没有价目就没有上限可算,而跑到一半才发现等于已经花出去了。
+    `online=False`(fake 回放)不受此约束 —— 零花费路径不该被价目表缺失挡住,
+    否则离线验收与既有回放批次全得停摆。
+    """
+    mode = str(getattr(settings, "budget_mode", "tokens") or "tokens")
+    if mode == "tokens":
+        return
+    if not online:
+        return
+    from app.evals.pricing import price_card_for
+
+    limit = int(getattr(settings, "cost_budget_micro_usd", 0) or 0)
+    if limit <= 0:
+        raise TaskError(
+            f"budget_mode={mode} requires cost_budget_micro_usd > 0;"
+            " refusing to accept an online task with an unbounded money limit"
+            "(没有金额上限的现金闸不是闸,只会让人以为它拦过)"
+        )
+    if price_card_for(model_name) is None:
+        raise TaskError(
+            f"budget_mode={mode} has no known price for model '{model_name}';"
+            " 拒绝受理(不自动联网查价,也不猜价目)"
+        )
+
+
 def _effective_policy(settings: Any) -> dict[str, Any]:
     """受理时冻结的有效策略(全部具名;getattr 兜底让测试替身落在关闭/默认侧)。"""
     keys = (
         "token_budget",
+        "budget_mode",
+        "cost_budget_micro_usd",
+        "max_model_calls",
+        "model_context_tokens",
+        "capacity_margin_tokens",
         "task_timeout_seconds",
         "test_timeout_seconds",
         "max_patch_files",
@@ -249,6 +284,12 @@ def build_task_spec(
         from app.config import get_settings
 
         settings = get_settings()
+    # 预算模式的可执行性在受理口径上判(契约建不起来就不会有后续请求)
+    validate_budget_policy(
+        settings,
+        model_name,
+        online=bool(getattr(settings, "llm_enabled", False)) and model_provider != "fake-replay",
+    )
     allowed = bug.allowed_paths
     if allowed is not None and not allowed:
         allowed = None

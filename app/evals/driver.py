@@ -95,6 +95,9 @@ class TaskResult:
     validation_status: str = "not_run"  # not_run|passed|failed|inconclusive
     gate_status: str = "not_run"  # not_run|passed|rejected|inconclusive
     resource_status: str = "unknown"  # within_budget|exhausted|exceeded|unknown
+    # G03:账本摘要(预算模式、各维度上限/已用/在途预留/未知持有/费用来源标签)。
+    # 旧报告没这个键,读方一律 .get() 取值,不冒充"合规"或"已结算"。
+    resources: dict[str, Any] = field(default_factory=dict)
     # S03(ADR-0009 §4):成功绑定当前候选与当前验证尝试的证据链
     candidate_id: str = ""
     candidate_hash: str = ""
@@ -189,10 +192,13 @@ def run_task(
     )
     ctx: ToolContext | None = None  # materialize 失败时 finally 仍可安全引用
     # S02/F1:任务级资源账本(与 graph 引擎同一套 ResourceLedger)
-    from app.graph.resources import ResourceLedger
+    from app.graph.resources import ledger_from_settings
 
-    ledger = ResourceLedger(
-        task_id=task_id, token_limit=settings.token_budget, output_reserve=settings.llm_max_tokens
+    ledger = ledger_from_settings(
+        task_id=task_id,
+        settings=settings,
+        price_model=model_name or str(getattr(settings, "llm_model", "") or ""),
+        run_dir=run_dir,
     )
 
     def _time_overrun() -> str | None:
@@ -436,6 +442,10 @@ def run_task(
         result.cost_usd = estimate_cost(
             result.model_name, result.tokens_prompt, result.tokens_completion
         )
+        # G03:账本摘要是资源维度的权威读数(与 cost_usd 那条历史 float 约值并存,不互相替代)
+        from app.graph.resources import report_summary
+
+        result.resources = report_summary(ledger)
         _write_report(result, run_dir)
         log.info(
             "task %s -> %s/%s (%sms)", task_id, result.status, result.verdict, result.duration_ms

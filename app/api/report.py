@@ -56,6 +56,37 @@ def render_markdown(result: dict[str, Any]) -> str:
         "",
     ]
     lines.extend(f"- `{path}`" for path in result.get("changed_files", []) or ["(无)"])
+    # G03:资源维度按"四类资源互不替代"分列。旧报告没有 resources 键,
+    # 这种情况如实写"未记录",不拿 token 数冒充现金或调用数。
+    resources = result.get("resources") or {}
+    lines += ["", "## 资源维度", ""]
+    if not resources:
+        lines.append("- 本次报告未携带资源账本摘要(旧报告口径,只有 token 与约值成本)")
+    else:
+        limits = resources.get("limits") or {}
+        price = resources.get("price_provenance") or {}
+        lines += [
+            f"- 预算模式:{resources.get('budget_mode')}",
+            f"- token:已用 {resources.get('tokens_used')} / 上限 {limits.get('token_limit')}"
+            f" | 含在途预留与未知持有的比较基数:{resources.get('committed_tokens')}",
+            f"- 模型调用数:{resources.get('model_calls')} / 上限"
+            f" {limits.get('call_limit') or '不限制'}",
+            f"- 费用:{(resources.get('cost_micro_usd') or 0) / 1_000_000:.6f}"
+            f" {price.get('currency') or 'USD'}(来源标签"
+            f" {resources.get('cost_by_basis') or '未折价'})| 价目"
+            f" {price.get('price_version') or 'n/a'}/{price.get('price_source') or 'n/a'}"
+            f" | 上限 {limits.get('cost_limit_micro_usd') or '不限制'} micro-USD",
+            f"- 未知消耗持有:{resources.get('unknown_held_tokens')} token"
+            f" / {resources.get('unknown_held_cost_micro_usd')} micro-USD"
+            "(崩溃或断连的在途调用继续占额度,恢复不重授)",
+            f"- 请求前容量拒绝次数:{resources.get('over_capacity_requests')}"
+            f"(声明容量 {limits.get('model_capacity_tokens') or '未声明'})",
+            f"- 累计数与明细可重算:{'一致' if resources.get('calls_consistent') else '不一致'}",
+        ]
+        if resources.get("anomalies"):
+            lines.append(f"- 账本异常:{_md_escape(resources['anomalies'])}")
+        if resources.get("cost_overrun"):
+            lines.append(f"- 现金超支:{_md_escape(resources['cost_overrun'])}")
     if result.get("gate_violations"):
         lines += ["", "## 门禁违规", ""]
         lines += [f"- {_md_escape(v)}" for v in result["gate_violations"]]

@@ -93,6 +93,33 @@ class Settings(BaseSettings):
             raise ValueError(f"token_estimate_factor must be in (0, 5], got {value}")
         return value
 
+    # ---------- G03:预算模式与其他维度(默认值 = 既有行为逐字不变) ----------
+    # 四类资源互不替代(§5):单请求容量 / 累计计算量 / 资金 / 运行限制。
+    # 默认 tokens 模式 = legacy_v1 的那道 token 闸;切 cost/hybrid 必须显式冻结价格与金额,
+    # 缺价格时**受理拒绝**(app/task_spec.py 的 validate_budget_policy),不自动联网查价、
+    # 也不静默变成无限预算。
+    budget_mode: str = "tokens"  # tokens | cost | hybrid
+    cost_budget_micro_usd: int = 0  # 现金上限,最小货币单位(1 USD = 1_000_000);0=不设
+    max_model_calls: int = 0  # 任务级模型调用数上限;0=不限制
+    # 端点**声明**的单请求硬容量(来源须由运维显式给出,不由模型名推断);
+    # 0 = 未声明:不做容量检查,也不宣称支持过大窗口。
+    model_context_tokens: int = 0
+    capacity_margin_tokens: int = 1024  # 容量余量:协议开销与估算误差
+
+    @field_validator("budget_mode")
+    @classmethod
+    def _check_budget_mode(cls, value: str) -> str:
+        if value not in {"tokens", "cost", "hybrid"}:
+            raise ValueError(f"budget_mode must be 'tokens', 'cost' or 'hybrid', got {value!r}")
+        return value
+
+    @field_validator("cost_budget_micro_usd", "max_model_calls", "model_context_tokens")
+    @classmethod
+    def _check_non_negative(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"budget limits must be >= 0 (0 = 不限制), got {value}")
+        return value
+
     default_max_rounds: int = 5
     task_timeout_seconds: int = 900
     test_timeout_seconds: int = 120

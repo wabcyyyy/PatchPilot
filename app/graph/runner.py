@@ -126,6 +126,7 @@ def run_task_graph(
             cancel_event=cancel_event,
             branch_model_factory=branch_model_factory,
             policy=policy,
+            price_model=model_name,
         )
         checkpointer = (
             make_sqlite_checkpointer(run_dir / "checkpoints.sqlite") if use_checkpoint else None
@@ -317,6 +318,10 @@ def run_task_graph(
         result.cost_usd = estimate_cost(
             result.model_name, result.tokens_prompt, result.tokens_completion
         )
+        # G03:资源维度摘要与 plain 引擎同口径(异常路径也要有,不能只在正常收尾时才有数)
+        from app.graph.resources import report_summary
+
+        result.resources = report_summary(nodes.ledger if nodes is not None else None)
         # N-17 整改:与 plain 引擎同口径,tmp + os.replace 原子写,轮询方不会读到半截文件
         from app.evals.driver import _write_report
 

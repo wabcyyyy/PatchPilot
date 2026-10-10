@@ -19,7 +19,7 @@ from app.gitops.differ import working_tree_diff
 from app.graph.loop_state import LoopSnapshot, delete_loop_snapshot, save_loop_snapshot
 from app.graph.resources import USAGE_ESTIMATED, ResourceLedger
 from app.llm.base import AssistantTurn, Model, messages_tokens
-from app.llm.usage import ModelResponseEnvelope, UsageEnvelope
+from app.llm.usage import ModelResponseEnvelope, UsageEnvelope, estimate_request
 from app.prompts import SYSTEM_PROMPT, TEXT_COMPLETION_REPAIR
 from app.tools.base import ToolContext, ToolResult
 from app.tools.output_filter import fold_output
@@ -415,6 +415,18 @@ def run_plain_loop(
         if ledger is not None:
             try:
                 ledger.ensure_request_fits(pending)
+                call_id = ledger.begin_call(stage=state_label, round_no=round_no)
+                # 原子预留(G03):检查与登记在同一临界区完成,比较基数是
+                # "已用 + 全部在途预留 + 本次预留"。此前只看已用,两个并发请求
+                # 各自都装得下就都发出去了,现金/额度上限形同一半。
+                # 预留量用**待发请求的完整容量估算**(含有效 schema、tool arguments、
+                # 需回传的 reasoning 与协议开销),而不是上面那个被历史锚点钉住的闸门读数。
+                ledger.reserve(
+                    call_id=call_id,
+                    stage=state_label,
+                    round_no=round_no,
+                    request_tokens=estimate_request(messages, schemas).total_tokens,
+                )
             except BudgetError as exc:
                 raise _budget_error(
                     str(exc),
@@ -424,7 +436,6 @@ def run_plain_loop(
                     turns=turn_no,
                     last_content=last_content,
                 ) from exc
-            call_id = ledger.begin_call(stage=state_label, round_no=round_no)
         llm_started = time.monotonic()
         request_kind = "protocol_repair" if repairs_used else "normal"
         try:
@@ -456,6 +467,7 @@ def run_plain_loop(
                         completion_tokens=usage.completion_tokens or 0,
                         total_tokens=usage.chargeable_total,
                         source=usage.usage_source,
+                        usage=usage,
                     )
                 else:
                     # 在途调用拿不到真实 usage:标 unknown(不写 0、不重授余量),异常原样上抛
@@ -504,6 +516,7 @@ def run_plain_loop(
                 completion_tokens=usage.completion_tokens or 0,
                 total_tokens=usage.chargeable_total,
                 source=usage.usage_source,
+                usage=usage,
             )
             if overrun is not None:
                 ctx.tracker.record(
@@ -526,6 +539,40 @@ def run_plain_loop(
                     turns=turn_no,
                     last_content=response.content or last_content,
                 )
+
+        if cancel_event is not None and cancel_event.is_set():
+            # 取消与回复同时到达:这一次花费**已经在上面结算过了**,但本回复的工具调用
+            # 一个都不执行(G03 的"晚到回复只计量不行动")。快照仍要落盘 —— 取消点是
+            # 可续位置(test_resume 钉着这条),所以把"被取消挡下"的 tool 回执补齐,
+            # 不留下没有配对消息的孤儿 tool_call。
+            assistant_payload = _assistant_payload(response)
+            assistant_payload["tool_calls"] = [
+                {
+                    "type": "function",
+                    "id": c.id,
+                    "function": {"name": c.name, "arguments": json.dumps(c.arguments)},
+                }
+                for c in response.tool_calls
+            ]
+            messages.append(assistant_payload)
+            for call in response.tool_calls:
+                error = "task cancelled before this tool ran"
+                ctx.tracker.record(
+                    tool=call.name,
+                    round_no=round_no,
+                    state=state_label,
+                    input_payload={"blocked": True, "protocol": "cancelled"},
+                    error=error,
+                )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "content": json.dumps({"error": error}, ensure_ascii=False),
+                    }
+                )
+            _write_snapshot(turn_no)
+            raise TaskCancelled(f"cancelled after reply at turn {turn_no} boundary")
 
         if complete_on_text:
             violation = _protocol_violation(response)

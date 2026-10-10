@@ -153,6 +153,9 @@ class TaskNodes:
     ledger: ResourceLedger | None = None
     # S10a:实验策略(两臂唯一差异登记面)。None=默认 agent 臂,与引入前逐字一致。
     policy: Any | None = None
+    # G03:折价用的模型身份(与报告里的 model_name 同源)。空串=回落到 Settings.llm_model;
+    # fake 回放传什么都拿不到价目,费用维度自然不开 —— 零花费路径不该被价表挡。
+    price_model: str = ""
 
     def __post_init__(self) -> None:
         if self.policy is None:
@@ -162,11 +165,16 @@ class TaskNodes:
         if self.ledger is None:
             settings = get_settings()
             # getattr 兜底:测试替身(部分字段的 SimpleNamespace settings)落在"无预算"一侧,
-            # 与本文件 _persistent_context 的既有惯例一致
-            self.ledger = ResourceLedger(
+            # 与本文件 _persistent_context 的既有惯例一致。
+            # G03:构造口径收进 ledger_from_settings(与 plain 引擎同一份),并且带上
+            # run_dir —— 恢复时读回 ledger_state.json,未知holdings不随崩溃清零。
+            from app.graph.resources import ledger_from_settings
+
+            self.ledger = ledger_from_settings(
                 task_id=str(getattr(self.bug, "id", "") or ""),
-                token_limit=int(getattr(settings, "token_budget", 0) or 0),
-                output_reserve=int(getattr(settings, "llm_max_tokens", 0) or 0),
+                settings=settings,
+                price_model=self.price_model or str(getattr(settings, "llm_model", "") or ""),
+                run_dir=self.report_dir.parent,
             )
 
     def _take_resume_snapshot(self, stage: str, round_no: int) -> LoopSnapshot | None:

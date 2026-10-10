@@ -129,6 +129,13 @@ SNAPSHOT_KEYS: tuple[str, ...] = (
     "test_timeout_seconds",
     "llm_timeout_seconds",
     "token_budget",
+    # G03 预算模式与新增维度:它们决定"在哪一次请求上停手",同题跨模式不可比,
+    # 属于运行身份而非复现豁免(价目本身另由 pricing.PRICING_VERSION 记,见 G04)
+    "budget_mode",
+    "cost_budget_micro_usd",
+    "max_model_calls",
+    "model_context_tokens",
+    "capacity_margin_tokens",
     "max_patch_files",
     "verify_double_run",
     "task_timeout_seconds",

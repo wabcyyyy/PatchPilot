@@ -186,6 +186,13 @@ def test_provenance_carries_new_traceability_fields() -> None:
         # M6 崩溃恢复:快照开关决定续跑看到的工作记忆,重启开关决定僵尸任务的终态走向
         "loop_snapshot_enabled",
         "resume_on_restart",
+        # G03 预算维度:预算模式/现金上限/调用数上限/声明容量与余量决定"在哪一次请求停手",
+        # 同题跨模式不可比 —— 分类新增键就是这条断言的既有维护动作(见本用例 docstring)
+        "budget_mode",
+        "cost_budget_micro_usd",
+        "max_model_calls",
+        "model_context_tokens",
+        "capacity_margin_tokens",
     } == set(SNAPSHOT_KEYS)
     started = datetime.fromisoformat(prov["started_at"])
     assert started.tzinfo is not None

@@ -124,8 +124,9 @@ def test_p3_7_corrected_claims_are_pinned() -> None:
     # →657(S02a:TaskNodes 增加 ledger 字段与 __post_init__,其上方导入块同步变化)
     # →655(S02b:时间口径切换 deadline_epoch,propose 节点整体上移)
     # →690(G01:plan 节点的完成协议——docstring 扩写 + protocol_invalid 落事件块,apply 下移)
+    # →698(G03:TaskNodes 新增 price_model 字段与账本构造口径收进 ledger_from_settings)
     assert "七项门禁" in _read("app/graph/gates.py")[0]
-    assert "七项门禁" in _read("app/graph/nodes.py")[689]
+    assert "七项门禁" in _read("app/graph/nodes.py")[697]
     # ADR-0002:compose 冒烟如实表述
     adr2 = _read("docs/adr/0002-execution-backend-local-默认.md")
     assert any("无留档的实测运行" in line for line in adr2[28:34]), adr2[28:34]
