@@ -96,7 +96,7 @@ def run_task_graph(
     )
     # 批次溯源:与 plain 引擎同口径,任务开始即取证
     result.provenance = build_provenance(
-        result.model_provider, model_name, "graph", max_turns=max_turns
+        result.model_provider, model_name, "graph", arm, max_turns=max_turns, policy=policy
     )
     result.provenance["arm"] = arm
     result.provenance["experiment_policy"] = policy.describe()
