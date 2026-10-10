@@ -1,7 +1,7 @@
 # Release Evidence(2026-10-08 spec 执行收口)
 
-本文件是《PatchPilot执行SPEC-2026-10-08》S00–S11 的证据索引。全部数字为最终
-HEAD 上的实测,不是沿用历史文档。能力声明分四级:**implemented**(代码在库)、
+本文件是《PatchPilot执行SPEC-2026-10-08》S00–S11 的证据索引。收口数字保留当时的
+实测口径,后续补证单独标注日期与提交,不把历史数字迁移到当前 HEAD。能力声明分四级:**implemented**(代码在库)、
 **offline verified**(离线测试/回放实测)、**live verified**(真实模型在线实测,
 本轮为零)、**planned**(仅有设计/预登记)。
 
@@ -9,9 +9,9 @@ HEAD 上的实测,不是沿用历史文档。能力声明分四级:**implemented
 
 | 项 | 值 |
 |---|---|
-| 最终 HEAD | 见 `git rev-parse HEAD`(分支 `codex/patchpilot-reliability-20261008`,基线 `442cd8d`) |
+| S11 收口证据提交 | `0016579`(分支 `codex/patchpilot-reliability-20261008`,基线 `442cd8d`);后续补证各自绑定提交 |
 | 提交序列 | 9e8aab8(S00)→ 28f97f0(S01)→ b1b8865(S02a)→ e78ea14(S02b)→ 6c47e92(S05a)→ 34fd5ac(S03)→ 25b8de7(S04)→ 110369d(S05b)→ 24568ba(S06)→ 5f0d615(S07)→ efcf016(S08)→ b33261f(S09)→ c9a07a8(S10a/b)→ S11(本文件) |
-| 解释器 | `.venv` Python 3.14.2(目标 3.11+,**未在 3.11 实测**,如实声明) |
+| 解释器 | spec 收口时使用 `.venv` Python 3.14.2;后续 ubuntu/Python 3.11 CI 实测补证见第 7 节第 2、6 项 |
 | ruff | 0.16.7,`ruff check .` 与 `ruff format --check .` 全绿(217 files) |
 | 全量离线测试 | `PATCHPILOT_LLM_ENABLED=false python -m pytest -q --basetemp=D:/tmp/pt-patchpilot-spec-20261008` → **869 passed, 4 skipped**(skips:redis×2、Windows 符号链接×2,全部环境性),退出码 0,最终闸实测约 22–25 分钟 |
 | LLM | 全程 `PATCHPILOT_LLM_ENABLED=false`,FakeLLM 回放;**本轮零真实模型调用** |
@@ -62,7 +62,7 @@ HEAD 上的实测,不是沿用历史文档。能力声明分四级:**implemented
 - 双跑复核只证明配置下的复核一致性,不防恶意仓库伪造 JUnit(threat-model §4);
 - local 子进程隔离不是 OS 级安全沙箱;Docker 隔离边界以 docker-isolation-notes 实测为准。
 
-## 7. 实际未完成项(如实列出)
+## 7. 实际未完成项(保留历史记录与后续补证)
 
 1. ~~**L01 真实效果实验未执行**(未授权)~~ → **2026-10-09 已执行(用户「全部授权」)**:
    Q0 噪声地板批 21/21(7 题 × 3 次,deepseek-flash/docker/串行),判据 **k=1 ≤1 ⇒ 停止付费**,
@@ -70,7 +70,10 @@ HEAD 上的实测,不是沿用历史文档。能力声明分四级:**implemented
    "实测结果 B" 与 docs/evidence/2026-10-09-q0-noise-floor-gen2.txt。
    **仍然成立的约束:无净增益类数字可写**——k=1 恰恰是判据给出的"本证据集不支持净增益主张";
    简历可用的新事实只有测量纪律本身(冒烟→判据门→负结果停手)与噪声地板数字;
-2. Python 3.11 兼容未实测(仅 3.14.2);
+2. ~~Python 3.11 兼容未实测(仅 3.14.2)~~ → **2026-10-10 已核验 CI 补证**:
+   `876ff6fedd0a2e04b04bb489e05e2073ab5ea485` 的 [CI #30](https://github.com/wabcyyyy/PatchPilot/actions/runs/37955099609)
+   在 ubuntu/Python 3.11 上全绿,`837 passed, 35 skipped`;Docker 镜像构建、lint、
+   三题 FakeLLM 冒烟与产物上传全部成功。35 条 skip 仍保留,不宣称所有环境分支均已验证;
 3. ~~本地 uvicorn HTTP 人工演示未实跑(命令已文档化)~~ → 2026-10-09 已按 demo/README.md §3
    实跑补录一次(docs/evidence/2026-10-09-uvicorn-http-demo.txt),真实 HTTP 栈 golden path
    与 TestClient 结论一致;划线保留是因为它仍未进 pytest 自动化;
@@ -79,11 +82,15 @@ HEAD 上的实测,不是沿用历史文档。能力声明分四级:**implemented
    收口后增量:2026-10-09 语料完整性钉 tests/test_bug_corpus.py +2(869→871),
    并修复 BUG-014 reference.diff 存量缺陷(全语料 47 题唯一失同步项);
 5. provider 账单对账、多实例部署、Redis 强一致:明确不做(design.md §8);
-6. **CI test job 在 ubuntu/py3.11 上持续红(自 ≥M16 起,run #15/#16 实证)**:6 个失败
+6. **历史记录(已由 M20 修复,以下原诊断保留用于追溯)**:CI test job 在 ubuntu/py3.11 上持续红(自 ≥M16 起,run #15/#16 实证):6 个失败
    分四簇(docker 镜像脱节 ×2 / output_filter 环境敏感断言 ×2 / search_tools 的 rg
    预装分支 ×2),与本轮改动无关(442cd8d 同样失败);第 7 个(S06 测试自身运算符
    优先级 bug,linux 首次执行暴露)已修;本地与 CI 的环境差异及修复卡见 TODO M20。
-   **在 CI 转绿前,对本文件的"本地 871 绿"陈述须带上此前提一起读。**
+   当时的限制是:**在 CI 转绿前,对本文件的"本地 871 绿"陈述须带上此前提一起读。**
+   **2026-10-10 补证**:M20 已收卡,真实根因与原诊断三处误判的订正见 `TODO.md` M20;
+   #19..#29 连绿记录保留在该卡。当前核验的 #30 对应 `876ff6f`,conclusion 为 `success`,
+   原生 Linux 上的 Docker 用例实际执行并通过。此前的 CI 红灯限制已解除,
+   历史本地测试数字、付费实验负结果与其他未完成项保持各自原有证据边界。
 
 ## 8. claim 边界(简历/面试用语约束)
 
