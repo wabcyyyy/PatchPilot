@@ -192,11 +192,28 @@ def _build_registry() -> dict[str, ToolSpec]:
 REGISTRY: dict[str, ToolSpec] = _build_registry()
 
 
-def tool_schemas(include_finish: bool = True) -> list[dict[str, Any]]:
-    """模型可见的工具 schema 列表(OpenAI function 格式)。"""
-    return [
-        spec.parameters for name, spec in REGISTRY.items() if include_finish or name != FINISH_TOOL
-    ]
+def tool_schemas(allowed_tools: list[str] | None = None) -> list[dict[str, Any]]:
+    """模型可见的工具 schema 列表(OpenAI function 格式),按**本阶段能力集合**装配。
+
+    G01/R2 的立身点是"可见面 == 执行面":`run_plain_loop` 把同一个 `allowed_tools`
+    既喂这里、又在执行前按同一集合挡人。此前这里无条件吐全部 10 个 schema,阶段白名单
+    只在执行侧兜底——模型每次都先调一个本阶段根本没有的手段、拿到一条 "not allowed in
+    phase" 再重想,一轮真实请求就这么烧掉(reset_workspace 尤其:它注册在案却不在任何
+    阶段白名单里,过去每个阶段都对模型可见、每用必被挡)。
+
+    白名单里出现注册表没有的名字一律当场报错。静默少发一个 schema 是更难查的那类错:
+    工具存在、模型看不见、真去调又成 "unknown tool"。`None` = 全量,只留给不区分阶段的
+    调用方(与注册表面本身的对账用例)。
+    """
+    if allowed_tools is None:
+        names = list(REGISTRY)
+    else:
+        unknown = [name for name in allowed_tools if name not in REGISTRY]
+        if unknown:
+            raise KeyError(f"phase whitelist names are not registered: {unknown}")
+        allowed = set(allowed_tools)
+        names = [name for name in REGISTRY if name in allowed]
+    return [REGISTRY[name].parameters for name in names]
 
 
 def execute(

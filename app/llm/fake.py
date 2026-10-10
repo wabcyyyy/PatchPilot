@@ -8,6 +8,10 @@
 例外:带 PLAN_MARKER 的计划请求走**非消耗**通道(见 _plan_request)——脚本步数与
 引入 PLAN 阶段之前逐字一致,既有回放脚本无需改动。真实模型没有这一步骤差异,
 它只是多收到一次请求。
+
+该例外自 G01 起降级为 plan_mode="legacy" 的默认行为:plan_mode="strict" 下计划请求按
+普通脚本步回放,单次文本契约(一段合规纯文本就结束阶段)必须由脚本自己走完,
+不能被 marker 自动补成 finish——那正是 R1 里掩盖真实缺陷的那条通道。
 """
 
 from __future__ import annotations
@@ -52,12 +56,25 @@ def _plan_text(request: str) -> str:
 
 
 class FakeLLM:
-    """按脚本顺序回放;脚本耗尽后返回 success=false 的 finish(防御死循环)。"""
+    """按脚本顺序回放;脚本耗尽后返回 success=false 的 finish(防御死循环)。
+
+    `plan_mode` 是 PLAN 请求的两条回放通道(G01/R1 要求两者同时在):
+    - `"legacy"`(默认):认出 PLAN_MARKER 就**不消耗脚本步**,直接给"计划文本 + finish"。
+      既有 graph 用例的脚本都写成 `_localize_script() + _propose_script(...)`,计划一旦弹步
+      整套错位;留这条通道是为了不改写历史回放的形状。
+    - `"strict"`:marker 不再特判,计划请求按普通脚本步回放。用例用它钉单次文本契约——
+      "模型遵守提示只回一段纯文本"必须真的把阶段走完,而不是由 marker 替它补一个 finish。
+      离线回放在特判通道里看起来一轮收敛,而真实模型在同一份提示上把阶段份额烧光了;
+      这条通道就是为了让"契约是否成立"在离线也能被问对。
+    """
 
     provider = "fake-replay"
 
-    def __init__(self, script: list[Step]) -> None:
+    def __init__(self, script: list[Step], *, plan_mode: str = "legacy") -> None:
+        if plan_mode not in ("legacy", "strict"):
+            raise ValueError(f"unknown plan_mode: {plan_mode!r}(legacy | strict)")
         self.script = list(script)
+        self.plan_mode = plan_mode
         self._cursor = 0
 
     @property
@@ -68,7 +85,7 @@ class FakeLLM:
     def complete(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
     ) -> AssistantTurn:
-        request = _plan_request(messages)
+        request = _plan_request(messages) if self.plan_mode == "legacy" else ""
         if request:
             # 计划请求:直接给"一段计划文本 + finish"的回合,不移动 _cursor。
             # 带 finish 是为了让 plan 节点的循环在**第一个 turn**收敛——纯文本回合会让

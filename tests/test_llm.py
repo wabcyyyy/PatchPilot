@@ -213,6 +213,37 @@ def test_client_captures_reasoning_content(monkeypatch: pytest.MonkeyPatch) -> N
     assert turn.reasoning_content == "先想一下失败原因……"
 
 
+def test_client_forwards_the_phase_schema_verbatim_and_drops_an_empty_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G01 允许的**唯一**客户端改动面:空能力集合时省略请求里的 tools 字段。
+
+    客户端必须原样转发"本阶段可见 schema",不许在传输层把全量加回来——否则阶段权限
+    在最后一米被推翻。计量与重试的重构是 G02,这里不碰。
+    """
+    from app.tools.registry import tool_schemas
+
+    model = OpenAICompatModel(_settings(llm_model="test-model"))
+    captured: dict[str, Any] = {}
+
+    def fake_create(**kwargs: Any) -> SimpleNamespace:
+        captured.update(kwargs)
+        message = SimpleNamespace(content="1. 目标文件", tool_calls=None)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=message, finish_reason="stop")],
+            usage=SimpleNamespace(total_tokens=9, prompt_tokens=6, completion_tokens=3),
+        )
+
+    monkeypatch.setattr(model._client.chat.completions, "create", fake_create)
+
+    model.complete([{"role": "user", "content": "hi"}], tool_schemas(["finish"]))
+    assert [item["function"]["name"] for item in captured["tools"]] == ["finish"]
+
+    model.complete([{"role": "user", "content": "hi"}], tool_schemas([]))
+    assert captured["tools"] is None, "空能力集合要整个省掉字段,而不是发空数组"
+    assert captured["max_tokens"], "省略 tools 不得顺手改动其他请求字段"
+
+
 def test_client_leaves_reasoning_content_none_when_endpoint_omits_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

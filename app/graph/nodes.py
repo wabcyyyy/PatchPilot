@@ -33,7 +33,7 @@ from app.graph.candidate import (
 )
 from app.graph.gates import ensure_budget, run_gates
 from app.graph.loop_state import LoopSnapshot
-from app.graph.plain_loop import LoopOutcome, run_plain_loop
+from app.graph.plain_loop import MAX_PROTOCOL_REPAIRS, LoopOutcome, run_plain_loop
 from app.graph.resources import ResourceLedger
 from app.graph.state import TaskState
 from app.llm.base import Model
@@ -475,9 +475,13 @@ class TaskNodes:
         刻意不做的两件事:
         ①不给任何检索/写入工具——"先计划"不能变成"再调查一轮";结构信息走骨架注入
           (与 localize/propose 同一份持久记忆:计划要点名文件与符号,而实测定位结论
-          常薄到 63-397 字符,只靠它就只能写出"改那个模块"这类无法执行的话);
+          常薄到 63-397 字符,只靠它就只能写出"改那个模块"这类无法执行的话)。
+          G01/R2 之后这条从"执行时挡下"升为"模型根本看不见":本阶段可见 schema 只有 finish;
         ②降级不等于失败——计划段份额用完只带暂定文本进 PROPOSE(与 localize 同构),
           任务级总额耗尽仍是硬终点,N-5 的处置一字不改。
+        G01/R1 补的第三条:完成协议是**单次文本**。合规的计划文本一次请求就结束本阶段;
+        空回复/截断/越权工具调用最多换一次协议修正,再不合就落 plan_invalid 降级——
+        不再有"遵守提示反而把阶段份额烧光"这条路。
         """
         assert self.ctx is not None
         settings = get_settings()
@@ -505,6 +509,10 @@ class TaskNodes:
                 # 计划只产文本:工具白名单只留 finish,不给任何检索/写入面
                 # (否则"先计划"会变成"再调查一轮")
                 allowed_tools=[FINISH_TOOL],
+                # G01/R1:一段合规的计划文本**就是**本阶段结束。此前纯文本会被循环当作
+                # "还没干完"继续下一轮,遵守提示的真实模型只能把阶段份额烧到 max_turns/
+                # phase_share 才"退出"(真实 Q0:PLAN 132 次请求、20/21 题走降级出口)。
+                complete_on_text=True,
                 deadline_epoch=self.deadline_epoch,
                 token_budget=self._token_budget_for(
                     state, share=getattr(settings, "plan_budget_share", 0.15)
@@ -553,6 +561,25 @@ class TaskNodes:
                 "outcome": "needs_review",
                 "error": f"plan: {exc}",
             }
+
+        if outcome.completion == "protocol_invalid":
+            # 协议不合 ≠ 额度耗尽:份额一次没烧、max_turns 也没走到,但计划确实没落成工件。
+            # 处置与 plan_degraded 同形——带可用文本(没有就空)降级进 PROPOSE,不判死;
+            # route_plan 的终点仍只有 NEEDS_REVIEW / BUDGET_EXCEEDED 两类。
+            self.tracker.record(
+                tool="plan_invalid",
+                state="PLAN",
+                input_payload={
+                    "repairs_allowed": MAX_PROTOCOL_REPAIRS,
+                    "round_no": state["round_no"],
+                },
+                output_summary={
+                    "reason": outcome.protocol_reason,
+                    "plan_chars": len((outcome.summary or "").strip()),
+                    "model_requests": outcome.turns,
+                },
+                error=f"plan protocol invalid: {outcome.protocol_reason}",
+            )
 
         return {
             "status": "PROPOSE_PATCH",

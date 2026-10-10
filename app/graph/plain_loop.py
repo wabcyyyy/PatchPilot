@@ -19,7 +19,7 @@ from app.gitops.differ import working_tree_diff
 from app.graph.loop_state import LoopSnapshot, delete_loop_snapshot, save_loop_snapshot
 from app.graph.resources import USAGE_ESTIMATED, ResourceLedger
 from app.llm.base import AssistantTurn, Model, messages_tokens
-from app.prompts import SYSTEM_PROMPT
+from app.prompts import SYSTEM_PROMPT, TEXT_COMPLETION_REPAIR
 from app.tools.base import ToolContext, ToolResult
 from app.tools.output_filter import fold_output
 from app.tools.registry import FINISH_TOOL, _summarize_input, execute, tool_schemas
@@ -27,11 +27,24 @@ from app.tools.registry import FINISH_TOOL, _summarize_input, execute, tool_sche
 log = logging.getLogger(__name__)
 
 _MAX_THOUGHT_CHARS = 2000
+# 文本完成契约(G01/R1)允许的次数修正额度:1 次,不多给。
+# 依据是实测而非口味:真实 Q0 的 PLAN 段发了 132 次请求、20/21 题以 phase_share 耗尽降级收场,
+# "再问一次"在那批数据里就是"把同一个不合规回复再烧一份份额",额度放大只会放大缺陷。
+MAX_PROTOCOL_REPAIRS = 1
 
 
 @dataclass
 class LoopOutcome:
-    """一次循环的原始事实:success 是模型的"声明",验证由上层判定规则负责。"""
+    """一次循环的原始事实:success 是模型的"声明",验证由上层判定规则负责。
+
+    completion 记的是**怎么结束的**,不是结束得好不好:
+    - "finish":走了 finish 伪工具(引入文本完成契约之前的唯一正常出口);
+    - "text":文本完成契约下的正常收尾——非空、未被 max_tokens 截断、没要求任何工具;
+    - "protocol_invalid":文本完成契约下用完全额修正仍不合协议(空回复/截断/要工具),
+      上层按它落降级事件,不能再拿 max_turns/phase_share 当它的出口。
+    success 在 "text" 一路是"阶段协议达成"的意思(计划段没有任何写工具,更没有补丁),
+    平台的 resolved 判定与此无关,任何调用方都不许从这里读修复结论。
+    """
 
     success: bool
     summary: str
@@ -41,6 +54,8 @@ class LoopOutcome:
     finish_declared: bool
     tokens_prompt: int = 0
     tokens_completion: int = 0
+    completion: str = "finish"
+    protocol_reason: str = ""
 
 
 def _has_patch(ctx: ToolContext) -> bool:
@@ -119,6 +134,28 @@ def _assistant_payload(response: AssistantTurn) -> dict[str, object]:
     return payload
 
 
+def _protocol_violation(response: AssistantTurn) -> str:
+    """文本完成契约下这一轮的判定:合规 → 空串;否则给出不合规的原因。
+
+    "legacy_finish" 是**不消耗修正额度**的一种:旧回放与部分端点会把"文本 + finish"
+    当收尾,SPEC 要求这条路继续等效可用,所以它交回既有的 finish 分支处理。
+    被 max_tokens 截断的回复即便带着 finish 也不算收尾——截断处的 arguments 是废的
+    (与 openai_client 对 length + tool_calls 早失败的口径同源)。
+    """
+    truncated = response.finish_reason == "length"
+    if response.is_tool_call:
+        if truncated:
+            return "truncated"
+        if {call.name for call in response.tool_calls} <= {FINISH_TOOL}:
+            return "legacy_finish"
+        return "illegal_tool"
+    if truncated:
+        return "truncated"
+    if not (response.content or "").strip():
+        return "empty_reply"
+    return ""
+
+
 def _compact_working_memory(
     ctx: ToolContext,
     messages: list[dict[str, object]],
@@ -168,6 +205,7 @@ def run_plain_loop(
     state_label: str = "LOOP",
     extra_system: str = "",
     allowed_tools: list[str] | None = None,
+    complete_on_text: bool = False,
     token_budget: int | None = None,
     deadline_epoch: float | None = None,
     cancel_event: threading.Event | None = None,
@@ -180,6 +218,13 @@ def run_plain_loop(
     """工具循环:模型输出 → 解析工具调用 → 执行 → 结果回填 → 直到 finish。
 
     allowed_tools 限定本阶段可用的工具(如定位阶段禁用 apply_patch);None 不限制。
+    它同时决定**模型可见的 schema 集合**(G01/R2):此前可见面恒为全量 10 个、白名单只在
+    执行侧兜底,模型每越权一次就白烧一轮请求(先调用一个本阶段根本没有的手段,拿到一条
+    "not allowed in phase" 再重想)。
+    complete_on_text 打开**文本完成契约**(计划段用,G01/R1):一段非空、未被 max_tokens
+    截断、且不要求任何工具的回复即视为本阶段正常结束,不再依赖 finish 伪工具才出口;
+    空回复/截断/越权工具调用最多换一次协议修正,仍不合规就以 completion="protocol_invalid"
+    结构化结束。默认 False = 既有行为逐字不变(纯文本继续下一轮,只有 finish 返回)。
     token_budget 是本循环的 token 上限(None → 取 Settings.token_budget;0 不限制),
     按累计响应 token + 当前上下文 token 检查,超限抛 BudgetError。
     deadline_epoch 是任务级时间预算(S02b,ADR-0009 §3):持久化的墙钟截止时刻,
@@ -220,9 +265,13 @@ def run_plain_loop(
         {"role": "system", "content": system},
         {"role": "user", "content": issue_text},
     ]
+    # 可见 schema 在**任何请求发出之前**按本阶段能力集合装配一次:白名单里写了注册表没有的
+    # 名字会在这里抛错,而不是等到模型看不见某个工具、或调了才吃 "unknown tool"。
+    schemas = tool_schemas(allowed_tools)
     tokens_spent = 0
     tokens_prompt = 0
     tokens_completion = 0
+    repairs_used = 0  # 文本完成契约的协议修正次数(上限 MAX_PROTOCOL_REPAIRS)
     last_content = ""  # 最近一次有实质文本的模型输出,供上层在额度耗尽时降级取用
     start_turn = 1
 
@@ -334,7 +383,7 @@ def run_plain_loop(
             call_id = ledger.begin_call(stage=state_label, round_no=round_no)
         llm_started = time.monotonic()
         try:
-            response = model.complete(messages, tool_schemas())  # type: ignore[arg-type]
+            response = model.complete(messages, schemas)  # type: ignore[arg-type]
         except BudgetError as exc:
             # 预算异常携带的是**可知消耗**(N-11):按 estimated 入账保留,
             # 不标 unknown——桩/真实端点用它表达"这次请求花了多少"是合法控制流
@@ -395,6 +444,81 @@ def run_plain_loop(
                     turns=turn_no,
                     last_content=response.content or last_content,
                 )
+
+        if complete_on_text:
+            violation = _protocol_violation(response)
+            if violation == "":
+                # 本阶段的正常出口就是这一段文本。**刻意不去算 patch_applied**:计划段没有任何
+                # 写工具,"没有补丁"是构造事实而不是观测;而 working_tree_diff 在非 git 工作区
+                # 会抛 GitCmdError(M10 的教训)——合规回复不该被现场条件炸成阶段异常。
+                delete_loop_snapshot(ctx, task_id=ctx.task_id)
+                log.info(
+                    "task %s %s stage completed by text at turn %s",
+                    ctx.task_id,
+                    state_label,
+                    turn_no,
+                )
+                return LoopOutcome(
+                    success=True,
+                    summary=(response.content or "").strip(),
+                    turns=turn_no,
+                    tokens_used=tokens_spent,
+                    patch_applied=False,
+                    finish_declared=False,
+                    tokens_prompt=tokens_prompt,
+                    tokens_completion=tokens_completion,
+                    completion="text",
+                )
+            if violation != "legacy_finish":
+                messages.append(_assistant_payload(response))
+                for call in response.tool_calls:
+                    error = f"tool {call.name!r} is not allowed in phase {state_label}"
+                    # 不合协议的工具调用**不进执行**,一条副作用都不落,只留一条被挡的取证事件
+                    ctx.tracker.record(
+                        tool=call.name,
+                        round_no=round_no,
+                        state=state_label,
+                        input_payload={"blocked": True, "protocol": "text_completion"},
+                        error=error,
+                    )
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": call.id,
+                            "content": json.dumps({"error": error}, ensure_ascii=False),
+                        }
+                    )
+                if repairs_used >= MAX_PROTOCOL_REPAIRS:
+                    # 修正额度用尽 → 结构化失败,交上层落降级事件。快照照常作废:这一阶段
+                    # 已经终结,留着它只会让续跑把同一段死协议再重放一遍
+                    delete_loop_snapshot(ctx, task_id=ctx.task_id)
+                    return LoopOutcome(
+                        success=False,
+                        summary=last_content,
+                        turns=turn_no,
+                        tokens_used=tokens_spent,
+                        patch_applied=False,
+                        finish_declared=False,
+                        tokens_prompt=tokens_prompt,
+                        tokens_completion=tokens_completion,
+                        completion="protocol_invalid",
+                        protocol_reason=violation,
+                    )
+                repairs_used += 1
+                ctx.tracker.record(
+                    tool="protocol_repair",
+                    round_no=round_no,
+                    state=state_label,
+                    input_payload={"reason": violation, "turn": turn_no},
+                    output_summary={
+                        "repairs_used": repairs_used,
+                        "max_repairs": MAX_PROTOCOL_REPAIRS,
+                        "side_effects": 0,
+                    },
+                )
+                messages.append({"role": "user", "content": TEXT_COMPLETION_REPAIR})
+                _write_snapshot(turn_no)
+                continue
 
         if not response.is_tool_call:
             messages.append(_assistant_payload(response))
