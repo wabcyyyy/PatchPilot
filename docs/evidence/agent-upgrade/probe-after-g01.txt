@@ -1,0 +1,22 @@
+{
+  "plan_plain_text_after": {
+    "calls": 1,
+    "completion": "text",
+    "success": true,
+    "summary_chars": 60,
+    "visible_schema_names": [
+      "finish"
+    ]
+  },
+  "plan_plain_text_optout": {
+    "calls": 3,
+    "error": "agent loop exceeded max_turns=3"
+  },
+  "plan_illegal_tool": {
+    "calls": 2,
+    "completion": "text",
+    "only_finish_was_visible": true,
+    "repair_event_recorded": true,
+    "tool_executed": false
+  }
+}

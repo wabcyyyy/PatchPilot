@@ -80,3 +80,91 @@
 ### 下一卡
 
 G01(修复 PLAN 完成协议与可见工具权限)。
+
+---
+
+## G01 / P1:修复 PLAN 完成协议与可见工具权限
+
+- **开始身份**:`feb59d2`(G00 收据之后)。**结束身份**:代码与用例一个 commit、本进度与证据一个
+  commit,两条都在 `git log --oneline` 顶部(`git rev-parse HEAD` 即本卡的落地 commit)。
+- **允许的语义变更**:SPEC §3.2 明列的"明确 PLAN 结束协议 / 能力对应 schema",交接提示并
+  显式授权在 `app/graph` 这类必须掌握区按规格修协议,不再就同一语义重复请示。
+- **未做**:窗口、总预算、阶段份额、价格、默认执行后端、实验参数一个字没动;
+  `openai_client.py` 未改(空 tools 的省略行为本来就有,新增用例把它钉住,计量留给 G02);
+  `experiment_policy.py` 未改(两臂的 PLAN 能力集合相同,没有可登记的新差异——加字段等于造
+  一个没人消费的登记面)。**这是本卡的范围决定,不是遗漏。**
+
+### 改了什么语义
+
+| 文件 | 语义 |
+| --- | --- |
+| `app/graph/plain_loop.py` | 新增 `complete_on_text`(默认 False = 旧形状逐字不变):合规纯文本一次请求即结束;`MAX_PROTOCOL_REPAIRS = 1` 的有界协议修正;不合规则 `LoopOutcome.completion="protocol_invalid"` 带 `protocol_reason`;可见 schema 改按 `allowed_tools` 装配 |
+| `app/tools/registry.py` | `tool_schemas(allowed_tools=None)` 只装配本阶段能力;白名单里出现未注册名字**当场 KeyError**(静默少发一个 schema 比崩更难查);删掉没人用的 `include_finish` 参数 |
+| `app/graph/nodes.py` | `plan` 节点开启文本完成契约;`protocol_invalid` → 落一条 `plan_invalid` 轨迹事件后**降级继续**,终点集合仍只有 NEEDS_REVIEW / BUDGET_EXCEEDED |
+| `app/prompts.py` | PLAN 提示写明"完成方式=把这 4-6 行作为纯文本发出";新增 `TEXT_COMPLETION_REPAIR`(只重申协议,不替模型写内容) |
+| `app/llm/fake.py` | `plan_mode="legacy"`(默认,marker 免步 + 自动补 finish 的历史形状)与 `"strict"`(计划请求按普通脚本步回放,契约由它来证);未知取值报错 |
+
+`completion="text"` 一路**不计算 `patch_applied`**:计划段没有写工具,"没有补丁"是构造事实而不是
+观测,而 `working_tree_diff` 在非 git 工作区会抛 `GitCmdError`(M10 的教训)——合规回复不该被现场条件炸成阶段异常。
+
+### 最小行为证据(输入 → 实际请求/动作 → 结果)
+
+离线探针(零网络、零模型),`docs/evidence/agent-upgrade/probe-after-g01.txt`
+(sha256 前 16 位 `54c134ba9062f378`):
+
+| 读数 | 修复前(`probe-before-g01.json` `dd076327965192ca`) | 修复后 |
+| --- | --- | --- |
+| 连续三条合规纯文本计划的 PLAN 段 | `calls=3`,`error="agent loop exceeded max_turns=3"` | `calls=1`,`completion="text"`,summary 60 字符 |
+| 计划段模型实际收到的 schema | 10 个全量 | `["finish"]` 一个 |
+| 计划段要 `read_file` | 先执行/被挡再重想,一路烧到份额 | `calls=2`,`tool_executed=false`,落 `protocol_repair` 后第二段文本收束 |
+| 对照臂(同一条行为、不开契约) | — | 仍 `calls=3` + `max_turns` 异常 ⇒ 默认形状未变 |
+
+用例面:`tests/test_tool_capabilities.py` 18 条(新增,sha256 `7f34bb57145dcad2`)+
+`tests/test_llm.py` 1 条(空能力集合省略 `tools` 字段、非空时原样转发不加回全量)。
+覆盖 SPEC 验收矩阵 T01(合规文本一次完成)、T02(截断/隐藏工具有界结束且零非法副作用),
+另加"伪造未注册工具执行不了"、"LOCALIZE 看不到写/测工具"、"两臂 schema == 登记面"、
+"白名单名字必须已注册"、"legacy 文本+finish 与新文本等效收束"。
+
+### 检查读数
+
+```
+.venv/Scripts/ruff.exe check .            → All checks passed!
+.venv/Scripts/ruff.exe format --check .   → 235 files already formatted
+定向:tests/test_plan_stage+test_plan_invariants+test_plain_loop+test_single_shot+test_llm → 59 passed
+定向:tests/test_docs_anchors+test_graph+test_resume+test_resume_crash+test_experiment_summary+
+      test_driver+test_report → 78 passed
+定向:tests/test_tool_capabilities → 18 passed
+全量:.venv/Scripts/pytest.exe -q --basetemp=D:/tmp/pt-upgrade-b0-full
+      → **899 passed, 4 skipped, 4 warnings in 2240.96s (0:37:20)**,exit 0
+```
+
+全量数对账:基线 880 + 本卡新增 19(`test_tool_capabilities` 18 + `test_llm` 1)= 899,逐条闭合。
+4 条 skip 与基线**同一组**(符号链接权限 ×2、Redis 不可用 ×2),没有新增 skip。
+耗时 37:20 对基线 26:02:新增用例只多跑两次真 pytest(约 20s 量级),其余差值归因未查,
+按机器负载记账,**不作为回归证据**——同类的 `duration_ms` 抖动在 M9.1 已经登记过。
+
+旧断言的处理:一条都没删、一条没放宽。`test_plan_invariants` 的
+`calls[1]["allowed_tools"] == [FINISH_TOOL]`、`test_plan_stage` 的 `consumed` 免步契约、
+`test_graph` 的 "not allowed in phase" 拦截用例全部原样通过;
+`tests/test_docs_anchors.py` 只改了 `nodes.py` 的行号索引(文档正文与代码注释移动所致,
+期望子串一字未动),并按同一口径重钉 ADR-0004/0006/0007/0009 的锚点行号。
+
+### 剩余限制(不许被读成"已证明效果")
+
+1. 有界修正取 1 是按 Q0 的失败形状定的,**不是标定值**;真实模型能否稳定给出合规纯文本计划
+   没有在线证据 —— 属 G17。
+2. `plan_invalid` 降级交出去的是**最近**一段实质文本,可能没有计划价值;本卡只保证不再烧空份额。
+3. 续跑时修正计数从 0 重计(A 级快照不存协议状态),最坏情况一段在多次恢复里各问一次修正。
+   持久化要改快照形状,属 G05/G06。
+4. 计划段仍暴露 `finish` 一个 schema(为了 legacy 等效路径)。真实模型多一个可用的收尾手段,
+   这是刻意的兼容,不是漏网。
+5. 离线回放绿只证明协议与权限接线,**不证明修复率**;resolved 依旧只由门禁 + 失败/回归双集决定。
+
+### 费用与外部动作
+
+零模型调用、零付费、零 push、零删除历史结果。全部证据可在本地重跑(命令见上)。
+
+### 下一卡
+
+B1(G02–G04:usage 来源、共享原子预算、比较器与预登记入口)。
+
