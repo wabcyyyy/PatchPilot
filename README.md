@@ -29,10 +29,13 @@
 - **可信验收链(2026-10-08 spec)**:任务契约哈希幂等、完整测试身份匹配(类链/参数化)、
   受理输入冻结副本 + 环境预检、崩溃后按候选补丁重应用并完整重验、
   任务级资源账本与共享终局验收(`docs/adr/0009`、`docs/adr/0010`);
+- **指标与消融**:评测指标带版本(空补丁不再计入严格定位),同引擎两臂消融策略;
+  比较器把**控制身份**(配置快照、端点/价目/容器/协议指纹、任务与源码身份)与
+  **观测结果**(verdict/token/轮数/耗时/费用)分开——结果不同合法,配置漂移即报错,
+  同题重复按 `(task, arm, repetition)` 一条不折;批定义由可 hash 的实验 manifest 承载
+  (`docs/adr/0011`,模板 `docs/work-notes/experiment-manifest-template-2026-10-11.json`);
 - **运行中进度**:轨迹事件实时入 SQLite,任务行带独立 stage/last_event_at 进度列
   (终态不可被迟到事件复活);
-- **指标与消融**:评测指标带版本(空补丁不再计入严格定位),同引擎两臂消融策略
-  (未登记差异的比较器直接报错,`docs/experiment-preregistration-v2-2026-10-08.md`);
 - **外部基准接入(v2)**:SWE-bench Verified 元数据 → 本地任务(`app/evals/swebench.py` +
   `scripts/import_swebench.py`),每题可自带执行环境(`env: python/image/workdir/network`,
   用官方评测镜像),复用**同一套**基线/验证/门禁判定;导入期从镜像回捞构建产物。

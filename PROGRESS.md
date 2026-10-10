@@ -1505,3 +1505,46 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
 - **收口**:全量 **899 passed / 4 skipped**(880 + 新增 19 条,逐条闭合),skip 集与基线同一组。
 - **仍未证明**(不许对外写成效果):真实模型是否稳定给合规纯文本计划(属 G17)、修正额度 1 是否为
   最优、`plan_invalid` 降级产物是否可用、续跑时修正计数从 0 重计(A 级快照不存协议状态)。
+
+## 19. B1(G02+G03+G04):计量协议、共享原子预算与实验登记面(2026-10-11)
+
+细节写在 `docs/work-notes/agent-upgrade-progress-2026-10-10.md`;这里只记台账级事实与三处
+"改了判定语义"的地点。三卡 commit:G02 `9661b3f`、G03 `21bf1fd`、G04 `898d662`。
+
+- **G02 的洞是"花了钱看不出来"**:客户端先取 choices 后读 usage,空 choices 与截断补丁这两条
+  路径都把端点**已经返回**的用量随异常一起丢掉,账本只剩 unknown;而 `record_usage` 的默认
+  provider 标签又把回放脚本与字符估算全标成端点真值。现在顺序改成"usage 先于业务解释",
+  解析失败抛带 envelope 的 `ModelResponseError`,循环先入账再收尾;来源只剩
+  provider/estimated/unknown 三种,账本不再有默认 provider。
+- **物理尝试第一次可数**:`AttemptRecord` 每次独立 ID/用量/状态;SDK 隐式重试
+  (`llm_max_retries>0`)对平台不可见 ⇒ 如实记 `retry_owner=sdk_opaque` + 上界,不补造历史用量。
+  平台显式重试(`TransportRetryPolicy`)要求 `llm_max_retries=0`,两层同开在构造处直接拒绝
+  ——同一笔消耗无法对账的开关不能留着。该策略目前**没有生产调用方**(装配点是 G07)。
+- **G03 的洞是"并发与恢复都在重授额度"**:请求前只比"已用",两个各自装得下的并发请求都放行;
+  崩溃时未定的在途预留被释放;恢复后账本全新。现在预留/结算/未知持有一个临界区,
+  账本原子落 `run_dir/ledger_state.json` 并由 `ledger_from_settings()` 在恢复时读回。
+- **一处经用户裁决的终态变更**:恢复遇到 `unknown` 不再能判 resolved(§3.1 的严格语义
+  此前被"账本重置"绕过)。`test_resume.py` 那条既有用例的**断言一字未动**,只把崩溃注入点
+  移到"回复已结算、工具未执行";新语义由 `test_midrequest_crash_resume_cannot_certify` 单独钉。
+- **资源四类第一次分列**:`budget_mode=tokens|cost|hybrid`(默认 tokens ⇒ 既有行为逐字保留)、
+  `max_model_calls`、`model_context_tokens + capacity_margin_tokens`(越过声明容量在请求前拒绝)、
+  `cost_budget_micro_usd`。费用改 micro-USD 整数累计并带 `price_version/price_source/currency/
+  basis` 四个来源标签;"端点 usage 乘价表"仍是**估计账单**,`settled_bill` 只能外部显式入账。
+  在线 cost/hybrid 缺价目或缺金额 ⇒ 受理拒绝,不静默变无限预算。
+- **G04 的洞是把结果当证据**:比较器把 verdict/tokens/rounds/duration 也逐字段比,于是
+  "两臂结果相同"被读成"配置相同",而真实对照(结果本该不同)反而报错;`latest_per_bug` 把同题
+  三次折成一次;窗口/工具上限/thinking 这些键躺在 EXEMPT 里,漂移在比较面上根本不可见。
+  现在控制身份与观测结果分开(T07 接受、T08 拒绝),配对按 `(task_identity, arm, repetition)`
+  **一条不折**,9 个键从 EXEMPT 移入 SNAPSHOT。
+- **实验第一次有一份可 hash 的批定义**:`app/evals/experiment_manifest.py` +
+  `docs/work-notes/experiment-manifest-template-2026-10-11.json`。paid driver 只认
+  `--manifest`,新增**零网络零子进程**的 `--dry-run`;`--phase` 起真实运行一律拒绝,
+  Q0 判据与常量只读保留(本仓库已为"隐式继承旧判据"作废过一次付费实验)。
+- **新增 ADR-0011**:manifest 是唯一的批定义;反方节写明"比较器只能证明控制身份相同,
+  不能证明结果归因于登记变量"。
+- **收口**:ruff check / format 全绿;全量 **1007 passed / 4 skipped / 4 warnings**(899 + 新增 108 条,
+  逐条闭合),skip 仍是同一组 4 条(符号链接 ×2、Redis ×2),无新增 skip、无新增告警类,
+  26:09(耗时差异按本机负载记账,不作回归结论)。
+- **仍未证明/未做**:真实 tokenizer 下预留量的误差(G17)、`served_model` 采集与运行 profile
+  装配(G07)、rep 落进运行产物(G07/G16)、真实端点的 cache 计费口径(G17);
+  G05 以后一张没动。
