@@ -1,5 +1,7 @@
 # PatchPilot 验收、恢复、业务链路与简历证据执行 SPEC
 
+> 归档状态（2026-10-10）：已执行归档：S00–S11 的离线实施已收口，见同目录 release-evidence-2026-10-08.md 与 PROGRESS。原文“待实现”及 L01 未授权行保留当时状态；后续 Q0 执行与停手见付费批补记，Q1/Q2/Q3 未启动。 当前任务见 [升级 SPEC](../PatchPilot修复Agent升级SPEC-2026-10-10.md)。
+
 日期：2026-10-08。状态：待实现。本文是下一对话的执行规格，不代表功能已完成。
 
 ## 1. 目标与执行边界
@@ -361,7 +363,7 @@ TaskSpec schema_version=1，至少包含：
 
 ### S11 — 全量收口、证据索引与简历稿
 
-允许：`README.md`、`docs/design.md`、新 `docs/release-evidence-2026-10-08.md`、`docs/resume-evidence-2026-10-08.md`、相关 ADR/TODO/PROGRESS；必要的 `tests/test_docs_anchors.py`。不再加产品功能。
+允许：`README.md`、`docs/design.md`、新 `docs/archive/release-evidence-2026-10-08.md`、`docs/work-notes/resume-evidence-2026-10-08.md`、相关 ADR/TODO/PROGRESS；必要的 `tests/test_docs_anchors.py`。不再加产品功能。
 
 - 全量离线测试、ruff/format 与 plain/graph 各 35 题回放；用 S00 的当前代码基线比较，另保留历史基线比较作为辅助。
 - 文档逐项区分 implemented/offline verified/live verified/planned；禁止用“710 collected”替代“710 passed”。
@@ -484,7 +486,7 @@ S10 先完成 manifest 和离线冒烟。随后只提供具体运行申请，不
 
 ```text
 请接手 PatchPilot 的实现，按下面文件执行，不停留在建议或重新规划：
-C:/Users/25924/.codex/worktrees/a4d3/PatchPilot/docs/PatchPilot执行SPEC-2026-10-08.md
+C:/Users/25924/.codex/worktrees/a4d3/PatchPilot/docs/archive/PatchPilot执行SPEC-2026-10-08.md
 
 先读 AGENTS.md、spec、TODO/PROGRESS 和相关 ADR，核对 checkout/HEAD/dirty files。
 spec 的审查基线是 442cd8db3efe45deadbaf185ef18e42e3595a028；保留已有修改与历史 runs。
@@ -503,7 +505,7 @@ basetemp 必须在仓库外；每卡提交并更新进度。单次生成不超�
 
 | 卡 | 状态 | commit | 验收证据 |
 |---|---|---|---|
-| S00 | done(2026-10-08;执行根=本 checkout,分支 codex/patchpilot-reliability-20261008,偏离声明见基线清单§0) | 见 git log 首个文档 commit | docs/spec-s00-baseline-2026-10-08.md:全量 pytest 717 passed+3 环境 skip(2 失败为新 ADR-0009 锚点格式所致,当卡修复);plain/graph 基线批均 35/35 resolved;ADR-0009 契约入库 |
+| S00 | done(2026-10-08;执行根=本 checkout,分支 codex/patchpilot-reliability-20261008,偏离声明见基线清单§0) | 见 git log 首个文档 commit | docs/archive/spec-s00-baseline-2026-10-08.md:全量 pytest 717 passed+3 环境 skip(2 失败为新 ADR-0009 锚点格式所致,当卡修复);plain/graph 基线批均 35/35 resolved;ADR-0009 契约入库 |
 | S01 | done(2026-10-08) | fix(adapters) commit | tests/test_test_identity.py 22 例 + executor 6 例真实仓库 + API tuple 全链路;F3 由假通过变拒绝;详见 PROGRESS S01 |
 | S02a | done(2026-10-09) | feat(resources) commit | ResourceLedger+共享终局验收;F1 两引擎超额不再 resolved;tests/test_resources 13+test_acceptance 12+test_f1_budget 6;详见 PROGRESS S02a(S02b 待做) |
 | S05a | done(2026-10-09) | feat(task-spec) commit | app/task_spec.py 规范契约+canonical SHA256+源指纹;tasks 表三列迁移;graph runner 受理冻结/重算拒绝;test_task_spec 16+storage 2;详见 PROGRESS S05a |

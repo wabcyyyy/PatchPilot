@@ -1,0 +1,452 @@
+{
+  "offline_probes": {
+    "plan_plain_text": {
+      "calls": 3,
+      "error": "agent loop exceeded max_turns=3"
+    },
+    "plan_visible_schema_count": 10,
+    "usage_missing_labeled": "provider",
+    "usage_missing_estimated_tokens": 289,
+    "mocked_http_calls": 1,
+    "sent_schema_count": 10,
+    "comparison_changed_outcome": "rejected: unregistered differences between arms:\n  probe: verdict differs: 'resolved' != 'failed'",
+    "comparison_changed_context_only": "accepted",
+    "fold_output": {
+      "raw_chars": 12035,
+      "visible_chars": 8015,
+      "valid_json": false,
+      "tail_marker_preserved": false
+    }
+  },
+  "historical_q0": {
+    "root": "D:\\wcy\\project\\PatchPilot\\runs\\q0-noise-2026-10-08",
+    "commits": [
+      "92d751882062a88b2692c3293d704dfbf97d259c"
+    ],
+    "runs": 21,
+    "verdicts": {
+      "resolved": 8,
+      "failed": 13
+    },
+    "tokens": 7114801,
+    "prompt_tokens": 6976531,
+    "completion_tokens": 138270,
+    "prompt_fraction": 0.9805658654402281,
+    "stage_calls": {
+      "LOCALIZE": 362,
+      "PLAN": 132,
+      "PROPOSE_PATCH": 232
+    },
+    "plan_tokens": 624599,
+    "plan_token_fraction": 0.08778868165111013,
+    "plan_degraded_runs": 20,
+    "plan_finish_runs": 1,
+    "compacted_runs": 8,
+    "failed_without_compaction": 7,
+    "resolved_call_range": [
+      28,
+      33
+    ],
+    "rows": [
+      {
+        "report": "D:\\wcy\\project\\PatchPilot\\runs\\q0-noise-2026-10-08\\SWE-astropy__astropy-8707-20261009-132407-942202\\report.json",
+        "bug_id": "SWE-astropy__astropy-8707",
+        "verdict": "resolved",
+        "tokens": 263987,
+        "reported_turns": 32,
+        "llm_events": 31,
+        "stages": {
+          "LOCALIZE": 17,
+          "PLAN": 7,
+          "PROPOSE_PATCH": 7
+        },
+        "plan_tokens": 33454,
+        "plan_degraded": true,
+        "plan_finish": false,
+        "compactions": 0,
+        "max_call_total_tokens": 19890,
+        "error": null
+      },
+      {
+        "report": "D:\\wcy\\project\\PatchPilot\\runs\\q0-noise-2026-10-08\\SWE-astropy__astropy-8707-20261009-132618-92af2f\\report.json",
+        "bug_id": "SWE-astropy__astropy-8707",
+        "verdict": "resolved",
+        "tokens": 199129,
+        "reported_turns": 30,
+        "llm_events": 29,
+        "stages": {
+          "LOCALIZE": 13,
+          "PLAN": 9,
+          "PROPOSE_PATCH": 7
+        },
+        "plan_tokens": 42812,
+        "plan_degraded": true,
+        "plan_finish": false,
+        "compactions": 0,
+        "max_call_total_tokens": 14344,
+        "error": null
+      },
+      {
+        "report": "D:\\wcy\\project\\PatchPilot\\runs\\q0-noise-2026-10-08\\SWE-astropy__astropy-8707-20261009-132758-74dd4a\\report.json",
+        "bug_id": "SWE-astropy__astropy-8707",
+        "verdict": "resolved",
+        "tokens": 234776,
+        "reported_turns": 34,
+        "llm_events": 33,
+        "stages": {
+          "LOCALIZE": 14,
+          "PLAN": 9,
+          "PROPOSE_PATCH": 10
+        },
+        "plan_tokens": 40655,
+        "plan_degraded": true,
+        "plan_finish": false,
+        "compactions": 0,
+        "max_call_total_tokens": 14367,
+        "error": null
+      },
+      {
+        "report": "D:\\wcy\\project\\PatchPilot\\runs\\q0-noise-2026-10-08\\SWE-pydata__xarray-3095-20261009-134924-d7cff5\\report.json",
+        "bug_id": "SWE-pydata__xarray-3095",
+        "verdict": "resolved",
+        "tokens": 239238,
+        "reported_turns": 33,
+        "llm_events": 32,
+        "stages": {
+          "LOCALIZE": 18,
+          "PLAN": 8,
+          "PROPOSE_PATCH": 6
+        },
+        "plan_tokens": 35416,
+        "plan_degraded": true,
+        "plan_finish": false,
+        "compactions": 0,
+        "max_call_total_tokens": 16234,
+        "error": null
+      },
+      {
+        "report": "D:\\wcy\\project\\PatchPilot\\runs\\q0-noise-2026-10-08\\SWE-pydata__xarray-3095-20261009-135133-0e5e22\\report.json",
+        "bug_id": "SWE-pydata__xarray-3095",
+        "verdict": "resolved",
+        "tokens": 226789,
+        "reported_turns": 29,
+        "llm_events": 28,
+        "stages": {
+          "LOCALIZE": 14,
+          "PLAN": 7,
+          "PROPOSE_PATCH": 7
+        },
+        "plan_tokens": 35186,
+        "plan_degraded": true,
+        "plan_finish": false,
+        "compactions": 0,
+        "max_call_total_tokens": 17737,
+        "error": null
+      },
+      {
+        "report": "D:\\wcy\\project\\PatchPilot\\runs\\q0-noise-2026-10-08\\SWE-pydata__xarray-3095-20261009-135333-6a8882\\report.json",
+        "bug_id": "SWE-pydata__xarray-3095",
+        "verdict": "failed",
+        "tokens": 393768,
+        "reported_turns": 42,
+        "llm_events": 39,
+        "stages": {
+          "LOCALIZE": 20,
+          "PLAN": 5,
+          "PROPOSE_PATCH": 14
+        },
+        "plan_tokens": 23490,
+        "plan_degraded": true,
+        "plan_finish": false,
+        "compactions": 1,
+        "max_call_total_tokens": 19659,
+        "error": "propose: agent loop tokens 139718 exceed budget 135357"
+      },
+      {
+        "report": "D:\\wcy\\project\\PatchPilot\\runs\\q0-noise-2026-10-08\\SWE-sphinx-doc__sphinx-7590-20261009-131211-284c45\\report.json",
+        "bug_id": "SWE-sphinx-doc__sphinx-7590",
+        "verdict": "failed",
+        "tokens": 389065,
+        "reported_turns": 43,
+        "llm_events": 40,
+        "stages": {
+          "LOCALIZE": 21,
+          "PLAN": 5,
+          "PROPOSE_PATCH": 14
+        },
+        "plan_tokens": 22378,
+        "plan_degraded": true,
+        "plan_finish": false,
+        "compactions": 0,
+        "max_call_total_tokens": 17606,
+        "error": "propose: task token budget 400000 exhausted before request: used 389065 + pending 9943 + reserve 4096"
+      },
+      {
+        "report": "D:\\wcy\\project\\PatchPilot\\runs\\q0-noise-2026-10-08\\SWE-sphinx-doc__sphinx-7590-20261009-131434-735158\\report.json",
+        "bug_id": "SWE-sphinx-doc__sphinx-7590",
+        "verdict": "failed",
+        "tokens": 386266,
+        "reported_turns": 41,
+        "llm_events": 38,
+        "stages": {
+          "LOCALIZE": 21,
+          "PLAN": 5,
+          "PROPOSE_PATCH": 12
+        },
+        "plan_tokens": 25182,
+        "plan_degraded": true,
+        "plan_finish": false,
+        "compactions": 0,
+        "max_call_total_tokens": 17680,
+        "error": "propose: task token budget 400000 exhausted before request: used 386266 + pending 11392 + reserve 4096"
+      },
+      {
+        "report": "D:\\wcy\\project\\PatchPilot\\runs\\q0-noise-2026-10-08\\SWE-sphinx-doc__sphinx-7590-20261009-131634-91146d\\report.json",
+        "bug_id": "SWE-sphinx-doc__sphinx-7590",
+        "verdict": "failed",
+        "tokens": 399077,
+        "reported_turns": 41,
+        "llm_events": 38,
+        "stages": {
+          "LOCALIZE": 19,
+          "PLAN": 6,
+          "PROPOSE_PATCH": 13
+        },
+        "plan_tokens": 26490,
+        "plan_degraded": true,
+        "plan_finish": false,
+        "compactions": 0,
+        "max_call_total_tokens": 18037,
+        "error": "propose: agent loop tokens 148961 exceed budget 138895"
+      },
+      {
+        "report": "D:\\wcy\\project\\PatchPilot\\runs\\q0-noise-2026-10-08\\SWE-sphinx-doc__sphinx-7748-20261009-131833-33c479\\report.json",
+        "bug_id": "SWE-sphinx-doc__sphinx-7748",
+        "verdict": "failed",
+        "tokens": 396555,
+        "reported_turns": 41,
+        "llm_events": 39,
+        "stages": {
+          "LOCALIZE": 19,
+          "PLAN": 6,
+          "PROPOSE_PATCH": 14
+        },
+        "plan_tokens": 28382,
+        "plan_degraded": true,
+        "plan_finish": false,
+        "compactions": 0,
+        "max_call_total_tokens": 19556,
+        "error": "propose: agent loop tokens 157042 exceed budget 147404"
+      },
+      {
+        "report": "D:\\wcy\\project\\PatchPilot\\runs\\q0-noise-2026-10-08\\SWE-sphinx-doc__sphinx-7748-20261009-132047-62dd19\\report.json",
+        "bug_id": "SWE-sphinx-doc__sphinx-7748",
+        "verdict": "failed",
+        "tokens": 396854,
+        "reported_turns": 37,
+        "llm_events": 34,
+        "stages": {
+          "LOCALIZE": 17,
+          "PLAN": 6,
+          "PROPOSE_PATCH": 11
+        },
+        "plan_tokens": 25162,
+        "plan_degraded": true,
+        "plan_finish": false,
+        "compactions": 1,
+        "max_call_total_tokens": 19874,
+        "error": "propose: agent loop tokens 156852 exceed budget 146081"
+      },
+      {
+        "report": "D:\\wcy\\project\\PatchPilot\\runs\\q0-noise-2026-10-08\\SWE-sphinx-doc__sphinx-7748-20261009-132228-4bb862\\report.json",
+        "bug_id": "SWE-sphinx-doc__sphinx-7748",
+        "verdict": "failed",
+        "tokens": 391943,
+        "reported_turns": 38,
+        "llm_events": 35,
+        "stages": {
+          "LOCALIZE": 18,
+          "PLAN": 6,
+          "PROPOSE_PATCH": 11
+        },
+        "plan_tokens": 24430,
+        "plan_degraded": true,
+        "plan_finish": false,
+        "compactions": 1,
+        "max_call_total_tokens": 19975,
+        "error": "propose: agent loop tokens 142376 exceed budget 135256"
+      },
+      {
+        "report": "D:\\wcy\\project\\PatchPilot\\runs\\q0-noise-2026-10-08\\SWE-sphinx-doc__sphinx-8548-20261009-134259-a3f7be\\report.json",
+        "bug_id": "SWE-sphinx-doc__sphinx-8548",
+        "verdict": "failed",
+        "tokens": 393105,
+        "reported_turns": 43,
+        "llm_events": 41,
+        "stages": {
+          "LOCALIZE": 9,
+          "PLAN": 9,
+          "PROPOSE_PATCH": 23
+        },
+        "plan_tokens": 47744,
+        "plan_degraded": true,
+        "plan_finish": false,
+        "compactions": 0,
+        "max_call_total_tokens": 17870,
+        "error": "propose: agent loop tokens 294128 exceed budget 286174"
+      },
+      {
+        "report": "D:\\wcy\\project\\PatchPilot\\runs\\q0-noise-2026-10-08\\SWE-sphinx-doc__sphinx-8548-20261009-134545-1ae94a\\report.json",
+        "bug_id": "SWE-sphinx-doc__sphinx-8548",
+        "verdict": "failed",
+        "tokens": 391576,
+        "reported_turns": 37,
+        "llm_events": 34,
+        "stages": {
+          "LOCALIZE": 18,
+          "PLAN": 5,
+          "PROPOSE_PATCH": 11
+        },
+        "plan_tokens": 22520,
+        "plan_degraded": true,
+        "plan_finish": false,
+        "compactions": 5,
+        "max_call_total_tokens": 19724,
+        "error": "propose: agent loop tokens 141975 exceed budget 137094"
+      },
+      {
+        "report": "D:\\wcy\\project\\PatchPilot\\runs\\q0-noise-2026-10-08\\SWE-sphinx-doc__sphinx-8548-20261009-134733-ab7448\\report.json",
+        "bug_id": "SWE-sphinx-doc__sphinx-8548",
+        "verdict": "failed",
+        "tokens": 388532,
+        "reported_turns": 40,
+        "llm_events": 37,
+        "stages": {
+          "LOCALIZE": 18,
+          "PLAN": 6,
+          "PROPOSE_PATCH": 13
+        },
+        "plan_tokens": 26071,
+        "plan_degraded": true,
+        "plan_finish": false,
+        "compactions": 4,
+        "max_call_total_tokens": 19155,
+        "error": "propose: agent loop tokens 135312 exceed budget 134738"
+      },
+      {
+        "report": "D:\\wcy\\project\\PatchPilot\\runs\\q0-noise-2026-10-08\\SWE-sphinx-doc__sphinx-8593-20261009-132947-fde712\\report.json",
+        "bug_id": "SWE-sphinx-doc__sphinx-8593",
+        "verdict": "resolved",
+        "tokens": 298469,
+        "reported_turns": 33,
+        "llm_events": 31,
+        "stages": {
+          "LOCALIZE": 19,
+          "PLAN": 6,
+          "PROPOSE_PATCH": 6
+        },
+        "plan_tokens": 26506,
+        "plan_degraded": true,
+        "plan_finish": false,
+        "compactions": 4,
+        "max_call_total_tokens": 18924,
+        "error": null
+      },
+      {
+        "report": "D:\\wcy\\project\\PatchPilot\\runs\\q0-noise-2026-10-08\\SWE-sphinx-doc__sphinx-8593-20261009-133152-6c3b71\\report.json",
+        "bug_id": "SWE-sphinx-doc__sphinx-8593",
+        "verdict": "resolved",
+        "tokens": 323056,
+        "reported_turns": 32,
+        "llm_events": 31,
+        "stages": {
+          "LOCALIZE": 20,
+          "PLAN": 3,
+          "PROPOSE_PATCH": 8
+        },
+        "plan_tokens": 16706,
+        "plan_degraded": false,
+        "plan_finish": true,
+        "compactions": 1,
+        "max_call_total_tokens": 20473,
+        "error": null
+      },
+      {
+        "report": "D:\\wcy\\project\\PatchPilot\\runs\\q0-noise-2026-10-08\\SWE-sphinx-doc__sphinx-8593-20261009-133418-b39051\\report.json",
+        "bug_id": "SWE-sphinx-doc__sphinx-8593",
+        "verdict": "resolved",
+        "tokens": 227132,
+        "reported_turns": 31,
+        "llm_events": 30,
+        "stages": {
+          "LOCALIZE": 14,
+          "PLAN": 8,
+          "PROPOSE_PATCH": 8
+        },
+        "plan_tokens": 40693,
+        "plan_degraded": true,
+        "plan_finish": false,
+        "compactions": 0,
+        "max_call_total_tokens": 16341,
+        "error": null
+      },
+      {
+        "report": "D:\\wcy\\project\\PatchPilot\\runs\\q0-noise-2026-10-08\\SWE-sphinx-doc__sphinx-9461-20261009-133622-8b0e97\\report.json",
+        "bug_id": "SWE-sphinx-doc__sphinx-9461",
+        "verdict": "failed",
+        "tokens": 393389,
+        "reported_turns": 39,
+        "llm_events": 36,
+        "stages": {
+          "LOCALIZE": 19,
+          "PLAN": 5,
+          "PROPOSE_PATCH": 12
+        },
+        "plan_tokens": 26071,
+        "plan_degraded": true,
+        "plan_finish": false,
+        "compactions": 0,
+        "max_call_total_tokens": 18731,
+        "error": "propose: agent loop tokens 151203 exceed budget 145077"
+      },
+      {
+        "report": "D:\\wcy\\project\\PatchPilot\\runs\\q0-noise-2026-10-08\\SWE-sphinx-doc__sphinx-9461-20261009-133852-d6ce01\\report.json",
+        "bug_id": "SWE-sphinx-doc__sphinx-9461",
+        "verdict": "failed",
+        "tokens": 386011,
+        "reported_turns": 38,
+        "llm_events": 35,
+        "stages": {
+          "LOCALIZE": 18,
+          "PLAN": 5,
+          "PROPOSE_PATCH": 12
+        },
+        "plan_tokens": 25548,
+        "plan_degraded": true,
+        "plan_finish": false,
+        "compactions": 1,
+        "max_call_total_tokens": 19498,
+        "error": "propose: task token budget 400000 exhausted before request: used 386011 + pending 12456 + reserve 4096"
+      },
+      {
+        "report": "D:\\wcy\\project\\PatchPilot\\runs\\q0-noise-2026-10-08\\SWE-sphinx-doc__sphinx-9461-20261009-134058-73ed03\\report.json",
+        "bug_id": "SWE-sphinx-doc__sphinx-9461",
+        "verdict": "failed",
+        "tokens": 396084,
+        "reported_turns": 37,
+        "llm_events": 35,
+        "stages": {
+          "LOCALIZE": 16,
+          "PLAN": 6,
+          "PROPOSE_PATCH": 13
+        },
+        "plan_tokens": 29703,
+        "plan_degraded": true,
+        "plan_finish": false,
+        "compactions": 0,
+        "max_call_total_tokens": 20809,
+        "error": "propose: agent loop tokens 162213 exceed budget 153125"
+      }
+    ]
+  }
+}

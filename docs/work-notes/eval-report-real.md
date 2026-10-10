@@ -1,31 +1,41 @@
 # PatchPilot 评测报告
 
-- 生成时间:2026-10-06 07:21 UTC
-- 运行目录:`runs\fake35-2026-10-06`(共 35 次运行,每题取最新 35 题)
-- 模型提供方:**fake-replay**
-- 引擎:plain
-- 批次溯源:执行后端 local · 代码 8ab4e0813673(取自批次最新运行)
+- 生成时间:2026-09-18 01:15 UTC
+- 运行目录:`runs\real`(共 28 次运行,每题取最新 28 题)
+- 模型提供方:**openai**
+- 引擎:**plain ×28**(实测,非 README 主打的 graph 状态机)
+
+> **读数口径(2026-09-19 补注,实测 `runs/real/*/report.json` 全部 28 份)**:本文件是**生成产物快照**。
+> 这批确实是真实模型在线调用,provider=openai、28/28 resolved,但产物侧缺了三项最关键信息:
+> `engine` 全为 **plain**、`model_name` 全为**空串**、`cost_usd` 全为 **None**、`provenance` 字段**全部缺失**。
+> 因此下方原文"report.json 内含 token 明细与成本"一句**不成立**(成本一项都没有),
+> 且**无法回答"哪个模型、哪个引擎、花了多少钱"**。根因是 `app/evals/run_single.py` 从 CLI 调用时
+> 不传 `model_name`;provenance 缺失说明本批次早于 T10.1 落地后未重生成。
+> 缺陷与整改见 `docs/work-notes/audit-2026-09-19.md` P1-2。
+
+> **历史批次溯源缺失(2026-09-25 补注,与 E2 整改呼应)**:本批次的 28 份 report.json
+> `model_name` 全空、provenance 全缺,属历史遗留,**不回填、不重生成**(零花费红线)。
+> 自 2026-09-25 起(E2 落地):`build_provenance` 自带 `git_commit`/`config_snapshot`/
+> `started_at`,批次收尾写 `batch_manifest.json`;`PATCHPILOT_LLM_ENABLED=true` 时
+> 缺 `model_name` 的任务/批次在发起前即被 `require_model_name` 拒绝——
+> "缺溯源的批次根本生不出来"。下一次真实批(36 题,须人工触发)将自带完整溯源,
+> 届时以同命令重跑刷新本文件,本快照原样存档。
 
 > **数据来源声明**:本报告由 `python -m app.evals.report` 从运行产物自动生成;
-> 每个指标都有判定脚本(metrics.py),无人工标注。当前批次为 fake-replay 回放模型,用于验证平台闭环的确定性,**不代表真实模型成绩**;接入真实模型后同命令重跑即可替换。
+> 每个指标都有判定脚本(metrics.py),无人工标注。本批次为**真实模型在线调用成绩**(openai),结论由平台测试执行与门禁脚本自动判定;各任务 report.json 内含 token 明细与成本(约值,价目表未收录的模型显示 n/a)。
 
 ## 汇总指标
 
 | 指标 | 值 |
 |---|---|
-| 最终修复率(每题取最新) | 1.0 |
-| 全量运行修复率(含同题重试,35 次) | 1.0 |
+| 最终修复率 | 1.0 |
 | 定位成功率 | 1.0 |
 | 补丁应用率 | 1.0 |
 | 回归引入率 | 0.0 |
-| 越权拦截 | 0 次(攻击样例 10 个,拦截验证见 tests/test_attacks.py) |
+| 越权拦截 | 0 次(另有攻击样例 4/4 被门禁拦截) |
 | 平均修复轮数 | 1.0 |
-| 平均耗时 | 7816 ms |
-| 平均 Token | 177 |
-| 耗时 min/p50/p95/max | 6770 / 7589 / 9667 / 10053 ms |
-| Token min/max | 133 / 314 |
-| 轮数分布(1 / 2 / 3+) | 35 / 0 / 0 |
-| 判型计数 | resolved 35 · 门禁拦截 0 · needs_review 0 · 其他 0 |
+| 平均耗时 | 14540 ms |
+| 平均 Token | 12519 |
 
 ## 分题结果
 
@@ -59,13 +69,6 @@
 | BUG-026 | ✅ resolved | FINISHED | 1 | `src/dispatch.py` | 命中 | 通过 |
 | BUG-027 | ✅ resolved | FINISHED | 1 | `src/dedup.py` | 命中 | 通过 |
 | BUG-028 | ✅ resolved | FINISHED | 1 | `src/accounting.py` | 命中 | 通过 |
-| BUG-029 | ✅ resolved | FINISHED | 1 | `src/aggregator.py` | 命中 | 通过 |
-| BUG-030 | ✅ resolved | FINISHED | 1 | `src/checkout.py`, `src/fees.py` | 命中 | 通过 |
-| BUG-031 | ✅ resolved | FINISHED | 1 | `src/dec.py` | 命中 | 通过 |
-| BUG-032 | ✅ resolved | FINISHED | 1 | `src/units.py` | 命中 | 通过 |
-| BUG-033 | ✅ resolved | FINISHED | 1 | `src/notify.py`, `src/rules.py` | 命中 | 通过 |
-| BUG-034 | ✅ resolved | FINISHED | 1 | `src/escaping.py`, `src/exporter.py` | 命中 | 通过 |
-| BUG-035 | ✅ resolved | FINISHED | 1 | `src/escapes.py`, `src/template.py` | 命中 | 通过 |
 
 ## 失败任务复盘索引
 
@@ -73,10 +76,15 @@
 
 ## 复现方式
 
-以下命令由本批次运行产物的 provenance 字段归并生成(模型/引擎/目录均为批次实际取值):
+**本批次当前无法逐字复现**——产物未记录模型名与 provenance(见文首读数口径),
+且原始批次是 CLI 驱动的 plain 引擎。补齐 `run_single` 的 `model_name` 后,本批次等价命令为:
 
 ```bash
-# 单题示例(--bug 换成同批任意题目即可)
-python -m app.evals.run_single --bug BUG-001 --model fake --engine plain --out runs/fake35-2026-10-06
-python -m app.evals.report --runs runs/fake35-2026-10-06 --out docs/eval-report.md
+# 单题:真实模型 + plain 引擎(本批次实际形态)
+PATCHPILOT_LLM_ENABLED=true python -m app.evals.run_single \
+    --bug BUG-001 --model openai --engine plain --out runs/real-rerun
+# 批量评测 + 本报告
+python -m app.evals.report --runs runs/real-rerun --out docs/work-notes/eval-report-real.md
 ```
+
+重跑会产生真实 API 花费,须人工显式触发;`runs/real` 原产物保留不动作为历史证据。

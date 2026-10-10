@@ -4,7 +4,7 @@
   PYTHONPATH=. python scripts/summarize_paid_batch.py --phase q0 --model openai
 输出:逐题逐次一行 + Q0 判据(res_i 分布、可判别题 k、k>=2 是否允许启动 Q1)、
 tokens 极差/p50,以及无 report 的事故条目单列。判据原文见
-docs/paid-batch-preregistration-2026-10-08.md 第五节,本脚本不改判据,只执行它。
+docs/archive/paid-batch-preregistration-2026-10-08.md 第五节,本脚本不改判据,只执行它。
 """
 
 from __future__ import annotations

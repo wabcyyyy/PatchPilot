@@ -1,6 +1,6 @@
 # 夜间 GOAL 模式晨会报告 · 2026-09-25 · 效果证据链专场
 
-执行:无人值守代理 | 任务来源:`docs/夜间GOAL模式SPEC-2026-09-25-效果证据链.md`
+执行:无人值守代理 | 任务来源:`docs/archive/夜间GOAL模式SPEC-2026-09-25-效果证据链.md`
 基线:master `b6aee2c`,258 passed + 2 skipped | 全程 `PATCHPILOT_LLM_ENABLED=false` 前缀,零真实花费。
 
 ## 1. 每卡状态

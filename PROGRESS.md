@@ -761,7 +761,7 @@ M11.3 要的是生产影响评估,结果它先推翻了我自己登记的 M11.1:
   "默认 1.0 行为未变",但基线批次每题只烧约 7k tokens,**离任何额度闸都差两个数量级** ——
   跑出来的 0 差异只证明"这条路径没被走到",不证明行为等价。证据是 M17.3 那三条直接对撞
   闸门算术的用例。额度类主张只能来自真实模型语料或显式构造的用例,这条口径与 M15/M16 一致。
-- **M18:下一批付费实验先买噪声,不买分数**(`docs/paid-batch-preregistration-2026-10-08.md`,
+- **M18:下一批付费实验先买噪声,不买分数**(`docs/archive/paid-batch-preregistration-2026-10-08.md`,
   状态未启动)。设计依据全在已入库的证据里:同题两次同参运行死在**不同阶段**
   (`swe-hard-graph2` vs `graph3`),而要检测的效应静态上界只有 6% ⇒ **不知道 σ 之前,
   任何两臂差值都不可解读**。所以 Q0 是 7 题 × 3 次同参重复,判据写死"可判别题数 k≤1 就停止付费";
@@ -869,7 +869,7 @@ M11.3 要的是生产影响评估,结果它先推翻了我自己登记的 M11.1:
 (用户会话目录、.venv 与历史 runs 所在地)执行——两侧 HEAD 逐字同为 `442cd8d`、D 侧工作树
 clean,满足 spec"其他 checkout 先核对代码身份"的前提;新增分支
 `codex/patchpilot-reliability-20261008` 承载全部实施 commit,master 不动,C 侧零写入
-(声明见 docs/spec-s00-baseline-2026-10-08.md §0)。
+(声明见 docs/archive/spec-s00-baseline-2026-10-08.md §0)。
 
 - **全量离线 pytest 基线**(basetemp=D:/tmp/pt-patchpilot-spec-20261008,仓库外):
   首跑 **2 failed / 717 passed / 3 skipped / 1108.5s**。2 个失败全是 `test_docs_anchors`
@@ -1311,9 +1311,9 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
 - **终验**:全量离线 pytest **869 passed + 4 环境 skip**(redis×2、符号链接×2)、
   退出码 0;ruff check/format 全绿(224 files)。最终产物 README/证据文档数字全部
   现算,不用"collected"冒充"passed"。
-- **文档**:`docs/release-evidence-2026-10-08.md`(证据索引:HEAD/commit 序列/命令/
+- **文档**:`docs/archive/release-evidence-2026-10-08.md`(证据索引:HEAD/commit 序列/命令/
   退出码/F1–F8 反转证据/35 题逐题/演示三级验证/恢复边界/未完成项/claim 边界)、
-  `docs/resume-evidence-2026-10-08.md`(三条 bullet,每条锚定实现文件与回归测试,
+  `docs/work-notes/resume-evidence-2026-10-08.md`(三条 bullet,每条锚定实现文件与回归测试,
   使用边界明文);README 功能概览补 S 系列能力段(被钉行零改动)。
 - **claim 边界**:平台 resolved ≠ SWE-bench 官方;本轮零真实模型调用,无修复率数字;
   恢复表述上限=PROPOSE 内部与 verify→finish 边界真进程死亡已实测;双跑只证复核一致性;
@@ -1323,7 +1323,7 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
 
 ## L01/Q0 付费批:预登记程序执行与判据停手(2026-10-09,用户「全部授权」后)
 
-- **程序**:docs/paid-batch-preregistration-2026-10-08.md(判据/题单/分母先于任何付费运行入库,
+- **程序**:docs/archive/paid-batch-preregistration-2026-10-08.md(判据/题单/分母先于任何付费运行入库,
   M18 卡)。fake 同参冒烟 7/7 resolved、登记参数逐字入 provenance、compare_batches 可解析
   ——两轮冒烟(gen1/gen2)都过了才开真实模型。
 - **gen1 中止(停手条件 1 真触发)**:8707 rep1 于 PLAN 段收到端点 400"reasoning_content

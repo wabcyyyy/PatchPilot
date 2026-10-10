@@ -92,7 +92,7 @@ def test_repro_empty_batch_example_uses_plain(tmp_path: Path) -> None:
     不再硬编码 graph。"""
     from app.evals.report import repro_commands
 
-    cmds = repro_commands(tmp_path / "empty", [], "docs/eval-report.md")
+    cmds = repro_commands(tmp_path / "empty", [], "docs/work-notes/eval-report.md")
     assert any("--engine plain" in c and "--bug BUG-001" in c for c in cmds)
     assert not any("--engine graph" in c for c in cmds)
 
@@ -121,7 +121,7 @@ def test_provenance_new_fields_keep_repro_merge_stable(tmp_path: Path) -> None:
 
     from app.evals.report import repro_commands
 
-    cmds = repro_commands(runs, rows, "docs/eval-report.md")
+    cmds = repro_commands(runs, rows, "docs/work-notes/eval-report.md")
     assert any("--model fake" in c and "--bug BUG-001" in c for c in cmds)
     text = render(runs, BUG_ROOT)
     assert "批次溯源:" in text  # git_commit 非空,溯源行照常归并

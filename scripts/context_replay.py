@@ -391,7 +391,7 @@ def main() -> int:
             entry = (run.batch, run.bug_id, run.tokens_used_recorded, reported)
             if reported == 0 and run.tokens_used_recorded > 0:
                 # 已知缺陷的实物:崩溃路径把 turns/tokens 记成 0(commit 4a4093e 修的就是它,
-                # 见 docs/interview-evidence-2026-10-07.md "不能写"一节)。
+                # 见 docs/work-notes/interview-evidence-2026-10-07.md "不能写"一节)。
                 # 这是**账目缺陷**不是装载缺陷,单独归类,不算 F1 失败也不算"通过"。
                 f1_zero_accounting.append(entry)
             else:

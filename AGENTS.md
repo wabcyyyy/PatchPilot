@@ -8,7 +8,7 @@ PatchPilot:面向软件仓库的测试失败诊断与补丁验证平台。
 给定本地 Git 仓库 + Bug 描述,Agent 检索代码、生成补丁、在隔离工作区执行测试,
 并按"原失败测试通过 + 回归测试通过 + 修改范围合法"判定修复结果。
 
-架构与状态机定义见 `docs/` 与《PatchPilot项目企划书》;当前开发任务卡见《PatchPilot开发计划书》。
+架构与状态机定义见 `docs/` 与《PatchPilot项目企划书》;当前升级任务卡见 `docs/PatchPilot修复Agent升级SPEC-2026-10-10.md`;已执行计划与完成记录见 `docs/archive/README.md`。
 
 ## 编码规范
 

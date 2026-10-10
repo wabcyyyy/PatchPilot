@@ -75,7 +75,7 @@ regression 必须绿)由生成器与测试双重把关——回归集在基线�
   价值边界如实声明(P3-5/R3-Q7):防**非自适应偶发伪绿**(收集集漂移/flaky/
   偶发伪造),对基线预置伪造的自适应对手无实质检出力——定位是结构性冒烟复核,
   不是防线;graph 批次佐证已产出(2026-09-26:35/35 题触发双跑三件套,
-  见 docs/e3-and-provenance-evidence-2026-09-26.md),真实模型批次佐证亦已补齐
+  见 docs/work-notes/e3-and-provenance-evidence-2026-09-26.md),真实模型批次佐证亦已补齐
   (2026-10-09 L01/Q0:8 个 resolved run 全部触发双跑复核,mismatch 全 null,
   runs/q0-noise-2026-10-08/);
 - **容量模型(E4,如实陈述)**:单进程架构;任务并发上限 = `task_max_workers`
@@ -120,7 +120,7 @@ regression 必须绿)由生成器与测试双重把关——回归集在基线�
   只换算那条门禁里"待发的那一次",默认 1.0 = 与本字段引入前逐字同行为(历史读数与 V1 锚点
   不许回溯改口径),取实测 ρ≈1.47 才是 provider 真值口径。**取值仍是待裁决项** —— ρ 是
   随模型与仓库变的一个数,拿它当默认值需要先知道同参重复的运行之间差多大
-  (账目见 TODO 的 M17 卡与 `docs/paid-batch-preregistration-2026-10-08.md`);
+  (账目见 TODO 的 M17 卡与 `docs/archive/paid-batch-preregistration-2026-10-08.md`);
 - **`context_window_tokens` 与 `context_keep_recent_turns` 是联动的,不能单独调**:被钉住的最近 N 回合
   本身就构成一个下限——真实语料上把阈值降到 8000 时,keep=6 有 86%、keep=4 有 52% 的压缩回合
   "压不到位"(调用过压缩但结果仍超阈值;分母取"调用过压缩的回合",含"压到底也没变小"的那些)。

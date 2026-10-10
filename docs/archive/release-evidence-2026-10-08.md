@@ -66,7 +66,7 @@ HEAD 上的实测,不是沿用历史文档。能力声明分四级:**implemented
 
 1. ~~**L01 真实效果实验未执行**(未授权)~~ → **2026-10-09 已执行(用户「全部授权」)**:
    Q0 噪声地板批 21/21(7 题 × 3 次,deepseek-flash/docker/串行),判据 **k=1 ≤1 ⇒ 停止付费**,
-   Q1/Q2/Q3 按预登记不启动;负结论与逐题数据见 docs/paid-batch-preregistration-2026-10-08.md
+   Q1/Q2/Q3 按预登记不启动;负结论与逐题数据见 docs/archive/paid-batch-preregistration-2026-10-08.md
    "实测结果 B" 与 docs/evidence/2026-10-09-q0-noise-floor-gen2.txt。
    **仍然成立的约束:无净增益类数字可写**——k=1 恰恰是判据给出的"本证据集不支持净增益主张";
    简历可用的新事实只有测量纪律本身(冒烟→判据门→负结果停手)与噪声地板数字;

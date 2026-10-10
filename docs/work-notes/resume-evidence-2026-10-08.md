@@ -53,7 +53,7 @@ L01 的产出只允许以"测量纪律"形态引用(冒烟→判据门→负结�
 - 消融:`app/evals/experiment_policy.py` + `scripts/compare_experiments.py`
   (F8:同引擎两臂,未登记差异即报错);
 - 回放证据:`runs/spec-{baseline,final}-{plain,graph}-20261008`(35/35 逐题一致)、
-  `docs/release-evidence-2026-10-08.md`(全部命令/退出码/数字索引)。
+  `docs/archive/release-evidence-2026-10-08.md`(全部命令/退出码/数字索引)。
 
 ---
 

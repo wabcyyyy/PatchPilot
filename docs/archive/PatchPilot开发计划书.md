@@ -1,5 +1,7 @@
 # PatchPilot 开发计划书(vibe-coding 版)
 
+> 归档状态（2026-10-10）：已执行归档：M0–M9 完成；正文初稿复选框保留，依据见原文状态声明与历史计划索引。 当前任务见 [升级 SPEC](../PatchPilot修复Agent升级SPEC-2026-10-10.md)。
+
 > 数字口径注记(2026-09-25,E8):本文为历史文档,文中出现的测试用例数、题目数等计数**以 README 与 `pytest -q` 实测为准**,不随开发进度更新。
 
 > 本文是《PatchPilot项目企划书》的执行层文档:把五个阶段拆成 10 个里程碑、40+ 张任务卡,每张卡标注**产出文件、依赖、AI 参与度、验收命令**。
@@ -220,7 +222,7 @@
 
 - [ ] **T6.1 门禁引擎** `app/graph/gates.py`
   功能:企划书第 9 节六项门禁(格式/文件/路径/范围/命令/资源)——2026-09-20 审计后
-  代码实际为七项,新增影子模块门禁(见 docs/audit-2026-09-20.md),每项独立函数、可配置、返回结构化违规记录。
+  代码实际为七项,新增影子模块门禁(见 docs/work-notes/audit-2026-09-20.md),每项独立函数、可配置、返回结构化违规记录。
   AI:规则自己写,表驱动测试 AI 生成
   验收:每项门禁 ≥3 个用例(通过/拒绝/边界)
   自查:六项门禁各拦截什么攻击,不看文档列出来
@@ -288,7 +290,7 @@
 - [ ] **T9.3 评测报告** `app/evals/report.py`
   功能:Markdown 总表 + 分类表现 + 失败案例复盘(引用轨迹)。
   AI:AI
-  验收:`python -m app.evals.report --out docs/eval-report.md` 一键生成;成功与失败任务都在报告里
+  验收:`python -m app.evals.report --out docs/work-notes/eval-report.md` 一键生成;成功与失败任务都在报告里
 - [ ] **T9.4 CI 集成**
   验收:GitHub Actions 产出报告 artifact;badge 挂 README
 - [ ] **T9.5 失败复盘 ≥5 篇** `docs/postmortems/`

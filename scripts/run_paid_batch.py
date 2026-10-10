@@ -1,4 +1,4 @@
-"""付费批驱动器(预登记:docs/paid-batch-preregistration-2026-10-08.md)。
+"""付费批驱动器(预登记:docs/archive/paid-batch-preregistration-2026-10-08.md)。
 
 逐题串行、逐运行记账、停手条件强制执行。判据计算不在本脚本——驱动只负责
 按登记参数发起运行并把每次结果如实追加进台账,批间裁决由人按预登记判据做。
