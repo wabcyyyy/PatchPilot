@@ -19,6 +19,7 @@ from app.gitops.differ import working_tree_diff
 from app.graph.loop_state import LoopSnapshot, delete_loop_snapshot, save_loop_snapshot
 from app.graph.resources import USAGE_ESTIMATED, ResourceLedger
 from app.llm.base import AssistantTurn, Model, messages_tokens
+from app.llm.usage import ModelResponseEnvelope, UsageEnvelope
 from app.prompts import SYSTEM_PROMPT, TEXT_COMPLETION_REPAIR
 from app.tools.base import ToolContext, ToolResult
 from app.tools.output_filter import fold_output
@@ -90,6 +91,22 @@ def _budget_error(
     )
 
 
+def _usage_of(response: AssistantTurn) -> UsageEnvelope:
+    """这次回复的计量事实:模型层给了 envelope 就用它,旧桩/回放按 estimated 如实换算。
+
+    `AssistantTurn` 上那三个 int 继续是各处读的**读模型**;"这笔数是端点真值、本地估算
+    还是无从知道"只由 envelope 回答(G02 之前由 `record_usage` 的默认值 provider 代答,
+    于是回放与估算全被标成真值)。
+    """
+    if response.envelope is not None:
+        return response.envelope.usage
+    return UsageEnvelope.from_turn_ints(
+        prompt_tokens=response.prompt_tokens,
+        completion_tokens=response.completion_tokens,
+        total_tokens=response.usage_tokens,
+    )
+
+
 def _record_thought(
     ctx: ToolContext,
     response: AssistantTurn,
@@ -98,25 +115,52 @@ def _record_thought(
     round_no: int,
     turn_no: int,
     duration_ms: int,
+    request_kind: str,
 ) -> None:
     """把模型本轮输出(Thought 侧)记入轨迹,补全 Thought→Action→Observation。
 
     content 截断到 _MAX_THOUGHT_CHARS;tool_calls 只记工具名,参数与结果
     由工具执行事件(registry.execute)记录,不重复。
+    reasoning_content **不进轨迹**:轨迹经 API 原样对外(`GET /tasks/{id}/trajectory`),
+    思维链原文属公开面(T24),这里只记"有没有返回"和它的 token 明细。
     """
     content = response.content or ""
     if len(content) > _MAX_THOUGHT_CHARS:
         content = content[:_MAX_THOUGHT_CHARS] + f"... ({len(content)} chars)"
+    usage = _usage_of(response)
+    envelope = response.envelope
+    summary: dict[str, object] = {
+        "content": content,
+        "tool_calls": [c.name for c in response.tool_calls],
+        "tokens": response.usage_tokens,
+        # 计量归类(G02):来源、是否被 max_tokens 截断、这一轮请求是哪一类请求
+        "usage_source": usage.usage_source,
+        "finish_reason": response.finish_reason,
+        "request_kind": request_kind,
+    }
+    if usage.prompt_tokens is not None:
+        summary["prompt_tokens"] = usage.prompt_tokens
+    if usage.completion_tokens is not None:
+        summary["completion_tokens"] = usage.completion_tokens
+    if usage.cached_tokens is not None:
+        summary["cached_tokens"] = usage.cached_tokens
+    if usage.anomalies:
+        summary["usage_anomalies"] = list(usage.anomalies)
+    if envelope is not None:
+        summary["physical_attempts"] = envelope.physical_attempts
+        # 排序后落 list:轨迹是 JSONL,set 会让 json.dumps 当场抛
+        summary["retry_owner"] = sorted({a.retry_owner for a in envelope.attempts})
+        if envelope.parse_failures:
+            summary["parse_failures"] = list(envelope.parse_failures)
+        if envelope.request_estimate is not None:
+            summary["request_estimate_tokens"] = envelope.request_estimate.total_tokens
+            summary["estimate_version"] = envelope.request_estimate.version
     ctx.tracker.record(
         tool="llm",
         round_no=round_no,
         state=state_label,
         input_payload={"turn": turn_no},
-        output_summary={
-            "content": content,
-            "tool_calls": [c.name for c in response.tool_calls],
-            "tokens": response.usage_tokens,
-        },
+        output_summary=summary,
         duration_ms=duration_ms,
     )
 
@@ -382,6 +426,7 @@ def run_plain_loop(
                 ) from exc
             call_id = ledger.begin_call(stage=state_label, round_no=round_no)
         llm_started = time.monotonic()
+        request_kind = "protocol_repair" if repairs_used else "normal"
         try:
             response = model.complete(messages, schemas)  # type: ignore[arg-type]
         except BudgetError as exc:
@@ -397,11 +442,45 @@ def run_plain_loop(
                 )
             raise
         except BaseException as exc:
-            # 在途调用拿不到真实 usage:标 unknown(不写 0、不重授余量),异常原样上抛
+            # 异常先计量(G02 / 验收矩阵 T03):端点**已经回复**但结构解释不了时,
+            # 已知消耗先入账再让异常按原路径收尾;真正什么都不知道才标 unknown。
+            # 此前这里一律 abandon_call,"花了 321 token 但 choices 为空"和"连接都没建立"
+            # 在账本上长成同一个数,而实际前者已经产生费用、后者没有。
+            carried = getattr(exc, "envelope", None)
             if ledger is not None and call_id:
-                ledger.abandon_call(call_id, reason=f"{type(exc).__name__}")
+                usage = getattr(carried, "usage", None)
+                if isinstance(usage, UsageEnvelope) and usage.has_known_usage:
+                    ledger.record_usage(
+                        call_id,
+                        prompt_tokens=usage.prompt_tokens or 0,
+                        completion_tokens=usage.completion_tokens or 0,
+                        total_tokens=usage.chargeable_total,
+                        source=usage.usage_source,
+                    )
+                else:
+                    # 在途调用拿不到真实 usage:标 unknown(不写 0、不重授余量),异常原样上抛
+                    ledger.abandon_call(call_id, reason=f"{type(exc).__name__}")
+            if isinstance(carried, ModelResponseEnvelope) and carried.parse_failures:
+                # 解析失败本身进轨迹:报告里要能看出"这笔花费买到的是一个没解释成功的回复"
+                ctx.tracker.record(
+                    tool="model_response_invalid",
+                    round_no=round_no,
+                    state=state_label,
+                    input_payload={"call_id": call_id, "turn": turn_no},
+                    output_summary={
+                        "parse_failures": list(carried.parse_failures),
+                        "finish_reason": carried.finish_reason,
+                        "truncated": carried.truncated,
+                        "physical_attempts": carried.physical_attempts,
+                        "usage_source": carried.usage.usage_source,
+                        "known_tokens": carried.usage.chargeable_total,
+                        "unknown_attempts": carried.usage.unknown_attempts,
+                    },
+                    error=f"{type(exc).__name__}: {exc}",
+                )
             raise
         llm_ms = int((time.monotonic() - llm_started) * 1000)
+        usage = _usage_of(response)
         tokens_spent += response.usage_tokens
         tokens_prompt += response.prompt_tokens
         tokens_completion += response.completion_tokens
@@ -414,14 +493,17 @@ def run_plain_loop(
             round_no=round_no,
             turn_no=turn_no,
             duration_ms=llm_ms,
+            request_kind=request_kind,
         )
         # S02/F1:回复的真实 usage **先入账**——若这一条把任务推过限额,本回复的
         # 任何工具调用(含 finish)都不再执行,结构化收尾;已花的数字如实保留
         if ledger is not None and call_id:
             overrun = ledger.record_usage(
                 call_id,
-                prompt_tokens=response.prompt_tokens,
-                completion_tokens=response.completion_tokens,
+                prompt_tokens=usage.prompt_tokens or 0,
+                completion_tokens=usage.completion_tokens or 0,
+                total_tokens=usage.chargeable_total,
+                source=usage.usage_source,
             )
             if overrun is not None:
                 ctx.tracker.record(
@@ -432,7 +514,7 @@ def run_plain_loop(
                     output_summary={
                         "tokens_used": ledger.tokens_used,
                         "token_limit": ledger.token_limit,
-                        "usage_source": "provider",
+                        "usage_source": usage.usage_source,
                     },
                     error=str(overrun),
                 )

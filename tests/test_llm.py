@@ -8,8 +8,23 @@ from typing import Any
 import pytest
 
 from app.config import Settings
-from app.errors import TaskError
-from app.llm.openai_client import OpenAICompatModel, build_model
+from app.errors import ModelResponseError, ModelTransportError, TaskError
+from app.llm.openai_client import OpenAICompatModel, TransportRetryPolicy, build_model
+from app.llm.usage import (
+    ATTEMPT_PARSE_FAILED,
+    ATTEMPT_TRANSPORT_FAILED,
+    USAGE_ESTIMATED,
+    USAGE_PROVIDER,
+    USAGE_UNKNOWN,
+)
+
+
+class APIConnectionError(Exception):
+    """与 openai SDK 同名的桩类:重试判定按键名走(客户端不 import openai)。"""
+
+
+class BadRequestError(Exception):
+    """内容型错误:重发只是再花一遍钱,必须不重试。"""
 
 
 def _settings(**overrides: Any) -> Settings:
@@ -260,3 +275,280 @@ def test_client_leaves_reasoning_content_none_when_endpoint_omits_it(
     turn = model.complete([{"role": "user", "content": "hi"}], [])
 
     assert turn.reasoning_content is None
+
+
+# ---------- G02:用量优先、解析失败带消耗、物理尝试可观测 ----------
+
+
+def _response(
+    *,
+    content: str | None = "ok",
+    tool_calls: list[Any] | None = None,
+    finish_reason: str = "stop",
+    usage: Any = "default",
+    reasoning_content: str | None = None,
+) -> SimpleNamespace:
+    message = SimpleNamespace(
+        content=content, tool_calls=tool_calls, reasoning_content=reasoning_content
+    )
+    raw_usage: Any = (
+        SimpleNamespace(total_tokens=321, prompt_tokens=100, completion_tokens=221)
+        if usage == "default"
+        else usage
+    )
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=message, finish_reason=finish_reason)], usage=raw_usage
+    )
+
+
+def _tool_call(arguments: str, *, name: str = "apply_patch") -> SimpleNamespace:
+    return SimpleNamespace(id="call_1", function=SimpleNamespace(name=name, arguments=arguments))
+
+
+def test_usage_is_booked_even_when_choices_are_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T03:端点带着 usage 回来却给了空 choices —— 已知消耗必须随异常交付。
+
+    此前这里抛裸 TaskError,usage 与异常一起蒸发,账本只剩 unknown:钱花了,
+    报告上看不出花过,恢复侧还以为是"连接都没建立"。
+    """
+    model = OpenAICompatModel(_settings(llm_model="test-model"))
+    monkeypatch.setattr(
+        model._client.chat.completions,
+        "create",
+        lambda **kw: SimpleNamespace(choices=[], usage=SimpleNamespace(total_tokens=321)),
+    )
+
+    with pytest.raises(ModelResponseError) as exc_info:
+        model.complete([{"role": "user", "content": "hi"}], [])
+
+    envelope = exc_info.value.envelope
+    assert envelope.usage.usage_source == USAGE_PROVIDER
+    assert envelope.usage.chargeable_total == 321
+    assert envelope.parse_failures == ["choices_missing"]
+    assert envelope.attempts[0].status == ATTEMPT_PARSE_FAILED
+
+
+def test_truncated_tool_arguments_carry_usage_and_classify(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """截断的补丁不许执行,但这一次的花费要能查到(复盘 P2 的早失败口径不变)。"""
+    model = OpenAICompatModel(_settings(llm_model="test-model"))
+    truncated_args = '{"patch_text": "diff --git a/x.py'
+    monkeypatch.setattr(
+        model._client.chat.completions,
+        "create",
+        lambda **kw: _response(
+            content=None,
+            tool_calls=[_tool_call(truncated_args)],
+            finish_reason="length",
+            usage=SimpleNamespace(total_tokens=99),
+        ),
+    )
+
+    with pytest.raises(ModelResponseError, match="truncated") as exc_info:
+        model.complete([{"role": "user", "content": "hi"}], [])
+
+    envelope = exc_info.value.envelope
+    assert envelope.truncated is True
+    assert envelope.parse_failures == ["truncated_tool_arguments"]
+    assert envelope.usage.chargeable_total == 99
+
+
+def test_text_only_truncation_is_classified_but_still_returned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """纯文本截断仍是一个可用回合(既有行为),但归类字段要显式写出来。"""
+    model = OpenAICompatModel(_settings(llm_model="test-model"))
+    monkeypatch.setattr(
+        model._client.chat.completions,
+        "create",
+        lambda **kw: _response(content="被截断的纯文本…", finish_reason="length"),
+    )
+    turn = model.complete([{"role": "user", "content": "hi"}], [])
+    assert turn.envelope is not None
+    assert turn.envelope.truncated is True
+    assert "truncated_completion" in turn.envelope.parse_failures
+
+
+def test_unparsable_tool_arguments_are_classified_without_crashing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """工具参数不是 JSON 也不是对象:保留原始串交回循环,同时登记解析失败。"""
+    model = OpenAICompatModel(_settings(llm_model="test-model"))
+    monkeypatch.setattr(
+        model._client.chat.completions,
+        "create",
+        lambda **kw: _response(
+            content=None,
+            tool_calls=[_tool_call("[1, 2, 3]"), _tool_call("not json at all")],
+            finish_reason="tool_calls",
+        ),
+    )
+    turn = model.complete([{"role": "user", "content": "hi"}], [])
+    assert turn.envelope is not None
+    assert turn.envelope.parse_failures == ["tool_arguments_invalid", "tool_arguments_invalid"]
+    assert all(set(c.arguments) == {"_raw"} for c in turn.tool_calls)
+
+
+def test_deepseek_cache_fields_never_double_count_in_the_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DeepSeek 风格命中/未命中:回合读数仍是 total,不是 total+cached。"""
+    model = OpenAICompatModel(_settings(llm_model="deepseek-flash"))
+    usage = SimpleNamespace(
+        total_tokens=1000,
+        prompt_tokens=800,
+        completion_tokens=200,
+        prompt_cache_hit_tokens=600,
+        prompt_cache_miss_tokens=200,
+    )
+    monkeypatch.setattr(
+        model._client.chat.completions, "create", lambda **kw: _response(usage=usage)
+    )
+    turn = model.complete([{"role": "user", "content": "hi"}], [])
+    assert turn.usage_tokens == 1000
+    assert turn.envelope is not None
+    assert turn.envelope.usage.cached_tokens == 600
+    assert turn.envelope.usage.uncached_input_tokens == 200
+    assert turn.envelope.usage.chargeable_total == 1000
+
+
+def test_missing_usage_is_labelled_estimated_not_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """来源标签:端点没给 usage 就是 estimated,不再挂 provider 出厂。"""
+    model = OpenAICompatModel(_settings(llm_model="test-model"))
+    monkeypatch.setattr(
+        model._client.chat.completions, "create", lambda **kw: _response(usage=None)
+    )
+    turn = model.complete([{"role": "user", "content": "hi"}], [])
+    assert turn.envelope is not None
+    assert turn.envelope.usage.usage_source == USAGE_ESTIMATED
+    assert turn.envelope.usage.estimate_reason == "endpoint_omitted_usage"
+    assert turn.usage_tokens == turn.prompt_tokens + turn.completion_tokens > 0
+
+
+def test_retry_ownership_is_recorded_from_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SDK 上界非 0 时,平台看不见物理尝试次数:如实标 sdk_opaque 并带出上界。"""
+    model = OpenAICompatModel(_settings(llm_model="test-model", llm_max_retries=3))
+    monkeypatch.setattr(model._client.chat.completions, "create", lambda **kw: _response())
+    turn = model.complete([{"role": "user", "content": "hi"}], [])
+    attempt = turn.envelope.attempts[0]
+    assert attempt.retry_owner == "sdk_opaque"
+    assert attempt.sdk_retry_bound == 3
+
+    pinned = OpenAICompatModel(_settings(llm_model="test-model", llm_max_retries=0))
+    monkeypatch.setattr(pinned._client.chat.completions, "create", lambda **kw: _response())
+    assert pinned.complete([], []).envelope.attempts[0].retry_owner == "platform"
+
+
+def test_platform_retry_gives_every_physical_attempt_its_own_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """显式重试:失败的 attempt 有 ID 与 unknown 用量,成功那次照常计量。"""
+    model = OpenAICompatModel(
+        _settings(llm_model="test-model", llm_max_retries=0),
+        retry_policy=TransportRetryPolicy(max_extra_attempts=1),
+    )
+    calls: list[int] = []
+
+    def flaky(**kwargs: Any) -> SimpleNamespace:
+        calls.append(1)
+        if len(calls) == 1:
+            raise APIConnectionError("connection reset")
+        return _response(
+            usage=SimpleNamespace(total_tokens=50, prompt_tokens=30, completion_tokens=20)
+        )
+
+    monkeypatch.setattr(model._client.chat.completions, "create", flaky)
+    turn = model.complete([{"role": "user", "content": "hi"}], [])
+
+    assert len(calls) == 2, "平台显式重试要真的再发一次"
+    envelope = turn.envelope
+    assert envelope is not None
+    assert [a.status for a in envelope.attempts] == [ATTEMPT_TRANSPORT_FAILED, "ok"]
+    assert envelope.attempts[0].attempt_id != envelope.attempts[1].attempt_id
+    assert envelope.usage.chargeable_total == 50
+    assert envelope.usage.unknown_attempts == 1, "失败那次的花费无从知道"
+
+
+def test_content_errors_are_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    """400 类内容错误重发只是再花一遍钱:一次就收,并把消耗交给上层。"""
+    model = OpenAICompatModel(
+        _settings(llm_model="test-model", llm_max_retries=0),
+        retry_policy=TransportRetryPolicy(max_extra_attempts=2),
+    )
+    calls: list[int] = []
+
+    def refuse(**kwargs: Any) -> SimpleNamespace:
+        calls.append(1)
+        raise BadRequestError("reasoning_content missing")
+
+    monkeypatch.setattr(model._client.chat.completions, "create", refuse)
+    with pytest.raises(ModelTransportError) as exc_info:
+        model.complete([{"role": "user", "content": "hi"}], [])
+
+    assert len(calls) == 1
+    assert exc_info.value.envelope.usage.unknown_attempts == 1
+
+
+def test_retry_exhaustion_keeps_every_attempt_visible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """重试用尽:两次尝试都在场,合计读数仍是 unknown 而不是 0。"""
+    model = OpenAICompatModel(
+        _settings(llm_model="test-model", llm_max_retries=0),
+        retry_policy=TransportRetryPolicy(max_extra_attempts=1),
+    )
+
+    def always_down(**kwargs: Any) -> SimpleNamespace:
+        raise APIConnectionError("connection reset")
+
+    monkeypatch.setattr(model._client.chat.completions, "create", always_down)
+    with pytest.raises(ModelTransportError) as exc_info:
+        model.complete([{"role": "user", "content": "hi"}], [])
+
+    envelope = exc_info.value.envelope
+    assert len(envelope.attempts) == 2
+    assert envelope.usage.unknown_attempts == 2
+    assert envelope.usage.usage_source == USAGE_UNKNOWN
+
+
+def test_platform_retry_requires_sdk_retries_to_be_off() -> None:
+    """两层重试同时开 = 用量无法对账:构造时就拒绝,不留"看着能开"的开关。"""
+    with pytest.raises(TaskError, match="LLM_MAX_RETRIES=0"):
+        OpenAICompatModel(
+            _settings(llm_model="test-model", llm_max_retries=1),
+            retry_policy=TransportRetryPolicy(max_extra_attempts=1),
+        )
+
+
+def test_negative_extra_attempts_are_rejected() -> None:
+    with pytest.raises(ValueError):
+        TransportRetryPolicy(max_extra_attempts=-1)
+
+
+def test_thinking_protocol_and_request_estimate_are_classified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """thinking 档位、是否真带回思维链、待发请求估算都进 envelope(公开面无原文)。"""
+    model = OpenAICompatModel(_settings(llm_model="deepseek-flash", llm_thinking="low"))
+    monkeypatch.setattr(
+        model._client.chat.completions,
+        "create",
+        lambda **kw: _response(reasoning_content="先想一下失败原因……"),
+    )
+    turn = model.complete([{"role": "user", "content": "hi"}], [])
+    envelope = turn.envelope
+    assert envelope is not None
+    assert envelope.thinking_requested == "low"
+    assert envelope.reasoning_returned is True
+    assert envelope.request_estimate is not None
+    assert envelope.request_estimate.total_tokens > 0
+
+    report = envelope.as_report_dict()
+    assert "先想一下失败原因" not in str(report), "T24:思维链原文不进公开读数"

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:  # 只在类型位引用:计量模块反过来要用 estimate_tokens
+    from app.llm.usage import ModelResponseEnvelope
 
 
 @dataclass
@@ -30,6 +33,11 @@ class AssistantTurn:
     prompt_tokens: int = 0  # 输入明细;端点未提供时为 0
     completion_tokens: int = 0  # 输出明细;端点未提供时为 0
     reasoning_content: str | None = None  # 思维链原文,须原样回传
+    # 计量事实(G02):用量来源、缓存明细、物理尝试与解析状态都在这里。三个 int 字段
+    # 继续作为**读模型**存在(循环与报告到处在读它们),但"这笔数是端点真值还是估算"
+    # 只由 envelope 回答。为 None 的回合来自旧桩/回放脚本,消费方按 estimated 如实换算,
+    # 不许默认成 provider。
+    envelope: ModelResponseEnvelope | None = None
 
     @property
     def is_tool_call(self) -> bool:
