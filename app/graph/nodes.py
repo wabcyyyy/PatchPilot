@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from app.adapters.pytest_adapter import run_pytest
 from app.agent.runtime import CONTEXT_CAPACITY_EXCEEDED, TaskRuntime
 from app.config import get_settings
+from app.context.repo_instructions import RepoInstructions, load_instructions
 from app.context.repo_map import repo_map_for_workspace
 from app.errors import BudgetError, TaskCancelled, TaskError
 from app.gitops.differ import working_tree_diff
@@ -174,6 +175,9 @@ class TaskNodes:
     # 不再每个阶段回读全局 Settings —— 那才是"并发两个 profile 互不影响"与"受理后改环境
     # 变量不改在跑的任务"的落点。None ⇒ 按 Settings 建 legacy_v1(与今日逐字相同)。
     runtime: TaskRuntime | None = None
+    # G08:目标仓库自带说明(AGENTS.md 一类)。None ⇒ 首次装配时按 Settings 加载冻结副本;
+    # `repo_instructions_enabled=false` 时得到空档案,阶段装配面与接入之前逐字节相同。
+    instructions: RepoInstructions | None = None
 
     def __post_init__(self) -> None:
         if self.policy is None:
@@ -215,21 +219,25 @@ class TaskNodes:
         self._stage_context: str | None = None
 
     def _begin_assembly(self, stage: str, round_no: int, allowed_tools: list[str] | None) -> str:
-        """装配本阶段的 system 附加文本(仓库骨架 + 工作记忆块),每 (阶段, 轮次) 只装配一次。
+        """装配本阶段的 system 附加文本(仓库说明 + 仓库骨架 + 工作记忆块),每 (阶段, 轮次) 一次。
 
         放在节点里而不是 `_persistent_context` 里,是因为装配需要知道"这是哪个阶段、开放哪些
         能力"——那属于会话身份(G06 要把它记进 SessionState),而骨架本身不知道。
+        仓库说明(G08)排最前:它对本任务稳定,而记忆块随观测增长 —— 易放末尾才不打掉前缀。
         """
         skeleton = self._repo_skeleton(self.workspace)
+        rules = self._repo_instructions(stage).render(self._observed_paths())
         if self.memory is None or self.assembler is None:
-            self._stage_context = skeleton
-            return skeleton
+            self._stage_context = "\n\n".join(block for block in (rules, skeleton) if block)
+            return self._stage_context
         context = self.assembler.assemble(
             stage=stage,
             round_no=round_no,
             session=self.session,
             memory=self.memory,
             skeleton=skeleton,
+            instructions=self.instructions,
+            evidence_paths=self._observed_paths(),
             max_chars=int(getattr(get_settings(), "task_memory_max_chars", 0) or 0),
             current_revision=self.ctx.workspace_revision if self.ctx is not None else 0,
             allowed_tools=allowed_tools or [],
@@ -253,6 +261,42 @@ class TaskNodes:
             )
         self._stage_context = context.text
         return context.text
+
+    def _observed_paths(self) -> tuple[str, ...]:
+        """平台已经观测到的文件路径 —— 决定哪些**目录级**说明此刻该在场(G08)。
+
+        用的是记忆里的观测而不是"模型说它要改哪个文件":观测是真实发生过的读/检索,
+        模型自述的目标要到 PLAN 之后才有,而 LOCALIZE 阶段就需要"碰到某目录才带上该目录规则"。
+        """
+        if self.memory is None:
+            return ()
+        return tuple(item.path for item in self.memory.evidence if item.path)
+
+    def _repo_instructions(self, stage: str) -> RepoInstructions:
+        """仓库自带说明只加载一次:它读的是冻结副本,同一任务内这些字节不会变。"""
+        if self.instructions is not None:
+            return self.instructions
+        settings = get_settings()
+        enabled = bool(getattr(settings, "repo_instructions_enabled", False))
+        if enabled:
+            loaded = load_instructions(
+                self.workspace,
+                enabled=True,
+                max_file_bytes=int(getattr(settings, "repo_instructions_max_file_bytes", 16_384)),
+                max_total_bytes=int(getattr(settings, "repo_instructions_max_total_bytes", 65_536)),
+            )
+        else:
+            loaded = RepoInstructions(enabled=False)
+        self.instructions = loaded
+        # 每份说明的相对路径 / 哈希 / 作用域 / 裁剪都要留下读数(SPEC §7 G08)。
+        # 读数里只有仓库内相对路径,宿主绝对路径不进轨迹。
+        self.tracker.record(
+            tool="repo_instructions_loaded",
+            state=stage,
+            input_payload={"enabled": enabled},
+            output_summary=loaded.as_dict(),
+        )
+        return loaded
 
     def _note_memory(self, event: str, **payload: Any) -> None:
         """平台侧事实进记忆并同时落盘(观测/判定/候选/计划这些不由模型写的内容)。"""

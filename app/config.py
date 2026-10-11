@@ -376,6 +376,22 @@ class Settings(BaseSettings):
             raise ValueError(f"task_memory_max_chars must be >= 0, got {value}")
         return value
 
+    # ---------- G08:目标仓库自带说明(AGENTS.md 一类)的加载与冻结口径 ----------
+    # 缺陷出处:被诊断仓库里写给 Agent 看的规则从来没进过请求,模型只能靠撞上门禁才知道
+    # "这个仓库不许动 tests/"。开关关掉 ⇒ 装配面与接入之前逐字节相同(零成本对照口径)。
+    repo_instructions_enabled: bool = True
+    # 单份说明的字节档:超了就截断,并在块里明写"还有 N 字节未显示"(不许静默丢约束)
+    repo_instructions_max_file_bytes: int = 16_384
+    # 一个任务能纳入的说明总量:满了就把整份列进"未纳入",块末照样点名报出
+    repo_instructions_max_total_bytes: int = 65_536
+
+    @field_validator("repo_instructions_max_file_bytes", "repo_instructions_max_total_bytes")
+    @classmethod
+    def _check_instruction_sizes(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"repo_instructions size must be >= 0, got {value}")
+        return value
+
     # PLAN 阶段(M5,范式 LOCALIZE→PLAN→ACT→VERIFY)。缺陷出处(PROGRESS.md D.8/D.11):
     # 计划从来不是工件——"计划如何修复"只是 LOCALIZE_PROMPT 要求塞进 finish.summary 的自由文本,
     # 付费实跑 runs/swe-hard-graph/3 两次独立跑法同形:PROPOSE 13 次 search / 10 次 read、

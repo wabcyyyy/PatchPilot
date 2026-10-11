@@ -185,6 +185,11 @@ def _effective_policy(settings: Any) -> dict[str, Any]:
         "model_capabilities",
         "model_declared_output_ceiling",
         "llm_platform_retries",
+        # G08:仓库自带说明进不进请求、按哪两档字节冻结(每份说明的路径/哈希/作用域/裁剪
+        # 读数在轨迹的 repo_instructions_loaded 事件里,不在这里重复)
+        "repo_instructions_enabled",
+        "repo_instructions_max_file_bytes",
+        "repo_instructions_max_total_bytes",
     )
     policy = {k: getattr(settings, k, None) for k in keys}
     # 有效值而不是配置值:repair_v2 的目标窗口会被声明容量夹小,报告里必须写出**实际采用**

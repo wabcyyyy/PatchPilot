@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.agent.session import SessionState
+    from app.context.repo_instructions import RepoInstructions
     from app.context.task_memory import TaskMemory
 
 
@@ -29,6 +30,7 @@ class StageContext:
     memory_version: int
     memory_chars: int
     skeleton_chars: int
+    instructions_chars: int
     reused: bool
 
     def as_dict(self) -> dict[str, object]:
@@ -38,6 +40,7 @@ class StageContext:
             "memory_version": self.memory_version,
             "memory_chars": self.memory_chars,
             "skeleton_chars": self.skeleton_chars,
+            "instructions_chars": self.instructions_chars,
             "reused": self.reused,
         }
 
@@ -56,6 +59,8 @@ class ContextAssembler:
         session: SessionState | None,
         memory: TaskMemory | None,
         skeleton: str = "",
+        instructions: RepoInstructions | None = None,
+        evidence_paths: tuple[str, ...] = (),
         max_chars: int = 3000,
         current_revision: int = 0,
         allowed_tools: list[str] | None = None,
@@ -70,7 +75,10 @@ class ContextAssembler:
         memory_block = (
             memory.render(max_chars=max_chars, current_revision=current_revision) if memory else ""
         )
-        parts = [block for block in (skeleton, memory_block) if block]
+        # 顺序按"稳定的在前、每轮在变的在后"排:仓库说明与骨架对本任务是稳定的,
+        # 记忆块随观测增长 —— 把易变的放末尾才不会打掉前面的 stable prefix。
+        rules_block = instructions.render(evidence_paths) if instructions is not None else ""
+        parts = [block for block in (rules_block, skeleton, memory_block) if block]
         context = StageContext(
             text="\n\n".join(parts),
             stage=stage,
@@ -78,6 +86,7 @@ class ContextAssembler:
             memory_version=memory.version if memory else 0,
             memory_chars=len(memory_block),
             skeleton_chars=len(skeleton),
+            instructions_chars=len(rules_block),
             reused=False,
         )
         self._cache[key] = context

@@ -125,3 +125,27 @@ def test_intake_window_mutation_does_not_enter_snapshot(tmp_path: Path) -> None:
     assert first != second
     snap = tmp_path / "run" / SNAPSHOT_DIRNAME / "src" / "mod.py"
     assert snap.read_text(encoding="utf-8") == "x = mutated\n"  # 第二次冻结的副本自洽
+
+
+def test_rule_files_are_part_of_the_frozen_identity(tmp_path: Path) -> None:
+    """G08:仓库自带说明读的就是这份冻结副本,所以"内容变动必须让运行身份变化"不用新机制。
+
+    说明文件本身就是被复制、被哈希的输入 ⇒ 加一份 AGENTS.md 会改 `source_snapshot_hash`;
+    副本里改一字节会改说明自己的 digest。两条都在这里钉住。
+    """
+    from app.context.repo_instructions import load_instructions
+
+    src = _mk_source(tmp_path / "src")
+    base = freeze_input(src, tmp_path / "run-a", max_files=100, timeout_seconds=60)
+    assert load_instructions(tmp_path / "run-a" / SNAPSHOT_DIRNAME).render() == ""
+
+    (src / "AGENTS.md").write_text("never edit tests/\n", encoding="utf-8", newline="\n")
+    with_rule = freeze_input(src, tmp_path / "run-b", max_files=100, timeout_seconds=60)
+    assert with_rule != base, "新增的说明文件会进入执行,就必须进入身份"
+
+    snapshot = tmp_path / "run-b" / SNAPSHOT_DIRNAME
+    block = load_instructions(snapshot).render()
+    assert "never edit tests/" in block
+    digest_before = load_instructions(snapshot).digest()
+    (snapshot / "AGENTS.md").write_text("changed rule\n", encoding="utf-8", newline="\n")
+    assert load_instructions(snapshot).digest() != digest_before

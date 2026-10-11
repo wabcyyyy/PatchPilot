@@ -220,6 +220,10 @@ def test_provenance_carries_new_traceability_fields() -> None:
         "model_declared_output_ceiling",
         "llm_platform_retries",
         "agent_runtime_profile",
+        # G08 仓库说明:进不进请求、占多少字节,同样是模型可见上下文本身
+        "repo_instructions_enabled",
+        "repo_instructions_max_file_bytes",
+        "repo_instructions_max_total_bytes",
     } == set(SNAPSHOT_KEYS)
     started = datetime.fromisoformat(prov["started_at"])
     assert started.tzinfo is not None

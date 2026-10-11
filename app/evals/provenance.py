@@ -215,6 +215,11 @@ SNAPSHOT_KEYS: tuple[str, ...] = (
     # 就是换运行条件。它**不进** protocol_identity —— v1/v2 对照正是要把它作为登记变量差出来
     # (与 context_window_tokens 同一处置:额度/窗口类旋钮在快照里,协议形状才进控制身份)。
     "agent_runtime_profile",
+    # G08 仓库说明:开关决定"目标仓库写给 Agent 的规则有没有进请求",两档字节决定能进多少。
+    # 与 task_memory_* 同族(改的是模型可见上下文本身),不是运维豁免。
+    "repo_instructions_enabled",
+    "repo_instructions_max_file_bytes",
+    "repo_instructions_max_total_bytes",
 )
 SECRET_KEYS: frozenset[str] = frozenset({"llm_api_key", "api_token"})
 EXEMPT_KEYS: frozenset[str] = frozenset(
@@ -406,6 +411,10 @@ def protocol_identity(arm: str, policy: Any | None = None) -> dict[str, Any]:
         # G06:阶段之间带不带工作记忆、带多少字符,同样是模型可见面
         "task_memory_enabled": settings.task_memory_enabled,
         "task_memory_max_chars": settings.task_memory_max_chars,
+        # G08:仓库自带说明进不进请求、能占多少字节 —— 与 task_memory_* 同族
+        "repo_instructions_enabled": settings.repo_instructions_enabled,
+        "repo_instructions_max_file_bytes": settings.repo_instructions_max_file_bytes,
+        "repo_instructions_max_total_bytes": settings.repo_instructions_max_total_bytes,
         "max_read_lines": settings.max_read_lines,
         "max_search_results": settings.max_search_results,
         **tool_schema_identity(),
