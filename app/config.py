@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 4096  # 单次 completion 输出上限;0 = 不限制
     llm_timeout_seconds: float = 120  # 单次请求超时(SDK 默认 600s,过长会拖垮任务)
     llm_max_retries: int = 1
+    # G07:平台显式重试的**额外**物理尝试次数(每次都单独计量,见 TransportRetryPolicy)。
+    # 默认 0 = 与引入该字段之前逐字相同(一次就交差,重试完全由 SDK 上界决定)。非 0 只允许
+    # 在 llm_max_retries=0 时使用:两层重试同时开就看不见真实发出次数,用量无法对账,
+    # 所以构造处直接拒绝而不是"取一个最大值"。
+    llm_platform_retries: int = 0
     llm_thinking: str = ""  # 思考模式:空 = 服务端默认;disabled = 关闭;low/high/max = 强度
 
     @field_validator("llm_thinking")
@@ -105,6 +110,31 @@ class Settings(BaseSettings):
     # 0 = 未声明:不做容量检查,也不宣称支持过大窗口。
     model_context_tokens: int = 0
     capacity_margin_tokens: int = 1024  # 容量余量:协议开销与估算误差
+    # ---------- G07:能力声明的来源与形状(见 app/llm/profiles.py) ----------
+    # 这个数字是"谁说的"。空 = unverified(无来源),此时容量只能落在保守档 16k,
+    # 申报更大一律拒绝 —— SPEC §5 禁止把未验证的端点写成"支持 128k/1M"。
+    # 合法值:operator_config | provider_docs | probed | unverified | 空。
+    model_capacity_source: str = ""
+    # 能力清单 `name=yes|no` 逗号串(tools / reasoning / cached_usage)。没写的项一律
+    # 记为"未声明"(档案里进 assumed 落盘),不从模型名猜。
+    model_capabilities: str = ""
+    # 端点声明的 completion 输出上限(与"我们请求的 llm_max_tokens"是两个概念:前者是
+    # 能力边界,后者是本次请求的参数;0 = 未声明)。
+    model_declared_output_ceiling: int = 0
+
+    @field_validator("llm_platform_retries")
+    @classmethod
+    def _check_llm_platform_retries(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"llm_platform_retries must be >= 0, got {value}")
+        return value
+
+    @field_validator("model_declared_output_ceiling")
+    @classmethod
+    def _check_declared_output_ceiling(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"model_declared_output_ceiling must be >= 0, got {value}")
+        return value
 
     @field_validator("budget_mode")
     @classmethod

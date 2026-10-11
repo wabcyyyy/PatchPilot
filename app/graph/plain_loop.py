@@ -152,6 +152,10 @@ def _record_thought(
         summary["physical_attempts"] = envelope.physical_attempts
         # 排序后落 list:轨迹是 JSONL,set 会让 json.dumps 当场抛
         summary["retry_owner"] = sorted({a.retry_owner for a in envelope.attempts})
+        if envelope.served_model:
+            summary["served_model"] = envelope.served_model
+        if envelope.model_identity_drift:
+            summary["model_identity_drift"] = True
         if envelope.parse_failures:
             summary["parse_failures"] = list(envelope.parse_failures)
         if envelope.request_estimate is not None:

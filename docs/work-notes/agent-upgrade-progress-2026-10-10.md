@@ -740,3 +740,16 @@ G07(模型能力 profile 与 repair_v2 上下文策略):`app/llm/profiles.py`、
 G07 必须一并处理的登记项:`refine_head_lines/tail_lines` 与 `task_memory_max_chars`、
 `repo_map_max_chars` 的联动标定;`TransportRetryPolicy`/`RequestEstimate` 的生产装配点;
 `served_model` 采集;`repetition` 落进运行产物。
+
+## G07 / P1:模型能力 profile 与 repair_v2 上下文策略
+
+### 范围补充(先声明再动手)
+
+SPEC §7 G07 的文件清单里没有 `app/llm/openai_client.py` 与 `app/llm/usage.py`,但这一卡的两件事
+只能落在这两个文件里,按"越界前先更新当前卡的范围说明"的规矩在此登记:
+
+- `app/llm/usage.py`:`ModelResponseEnvelope` 是"一次响应的全部事实"的唯一载体,`served_model`
+  是响应字段,只能挂在这里(挂到 `ModelProfile` 上就等于把观测写成了声明)。
+- `app/llm/openai_client.py`:`served_model` 的采集点(响应到手、业务解释之前)与
+  `TransportRetryPolicy` 的生产装配点(G02 留下的"无调用方"开关)都在这个文件。
+  两处都按"默认值 = 与今日逐字相同"实现:新键 `llm_platform_retries=0`,未声明能力走保守档。

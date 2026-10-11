@@ -203,6 +203,14 @@ SNAPSHOT_KEYS: tuple[str, ...] = (
     # 同族,不是运维豁免(同一题开/关记忆的两次跑法不可比)
     "task_memory_enabled",
     "task_memory_max_chars",
+    # G07 能力声明与显式重试:声明的容量来源决定"我们相信这个端点能装多少"(没有来源就
+    # 只能落保守档),能力清单决定工具/思考/缓存明细是否被声明,输出上界决定预留与请求参数,
+    # 显式重试次数决定在途消耗的形态与可观测性(与 llm_max_retries 同族)。
+    # 四条都是运行身份,不是豁免:换来源/换清单就是换一批可以合法发起的请求。
+    "model_capacity_source",
+    "model_capabilities",
+    "model_declared_output_ceiling",
+    "llm_platform_retries",
 )
 SECRET_KEYS: frozenset[str] = frozenset({"llm_api_key", "api_token"})
 EXEMPT_KEYS: frozenset[str] = frozenset(
@@ -348,8 +356,10 @@ def model_identity(model_provider: str, model_name: str) -> dict[str, Any]:
     """请求侧模型身份 + 一句明确的不可证明声明。
 
     `alias_proves_served_version=false`:模型别名/名相同**不能**证明服务端版本没漂移
-    (§7 G04)。返回模型 served_model 的采集属 ModelProfile(G07),这里如实记 None,
-    而不是留一个"看起来有"的空字段。
+    (§7 G04)。这里是**发起前**的登记位,不可能知道返回名,所以如实记 None;
+    G07 采集到的 `served_model` 是逐次响应的观测事实,落在轨迹的 llm 事件
+    (`ModelResponseEnvelope.as_report_dict()` / `_record_thought`)与
+    `app/llm/profiles.py` 的能力档案读数里,不回填到这里冒充"预登记时就已知"。
     """
     return {
         "provider": model_provider,
@@ -376,6 +386,12 @@ def protocol_identity(arm: str, policy: Any | None = None) -> dict[str, Any]:
         "budget_mode": settings.budget_mode,
         "llm_max_tokens": settings.llm_max_tokens,
         "llm_max_retries": settings.llm_max_retries,
+        # G07:平台显式重试与能力声明。两臂之间"重试归属"或"容量有没有来源"不同,
+        # 就是在比两种运行条件(一轮多发一次请求、一个窗口被夹小都会改变终态)。
+        "llm_platform_retries": settings.llm_platform_retries,
+        "model_capacity_source": settings.model_capacity_source,
+        "model_capabilities": settings.model_capabilities,
+        "model_declared_output_ceiling": settings.model_declared_output_ceiling,
         "llm_thinking": settings.llm_thinking,
         "refine_head_lines": settings.refine_head_lines,
         "refine_tail_lines": settings.refine_tail_lines,

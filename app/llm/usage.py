@@ -408,6 +408,15 @@ class ModelResponseEnvelope:
     reasoning_returned: bool = False  # 只记有无,思维链原文不进报告
     truncated: bool = False
     request_estimate: RequestEstimate | None = None
+    # G07:请求名与端点**回报**的名字。别名相同不能证明服务端版本没漂移(§G04),
+    # 所以"返回模型"是这次响应的观测事实,进 envelope 而不是进能力声明档案。
+    requested_model: str = ""
+    served_model: str = ""
+
+    @property
+    def model_identity_drift(self) -> bool:
+        """端点回报的模型名与我们请求的名字不一致(空返回不算漂移:那是没给)。"""
+        return bool(self.served_model and self.served_model != self.requested_model)
 
     @property
     def usage_source(self) -> str:
@@ -440,6 +449,10 @@ class ModelResponseEnvelope:
             "truncated": self.truncated,
             "thinking_requested": self.thinking_requested,
             "reasoning_returned": self.reasoning_returned,
+            # G07 身份观测:请求名 / 端点回报名 / 两者不一致(名字不是凭据,可进公开面)
+            "requested_model": self.requested_model,
+            "served_model": self.served_model,
+            "model_identity_drift": self.model_identity_drift,
             "physical_attempts": [a.as_dict() for a in self.attempts],
             "request_estimate": self.request_estimate.as_dict() if self.request_estimate else None,
         }

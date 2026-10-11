@@ -213,6 +213,12 @@ def test_provenance_carries_new_traceability_fields() -> None:
         # G06 记忆装配:改的是"下一阶段的请求里有没有上一阶段的观测",同上不可豁免
         "task_memory_enabled",
         "task_memory_max_chars",
+        # G07 能力声明与显式重试:容量来源/能力清单/输出上界/平台重试决定"这一发请求能不能
+        # 合法发出、被夹成多大",换一项就是另一种运行条件
+        "model_capacity_source",
+        "model_capabilities",
+        "model_declared_output_ceiling",
+        "llm_platform_retries",
     } == set(SNAPSHOT_KEYS)
     started = datetime.fromisoformat(prov["started_at"])
     assert started.tzinfo is not None

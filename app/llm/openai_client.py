@@ -22,6 +22,7 @@ from typing import Any
 from app.config import Settings
 from app.errors import ModelResponseError, ModelTransportError, TaskError
 from app.llm.base import AssistantTurn, ToolCall, estimate_tokens, messages_tokens
+from app.llm.profiles import profile_from_settings
 from app.llm.usage import (
     ATTEMPT_OK,
     ATTEMPT_PARSE_FAILED,
@@ -61,7 +62,8 @@ class TransportRetryPolicy:
 
     默认 0 = 与既有行为逐字相同(一次就交差,重试由 SDK 的上界决定)。非 0 只允许在
     `llm_max_retries=0` 时使用——这就是 SPEC 的"repair_v2 禁 SDK 隐式重试,由平台显式
-    retry"的执行点;把它接进运行 profile 是 G07(`app/llm/profiles.py`)的声明范围。
+    retry"的执行点。生产装配点在构造处:不显式传 policy 时读 `Settings.llm_platform_retries`
+    (G07a 把 G02 留下的"无调用方"开关接上;默认 0 因此与今日同形)。
     """
 
     max_extra_attempts: int = 0
@@ -107,11 +109,18 @@ class OpenAICompatModel:
             raise TaskError(
                 "openai provider requires PATCHPILOT_LLM_BASE_URL and PATCHPILOT_LLM_API_KEY"
             )
+        # 能力档案(G07):在发出第一个请求之前把"这个端点被声明成能做什么"钉下来。
+        # 未声明项走保守档并在报告里列出假设,申报比保守档大(且没有来源)直接拒绝发起。
+        # 冻结实例,随客户端一起活过整个任务:受理之后改环境变量不会再影响已经在跑的任务。
+        self.profile = profile_from_settings(settings)
+        self.profile.assert_usable_for_repair()
         try:
             from openai import OpenAI
         except ImportError as exc:  # pragma: no cover
             raise TaskError("openai package not installed; pip install 'patchpilot[llm]'") from exc
-        policy = retry_policy or TransportRetryPolicy()
+        policy = retry_policy or TransportRetryPolicy(
+            max_extra_attempts=int(getattr(settings, "llm_platform_retries", 0) or 0)
+        )
         if policy.max_extra_attempts and settings.llm_max_retries > 0:
             # 两层重试 = 同一笔消耗看不见、也算不清;宁可拒绝配置,不做"看起来能开"的开关。
             raise TaskError(
@@ -144,6 +153,7 @@ class OpenAICompatModel:
         parse_failures: list[str] | None = None,
         truncated: bool = False,
         reasoning_returned: bool = False,
+        served_model: str = "",
     ) -> ModelResponseEnvelope:
         return ModelResponseEnvelope(
             usage=usage,
@@ -154,6 +164,8 @@ class OpenAICompatModel:
             reasoning_returned=reasoning_returned,
             truncated=truncated,
             request_estimate=request_estimate,
+            requested_model=self.model_name,
+            served_model=served_model,
         )
 
     def complete(
@@ -220,11 +232,22 @@ class OpenAICompatModel:
                     reason="endpoint_omitted_usage",
                 )
             attempt.usage = usage
+            # 身份观测(G07):端点回报的模型名。名字相同**不**证明服务端版本相同(§G04
+            # 的 alias_proves_served_version=false),但名字与请求名不同就是已经发生的漂移,
+            # 这条事实要留在 envelope 里,而不是被"看起来没问题"吞掉。
+            served_model = str(getattr(response, "model", "") or "")
+            if served_model and served_model != self.model_name:
+                log.warning(
+                    "llm served model %r differs from requested %r(端点换了实际模型)",
+                    served_model,
+                    self.model_name,
+                )
             envelope = self._envelope(
                 attempts,
                 finish_reason="",
                 usage=UsageEnvelope.combine([a.usage for a in attempts]),
                 request_estimate=estimate,
+                served_model=served_model,
             )
 
             # ② 结构解释:空 choices / 截断 / 坏工具参数都归类成解析失败,但异常带着 envelope
