@@ -1736,3 +1736,24 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
 - **本轮我自己复犯的一条纪律**:G07 记下的教训是"动过被锚定的文件就**立刻**重钉,不该留给全量
   去发现",这次仍然先把全量起起来再重钉 ⇒ 多花一轮 34 分钟的全量才看见两条本该立刻红的账簿。
   机制按设计工作(它就该红),次序是我没按登记执行。
+
+## 24. B3 / G09:受控命令、复现工件与容器生命周期(2026-10-11)
+
+- **本卡是补登**:代码在 `d2d9e19` 落地时没写进度,新会话按 B3 授权在落地提交上复跑收据;
+  逐条语义、范围扩张与限制见 `docs/work-notes/agent-upgrade-progress-2026-10-10.md` G09 节。
+- **run_command 不是 shell**:模型只给 `profile_id + 参数`,argv 由平台构造;参数逐段语义校验
+  (选项注入 / shell 元字符 / 越界路径 / 未登记 repro 全拒),argv hash 与 profile 集 digest
+  进报告面。五个 MVP profile 是唯一装配面,`python -c` / 任意 `python -m` 不在白名单。
+- **没有宿主 fallback**:缺 Docker / 缺依赖如实 `environment_not_ready`;通用诊断命令只走
+  容器(网络关 / 零 env 透传 / 非 root / 资源上限);cancel 只杀本任务进程树或按名容器,
+  禁全局 prune。对应 T14 与 SPEC §3 的信任边界。
+- **执行层原文落盘补上 G05 的缺口**:stdout/stderr 在截取模型可见 tail 前先落盘(超额如实
+  计数 `dropped_bytes`),超 tail 的原文用 `read_evidence` 分页取回——G05 登记的"只留 tail
+  即不可恢复"在执行层闭环。
+- **容器实测证据**:`probe-after-g09-docker.json` 8 场景全 verified(含 cancel 3.4s / exit 137 /
+  工作区零残留 / 宿主密钥不透传 / 网络关)。**该实测只在上一会话做过一次,本次未复跑**,引用时
+  不冒充本次读数。
+- **收据(复跑 @`d2d9e19`)**:`ruff check` 全过;`ruff format --check` 266 文件;
+  定向 `test_command_profiles(27)+test_command_lifecycle(10)+test_docs_anchors(6)` =
+  **43 passed / 3.36s**。本机为新 clone 重建 .venv(Python 3.14.1 / pytest 9.1.1 / ruff 0.17.0;
+  上一会话 3.14.2 / 0.16.7,差异如实登记)。**全量:未运行**(定向通过,批次全量待运行)。

@@ -1071,3 +1071,57 @@ G08 第一次全量拿到的是 **2 failed / 1121 passed**,两条红都落在文
   恢复读当前 Settings)、G08 的作用域触发条件(平台观测 vs `allowed_paths` 交集)。
 - 下一批按 SPEC 是 **B3(G09–G10:容器命令能力、issue-only 到冻结验收清单)**,需另行授权才起;
   G17(真实端点/在线批)逐批单独授权,本批零付费零网络。
+
+> 2026-10-11 追记:用户已授权按 B3 顺序继续(补登 G09、完成 G10、批尾统一收口)。见下节。
+
+---
+
+## G09 / P1:受控命令、复现工件与容器生命周期(落地 d2d9e19;本次补登)
+
+**登记背景(不含糊)**:G09 代码由上一会话在 `d2d9e19` 落地时**没有随卡登记进度**——B2 退出后
+本文件与 PROGRESS.md 都停在 G08。本节的收据由 2026-10-11 新会话在 G09 落地提交上**复跑**取得;
+上一会话的口头读数一律不引用。落地语义按提交正文,逐条可由仓库文件复核。
+
+- **commit**:`d2d9e19`(代码、测试、ADR 锚点重钉、容器证据在一个提交)。
+- **开始身份**:`397f560`(SPEC 文档复核之后);**结束身份 / 本次收据身份**:`d2d9e19`。
+- **卡面范围**(SPEC G09):`app/executor/command_profiles.py`、`command_runner.py`(新增)、
+  `app/tools/commands.py`(新增)、`tools/registry.py`、`config.py`、`task_spec.py`、executor 测试。
+- **超出卡面清单的接线**(按 SPEC §7 先记录理由):`app/graph/nodes.py`(工具按阶段白名单装配进
+  可见面、`_build_ctx` 传冻结执行后端与取消事件——没有这条,run_command 进不了任何阶段)、
+  `app/tools/base.py` 与 `memory.py`(回执/记忆接线)、`app/evals/single_shot.py`(one_shot 禁
+  执行反馈的不对称登记)、`app/evals/provenance.py`(四个 `command_*` 键进 SNAPSHOT)、
+  README 工具清单 11→13。逐条理由见提交正文。
+- **落地语义**(按提交正文):五个 MVP profile(pytest_collect / pytest_selected / python_repro /
+  python_compile / ruff_check)的唯一装配面,参数逐段语义校验(拒绝选项注入 / shell 元字符 /
+  越界路径 / 未登记 repro),argv hash 与 profile 集 digest 可对账;受控生命周期——原始
+  stdout/stderr 流式落盘(额度约束、超额如实计数),timeout/cancel 终止本任务进程树或按名
+  容器(禁全局 prune),docker run 加固(网络关 / 零 env 透传 / 非 root / CPU/内存/PID 上限);
+  `write_repro` 登记脚本绑定内容 hash(scratch 内、不进 diff);`run_command` 在每次重建的诊断
+  副本里执行,原始输出进 EvidenceStore 供分页取回;回执只陈述事实,exit_code=0 不构成验收;
+  缺 Docker / 缺依赖如实 `environment_not_ready`。
+- **最小行为证据**:
+  - 行为用例:`tests/test_command_profiles.py`(27 条)+ `tests/test_command_lifecycle.py`(10 条):
+    profile 参数边界、argv 形状、宿主密钥不透传、timeout/cancel 真杀进程、原始流落盘与分页
+    取回、缺可执行名报 ExecError、工作区与补丁零污染。
+  - 容器证据:`docs/evidence/agent-upgrade/probe-after-g09-docker.json`——真实
+    `patchpilot-executor:latest` 容器 8 场景全 verified(收集 / 选择 / 复现 / 缺依赖如实报 /
+    网络关 / 宿主密钥不透传 / cancel 3.4s 杀容器 exit 137 / 工作区零残留)。**该文件是上一会话
+    产物,本次补登未复跑容器**(镜像与本机 Docker 状态不在本次复核范围),文件自带时间戳与
+    逐场景读数。
+  - 接线成就:G05 登记的"执行层只留 tail、原文不可恢复"缺口由本卡接入执行层原文落盘闭环。
+- **检查读数(本次复跑,身份 `d2d9e19`)**:
+  ```
+  ruff check .           → All checks passed!              (exit 0)
+  ruff format --check .  → 266 files already formatted     (exit 0)
+  pytest -q tests/test_command_profiles.py tests/test_command_lifecycle.py tests/test_docs_anchors.py
+      --basetemp=D:/tmp/pt-g09-receipt → 43 passed in 3.36s (exit 0;27+10+6)
+  ```
+  - 本机为新 clone 重建的 .venv:Python 3.14.1、pytest 9.1.1、ruff 0.17.0(上一会话为
+    3.14.2 + ruff 0.16.7;差异如实登记,不冒充同一解释器身份)。
+  - **全量:未运行**——按 AGENTS 登记为"定向通过,批次全量待运行",由 B3 批尾统一执行。
+- **兼容与剩余限制**:
+  - legacy local 后端与旧白名单保留;通用诊断命令仅 Docker,不可用时能力不可用,没有
+    "退回宿主执行"的路径(T14);one_shot 仍禁执行反馈;修改候选的 profile MVP 不开放。
+  - 效果未证明:离线与容器只证接线与边界;修复率 / 轮次 / 成本属 G17。
+- **费用与外部动作**:零模型调用、零付费、零 push;Docker 为本地容器,非付费。
+- **下一张卡**:G10。
