@@ -42,6 +42,15 @@ class GateError(PatchPilotError):
     code = "gate"
 
 
+class ConflictError(PatchPilotError):
+    """幂等/状态冲突(G10 起具名):hash 竞态、清单已冻结为不同内容等。
+
+    语义与 routes 层既有映射一致:PatchPilotError 家族 → 409;这里给冲突一个
+    可区分的类型,调用方不再用裸 PatchPilotError 表达"提交的东西与现状矛盾"。"""
+
+    code = "conflict"
+
+
 class BudgetError(PatchPilotError):
     """超过轮数/时间/token 预算(BUDGET_EXCEEDED)。
 

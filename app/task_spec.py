@@ -48,6 +48,11 @@ SCHEMA_VERSION = 1
 # 规则版本:判定语义变更时必须递增(ADR-0009 §6 同源纪律),旧证据按旧版本追溯
 GATE_POLICY_VERSION = "1"
 TEST_POLICY_VERSION = "1"
+# G10 任务模式:repair 是既有严格路径;diagnose_then_repair 仅 repo+issue 受理,
+# 失败/回归集必须先经诊断提议 + 平台红/绿基线校验 + trusted_user 冻结,才允许生产补丁
+MODE_REPAIR = "repair"
+MODE_DIAGNOSE_THEN_REPAIR = "diagnose_then_repair"
+TASK_MODES = (MODE_REPAIR, MODE_DIAGNOSE_THEN_REPAIR)
 # 指纹排除的目录名:来源仓库的版本库元数据不是被诊断的代码
 _FINGERPRINT_SKIP_DIRS = frozenset({".git"})
 
@@ -196,6 +201,9 @@ def _effective_policy(settings: Any) -> dict[str, Any]:
         "command_output_max_bytes",
         "command_tail_chars",
         "command_scratch_max_bytes",
+        # G10:验收清单等待窗(秒)。"等多久"与"等不等"改变终态形状(等待/needs_review),
+        # 与 task_timeout_seconds 同族,冻结进有效策略。
+        "acceptance_wait_seconds",
     )
     policy = {k: getattr(settings, k, None) for k in keys}
     from app.executor.command_profiles import profiles_digest
@@ -230,6 +238,12 @@ class TaskSpec:
     model_name: str  # 真实模型名;fake 回放为空串
     max_rounds: int
     max_turns: int
+    # G10:任务模式。repair = 既有严格路径(失败/回归集非空是受理前提);
+    # diagnose_then_repair = 仅 repo+issue 可受理,但只能先诊断——失败/回归集在
+    # 诊断后经 AcceptanceManifest 冻结,任何生产补丁前必须完成可信批准。
+    # mode="repair" 不参与内容 hash(与引入该字段之前逐字节同源,旧 spec 读回不漂移);
+    # diagnose 模式的 hash 与 repair 显式不同(运行身份绑定模式,恢复按同一模式续跑)。
+    mode: str = MODE_REPAIR
     effective_policy: dict[str, Any] = field(default_factory=dict)
     # —— 环境 ——
     trusted_env: dict[str, Any] = field(default_factory=dict)
@@ -247,9 +261,16 @@ class TaskSpec:
     source_snapshot_ref: str = ""
 
     def content_dict(self) -> dict[str, Any]:
-        """参与内容身份的具名字典(created_at/task_spec_hash 刻意不在内)。"""
+        """参与内容身份的具名字典(created_at/task_spec_hash 刻意不在内)。
+
+        mode="repair" 是缺省模式,刻意不进 hash 载荷——引入 mode 字段之前落盘的
+        旧契约重读时按缺省重建,身份必须与登记值逐字节同源(F4 的既有承诺);
+        diagnose_then_repair 参与身份:模式是运行契约的一部分,恢复不得换模式续跑。
+        """
         data = asdict(self)
         data.pop("task_spec_hash", None)
+        if data.get("mode") == MODE_REPAIR:
+            data.pop("mode", None)
         return data
 
     @property
@@ -267,7 +288,11 @@ class TaskSpec:
 
     @staticmethod
     def from_json_dict(data: dict[str, Any]) -> TaskSpec:
-        """从落盘形态重建;schema_version 不符即拒绝(不猜旧数据)。"""
+        """从落盘形态重建;schema_version 不符即拒绝(不猜旧数据)。
+
+        mode 缺省按 repair 读(G10 之前落盘的旧契约没有该字段,缺字段=repair 是
+        唯一忠实的读法);显式写出的 mode 参与身份校验。
+        """
         if int(data.get("schema_version", 0)) != SCHEMA_VERSION:
             raise ValueError(f"unsupported task_spec schema_version: {data.get('schema_version')}")
         fields = set(TaskSpec.__dataclass_fields__)
@@ -275,6 +300,9 @@ class TaskSpec:
         if missing:
             raise ValueError(f"task_spec missing fields: {missing}")
         kwargs = {name: data[name] for name in fields}
+        kwargs["mode"] = str(kwargs.get("mode") or MODE_REPAIR)
+        if kwargs["mode"] not in (MODE_REPAIR, MODE_DIAGNOSE_THEN_REPAIR):
+            raise ValueError(f"unsupported task mode: {kwargs['mode']!r}")
         spec = TaskSpec(**kwargs)
         recorded = data.get("task_spec_hash")
         if recorded and recorded != spec.task_spec_hash:
@@ -302,16 +330,33 @@ def build_task_spec(
     settings: Any = None,
     platform_commit: str = "",
     source_snapshot_ref: str = "",
+    mode: str = MODE_REPAIR,
 ) -> TaskSpec:
     """从 BugTask + 执行参数构建冻结契约(S05a 唯一构建口径,两引擎共用)。
 
     replay 语义:fake 回放必须给完整脚本(任务身份的一部分);
     真实模型传 None。allowed_paths 的空列表按 None 规范化(与既有 scope 语义一致)。
+    mode:repair 要求失败/回归集非空(既有受理前提,此处兜底校验);
+    diagnose_then_repair 允许双集为空,但该模式只能先诊断(G10)。
     """
     if settings is None:
         from app.config import get_settings
 
         settings = get_settings()
+    if mode not in TASK_MODES:
+        raise TaskError(f"unsupported task mode: {mode!r}; must be one of {list(TASK_MODES)}")
+    if mode == MODE_REPAIR and (not bug.failed_tests or not bug.regression_tests):
+        # 兜底防线:repair 的双集非空前提此前由 API 层与夹具保证,这里收进契约构建口径,
+        # 任何绕过受理层的直接构建也建不出"看起来能严格验收的空集任务"
+        raise TaskError(
+            "task mode 'repair' requires non-empty failed_tests and regression_tests;"
+            " use mode='diagnose_then_repair' for issue-only intake"
+        )
+    if mode == MODE_DIAGNOSE_THEN_REPAIR and engine != "graph":
+        raise TaskError(
+            "task mode 'diagnose_then_repair' currently requires the graph engine;"
+            " refusing to accept a diagnose task the plain engine cannot wait on"
+        )
     # 预算模式的可执行性在受理口径上判(契约建不起来就不会有后续请求)
     validate_budget_policy(
         settings,
@@ -329,6 +374,7 @@ def build_task_spec(
         failed_tests=list(bug.failed_tests),
         regression_tests=list(bug.regression_tests),
         allowed_paths=allowed,
+        mode=mode,
         source_path=str(Path(bug.repo_dir).resolve()),
         source_commit=read_source_commit(bug.repo_dir),
         source_snapshot_hash=fingerprint_source_dir(bug.repo_dir),

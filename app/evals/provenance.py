@@ -228,6 +228,9 @@ SNAPSHOT_KEYS: tuple[str, ...] = (
     "command_output_max_bytes",
     "command_tail_chars",
     "command_scratch_max_bytes",
+    # G10 验收等待窗:决定 diagnose_then_repair 是"等待批准"还是"立即 needs_review",
+    # 两种口径的终态与产物形状不同(与 task_timeout_seconds 同族,不进豁免)。
+    "acceptance_wait_seconds",
 )
 SECRET_KEYS: frozenset[str] = frozenset({"llm_api_key", "api_token"})
 EXEMPT_KEYS: frozenset[str] = frozenset(

@@ -18,6 +18,7 @@ from typing import Any
 from app.config import get_settings
 from app.context.ast_outline import SYMBOL_KINDS
 from app.context.evidence import EvidenceNotStored, EvidenceRef, build_store
+from app.diagnosis.tool import propose_acceptance
 from app.tools.base import ToolContext, ToolResult
 from app.tools.commands import run_command, write_repro
 from app.tools.execution import run_tests
@@ -298,6 +299,27 @@ def _build_registry() -> dict[str, ToolSpec]:
                 [],
             ),
             handler=update_memory,
+        ),
+        "propose_acceptance": ToolSpec(
+            name="propose_acceptance",
+            description=(
+                "提交验收清单提议(diagnose_then_repair 任务专用):给出你认为的失败测试、"
+                "回归测试清单与依据。平台会在未修改的快照上重新校验红/绿基线,"
+                "然后等待可信用户批准;批准冻结之前不会生产任何补丁。"
+                "测试 id 必须精确(模块路径::用例名),两个集合不得重叠。"
+            ),
+            parameters=_schema(
+                "propose_acceptance",
+                "提交验收清单提议",
+                {
+                    "failed_tests": {"type": "array", "items": {"type": "string"}},
+                    "regression_tests": {"type": "array", "items": {"type": "string"}},
+                    "rationale": {"type": "string"},
+                    "evidence_ids": {"type": "array", "items": {"type": "string"}},
+                },
+                ["failed_tests", "regression_tests"],
+            ),
+            handler=propose_acceptance,
         ),
         FINISH_TOOL: ToolSpec(
             name=FINISH_TOOL,

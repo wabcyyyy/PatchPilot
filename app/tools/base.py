@@ -67,6 +67,16 @@ class ToolContext:
     repro_files: dict[str, str] = field(default_factory=dict)
     # 受控命令的执行序号(scratch 原始输出文件与诊断副本的编号)
     command_seq: int = 0
+    # ---------- G10:issue-only 诊断与验收清单 ----------
+    # 任务模式:"repair"(缺省)| "diagnose_then_repair"。repair 行为与引入前逐字相同
+    mode: str = "repair"
+    # 验收清单是否已冻结:diagnose 模式下 apply_patch 的放行凭据(平台写,模型不可见地读)
+    acceptance_frozen: bool = False
+    # Agent 已提交、尚未被 diagnose 节点取走的验收提议(diagnosis.proposal.AcceptanceProposal)
+    pending_acceptance: Any | None = None
+    # 受理身份引用:proposal/manifest 与冻结 TaskSpec 绑定用(空 = 未接线,旧行为不变)
+    source_snapshot_hash: str = ""
+    task_spec_hash: str = ""
 
 
 @dataclass

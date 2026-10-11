@@ -94,6 +94,16 @@ def _test_id(value: str) -> str:
     return value
 
 
+def check_test_ids(ids: list[str]) -> list[str]:
+    """测试 id 列表的公开校验入口(G10 诊断提议复用同一套语法/注入口径):
+    非空、逐个过 node id 字符集、数量上限;返回逐字保留顺序的规范化列表。"""
+    if not isinstance(ids, list) or not ids:
+        raise CommandProfileError("test id list must be non-empty")
+    if len(ids) > MAX_TEST_IDS:
+        raise CommandProfileError(f"too many test ids ({len(ids)} > {MAX_TEST_IDS})")
+    return [_test_id(str(item)) for item in ids]
+
+
 def _path_list(parameters: dict[str, Any]) -> list[str]:
     raw = parameters.get("paths")
     if not isinstance(raw, list) or not raw:

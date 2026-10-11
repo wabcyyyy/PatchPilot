@@ -84,12 +84,13 @@ WRITE_TOOLS = [
     FINISH_TOOL,
 ]
 # G10:diagnose_then_repair 模式的 LOCALIZE 白名单——调查阶段就能跑受控命令
-# (issue-only 任务要靠 pytest_collect/pytest_selected 提出失败测试),
+# (issue-only 任务要靠 pytest_collect/pytest_selected 提出失败测试)并提交验收提议,
 # 但绝不含 apply_patch(批准冻结之前不生产补丁)
 DIAGNOSE_TOOLS = [
     *READ_TOOLS,
     "write_repro",
     "run_command",
+    "propose_acceptance",
 ]
 
 
@@ -189,6 +190,19 @@ class TaskNodes:
     # G08:目标仓库自带说明(AGENTS.md 一类)。None ⇒ 首次装配时按 Settings 加载冻结副本;
     # `repo_instructions_enabled=false` 时得到空档案,阶段装配面与接入之前逐字节相同。
     instructions: RepoInstructions | None = None
+    # G10:issue-only 诊断与验收清单。mode 决定图的路由形状(diagnose 模式跳过
+    # baseline 节点、localize 结束后进 diagnose);两个身份字段由 runner 在解出冻结
+    # TaskSpec 后回填,工具层用它们把 proposal/manifest 绑到受理契约。
+    mode: str = "repair"
+    source_snapshot_hash: str = ""
+    task_spec_hash: str = ""
+    # 最小批准等待接线:approval_event 由服务层在提交前登记;on_waiting 在等待前调用
+    # (服务层把任务行置 WAITING_INPUT 并释放对外可见的等待状态)。等待窗秒数由
+    # 节点按冻结 Settings 读 acceptance_wait_seconds;0 = 不等待(headless)。
+    approval_event: threading.Event | None = None
+    on_waiting: Callable[[], None] | None = None
+    # "manifest 是否已冻结"的幂等派生缓存(避免每次 _build_ctx 都读盘)
+    _acceptance_checked: bool = False
 
     def __post_init__(self) -> None:
         if self.policy is None:
@@ -395,7 +409,32 @@ class TaskNodes:
             # 不改变已受理任务的命令落点。
             execution_backend=settings.execution_backend,
             cancel_event=self.cancel_event,
+            # G10:任务模式与验收身份。diagnose 模式从盘上 manifest 派生"是否已冻结"
+            # (恢复重建 ctx 时也要拿到同一结论);repair 模式恒 False,与接入前相同。
+            mode=self.mode,
+            acceptance_frozen=self._manifest_frozen(),
+            source_snapshot_hash=self.source_snapshot_hash,
+            task_spec_hash=self.task_spec_hash,
         )
+
+    def _manifest_frozen(self) -> bool:
+        """验收清单是否已冻结(只查一次盘,结果幂等缓存)。
+
+        损坏的 manifest 不在这里判死:diagnose 节点会重新装载并如实转待审;
+        本方法只回答"工具层放不放行 apply_patch"。
+        """
+        if self._acceptance_checked:
+            return True
+        if self.mode != "diagnose_then_repair":
+            return False
+        from app.diagnosis.proposal import load_manifest
+
+        try:
+            frozen = load_manifest(self.report_dir.parent) is not None
+        except Exception:
+            frozen = False
+        self._acceptance_checked = frozen
+        return frozen
 
     def restore_runtime(self, state: TaskState, baseline_commit: str) -> None:
         """M6 崩溃恢复:重建 prepare 造出的闭包对象(ctx / baseline_commit)。
@@ -406,6 +445,15 @@ class TaskNodes:
         时由调用方回退工作区 HEAD。
         """
         self.baseline_commit = baseline_commit
+        if self.mode == "diagnose_then_repair":
+            # G10:冻结清单先于 ctx 重建——恢复进 diagnose 节点时它直接沿用盘上
+            # manifest;恢复落在修复段中段时,prompt/verify 读的失败集也必须是冻结集。
+            from app.diagnosis.proposal import load_manifest
+
+            manifest = load_manifest(self.report_dir.parent)
+            if manifest is not None:
+                self.bug.failed_tests = list(manifest.failed_tests)
+                self.bug.regression_tests = list(manifest.regression_tests)
         self.ctx = self._build_ctx(state)
         # 恢复同样要过一遍冻结上下文:记忆是从 run_dir 读回的那一份(不是新建),
         # 会话身份沿用崩溃前那个 session_id,于是快照绑定校验比的是同一条会话。
@@ -443,7 +491,13 @@ class TaskNodes:
             return {"status": "INVALID_TASK", "error": str(exc), "outcome": "invalid"}
 
     def route_prepare(self, state: TaskState) -> str:
-        return "end" if state["status"] == "INVALID_TASK" else "continue"
+        if state["status"] == "INVALID_TASK":
+            return "end"
+        # G10:diagnose 模式没有可信失败/回归集,baseline 节点会对空集跑 pytest
+        # (等价于全仓运行)。红/绿基线由 diagnose 节点在快照副本上重做,这里直接进调查。
+        if self.mode == "diagnose_then_repair":
+            return "localize"
+        return "continue"
 
     # ---------- BASELINE ----------
 
@@ -529,9 +583,12 @@ class TaskNodes:
 
     def localize(self, state: TaskState) -> dict[str, Any]:
         assert self.ctx is not None
+        # G10:diagnose 模式的 LOCALIZE 白名单带受控命令与提议工具(issue-only 任务
+        # 要靠 pytest_collect/pytest_selected 提出候选失败集);repair 模式与接入前相同。
+        localize_tools = DIAGNOSE_TOOLS if self.mode == "diagnose_then_repair" else READ_TOOLS
         # 装配本阶段的可见上下文(骨架 + 此前的工作记忆);LOCALIZE 是第一个阶段,
         # 此时记忆里还没有观测 ⇒ 与接入前逐字节相同
-        self._begin_assembly("LOCALIZE", state["round_no"], READ_TOOLS)
+        self._begin_assembly("LOCALIZE", state["round_no"], localize_tools)
         try:
             outcome = run_plain_loop(
                 self.ctx,
@@ -545,7 +602,7 @@ class TaskNodes:
                 state_label="LOCALIZE",
                 # 主线 localize 无阶段提示,故 extra_system 即骨架(候选点未接,见 _run_candidate)
                 extra_system=self._persistent_context(self.workspace),
-                allowed_tools=READ_TOOLS,
+                allowed_tools=localize_tools,
                 deadline_epoch=self.deadline_epoch,
                 token_budget=self._token_budget_for(
                     state, share=get_settings().localize_budget_share
@@ -624,7 +681,13 @@ class TaskNodes:
 
     def route_localize(self, state: TaskState) -> str:
         """定位失败/超预算都是终点(N-5):超预算后不得继续 propose。"""
-        return "end" if state["status"] in ("NEEDS_REVIEW", "BUDGET_EXCEEDED") else "continue"
+        if state["status"] in ("NEEDS_REVIEW", "BUDGET_EXCEEDED"):
+            return "end"
+        # G10:issue-only 任务的调查结束后进 diagnose(提议 → 平台红/绿校验 → 批准冻结),
+        # 不直接进补丁段;repair 模式保持原有 "continue"→plan 语义。
+        if self.mode == "diagnose_then_repair":
+            return "diagnose"
+        return "continue"
 
     def _provisional_findings(self, last_content: str) -> str:
         """额度耗尽时的暂定结论:模型最后一轮的实质文本 + 已调查过的线索清单。

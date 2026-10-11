@@ -230,6 +230,8 @@ def test_provenance_carries_new_traceability_fields() -> None:
         "command_output_max_bytes",
         "command_tail_chars",
         "command_scratch_max_bytes",
+        # G10 验收等待窗:决定 diagnose 模式"等批准"还是"立即 needs_review"
+        "acceptance_wait_seconds",
     } == set(SNAPSHOT_KEYS)
     started = datetime.fromisoformat(prov["started_at"])
     assert started.tzinfo is not None

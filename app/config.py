@@ -402,6 +402,18 @@ class Settings(BaseSettings):
     command_tail_chars: int = 2000
     # scratch 原始输出的总量额度:每轮写入前做一次最旧优先的回收,超限的旧 .raw 让位
     command_scratch_max_bytes: int = 64_000_000
+    # ---------- G10:issue-only 诊断与验收清单冻结 ----------
+    # diagnose_then_repair 模式下,平台等待 trusted_user 批准验收清单的时长(秒)。
+    # 0 = 不等待(headless 评测口径):立即返回 needs_review 并交付 manifest 提议。
+    # 默认 3600 供交互 CLI/API 使用;到点未批准按 needs_review 收敛,不无限占用线程。
+    acceptance_wait_seconds: int = 3600
+
+    @field_validator("acceptance_wait_seconds")
+    @classmethod
+    def _check_acceptance_wait_seconds(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"acceptance_wait_seconds must be >= 0, got {value}")
+        return value
 
     @field_validator("command_output_max_bytes", "command_scratch_max_bytes")
     @classmethod
