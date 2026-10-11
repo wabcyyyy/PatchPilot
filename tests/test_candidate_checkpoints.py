@@ -1,0 +1,264 @@
+"""G14 C1:候选检查点存储与终局候选绑定。
+
+覆盖三件事:
+1. 门禁拒绝的候选同样保全工件与 checkpoint(gate_ok=False),rollback 复位到基线;
+2. finish 只认"当前工作区 == 冻结候选":hash 漂移或冻结工件消失都拒绝 resolved;
+3. verify 的真实重跑覆盖伪造的旧绿 checkpoint(fresh verification_attempt_id)。
+"""
+
+from __future__ import annotations
+
+import shutil
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from app.gitops.testing import materialize_repo
+from app.graph.candidate import (
+    candidates_root,
+    read_candidate_checkpoint,
+    write_candidate_checkpoint,
+)
+from app.graph.nodes import TaskNodes
+from app.llm.base import Model
+from app.tools.base import ToolContext
+from app.tools.tracker import Tracker
+
+BUG_ROOT = Path("bugs")
+FAILED_ID = "tests/test_dateparse.py::test_empty_string_returns_none"
+
+
+def _fake_settings(**kw: object) -> SimpleNamespace:
+    """只暴露节点用到的字段,测试不受本机 .env 影响。"""
+    values: dict[str, object] = {
+        "adaptive_branching_enabled": True,
+        "token_budget": 200_000,
+        "branching_min_token_reserve": 30_000,
+        "branch_candidates": 2,
+        "max_patch_files": 5,
+        "test_timeout_seconds": 120,
+        "task_timeout_seconds": 900,
+        "context_window_tokens": 0,
+        "context_keep_recent_turns": 6,
+    }
+    values.update(kw)
+    return SimpleNamespace(**values)
+
+
+def _model() -> Model:
+    return SimpleNamespace(provider="fake-replay", complete=lambda *a, **k: None)
+
+
+def _nodes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[TaskNodes, Path]:
+    """真题目 + 真工作区(不跑 LLM;verify 用例里真跑 pytest)。"""
+    template = tmp_path / "template"
+    shutil.copytree(BUG_ROOT / "BUG-001" / "repo", template)
+    (template / ".gitattributes").write_text("* text eol=lf\n", encoding="utf-8", newline="\n")
+    ws = tmp_path / "ws"
+    sha = materialize_repo(template, ws, extra_commit=False)
+    bug = SimpleNamespace(
+        id="BUG-001",
+        root=BUG_ROOT / "BUG-001",
+        repo_dir=BUG_ROOT / "BUG-001" / "repo",
+        allowed_paths=["src/**"],
+        test_sets={"failed": [FAILED_ID], "regression": []},
+        failed_tests=[FAILED_ID],
+        regression_tests=[],
+        issue_text="x",
+        max_rounds=5,
+    )
+    monkeypatch.setattr("app.graph.nodes.get_settings", lambda: _fake_settings())
+    # 受理契约缺省由 run_dir/task_spec.json 提供;直连节点时注入固定身份,
+    # 否则 freeze_candidate 的 manifest 缺字段,load_candidate 读侧会判不可信
+    monkeypatch.setattr(
+        "app.graph.nodes.accepted_contract_hashes", lambda _run_dir: ("t-spec", "t-src")
+    )
+    ctx = ToolContext(
+        task_id="T-CKPT",
+        workspace=ws,
+        baseline_commit=sha,
+        tracker=Tracker(tmp_path / "trajectory.jsonl", task_id="T-CKPT"),
+        report_dir=tmp_path / "reports",
+        test_sets={"failed": [FAILED_ID], "regression": []},
+        allowed_paths=["src/**"],
+    )
+    nodes = TaskNodes(
+        bug=bug,
+        model=_model(),
+        workspace=ws,
+        tracker=ctx.tracker,
+        report_dir=tmp_path / "reports",
+        baseline_commit=sha,
+        max_rounds=5,
+        max_turns=10,
+    )
+    nodes.ctx = ctx
+    nodes.branch_model_factory = lambda i: _model()
+    return nodes, ws
+
+
+def _state(**kw: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "bug_id": "BUG-001",
+        "issue_text": "x",
+        "round_no": 2,
+        "repeat_streak": 0,
+        "tokens_used": 0,
+        "turns": 0,
+        "tokens_prompt": 0,
+        "tokens_completion": 0,
+        "findings": "",
+        "feedback": "",
+    }
+    base.update(kw)
+    return base
+
+
+def _fix_workspace(ws: Path) -> None:
+    """工作区落正确修复(BUG-001:parse_date 未处理空白字符串)。"""
+    target = ws / "src" / "dateparse.py"
+    text = target.read_text(encoding="utf-8")
+    target.write_text(
+        text.replace(
+            "    if value is None:\n        return None\n",
+            "    if value is None:\n        return None\n    if not value.strip():\n        return None\n",
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+def _comment_workspace(ws: Path) -> None:
+    """工作区落"门禁通过但不修复问题"的合法补丁(只加注释)。"""
+    target = ws / "src" / "dateparse.py"
+    text = target.read_text(encoding="utf-8")
+    target.write_text(
+        text.replace(
+            '    raise ValueError(f"unrecognized date format: {value!r}")\n',
+            '    raise ValueError(f"unrecognized date format: {value!r}")  # noqa: 见 issue\n',
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+# ---------- ①门禁拒绝:工件与 checkpoint 保全,rollback 回基线 ----------
+
+
+def test_gate_rejected_candidate_is_preserved_and_rollback_resets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    nodes, ws = _nodes(monkeypatch, tmp_path)
+    # 直接改测试文件制造 [files] 门禁违规(apply 节点只读工作区 diff,不经工具层)
+    target = ws / "tests" / "test_dateparse.py"
+    target.write_text(
+        target.read_text(encoding="utf-8") + "\n# 门禁违规探测\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    state = _state()
+    result = nodes.apply(state)  # type: ignore[arg-type]
+    assert result["status"] == "PATCH_REJECTED"
+    assert any("[files]" in v for v in result["gate_violations"]), result["gate_violations"]
+    candidate_id = str(result["candidate_id"])
+    assert candidate_id and str(result["candidate_hash"])
+
+    # 失败现场保全:diff.patch 与 checkpoint(gate_ok=False,不冒充绿)
+    assert (tmp_path / "candidates" / candidate_id / "diff.patch").is_file()
+    checkpoint = read_candidate_checkpoint(tmp_path, candidate_id)
+    assert checkpoint is not None
+    assert checkpoint.gate_ok is False
+    assert checkpoint.verify_failed_ok is False and checkpoint.verify_regression_ok is False
+    assert "gates rejected" in checkpoint.note
+
+    # rollback 单线失败路径:reset 到基线,至多一次递增,下一轮继续
+    state.update(result)
+    rolled = nodes.rollback(state)  # type: ignore[arg-type]
+    assert rolled["status"] == "PROPOSE_PATCH" and rolled["round_no"] == 3
+    from app.gitops.rollback import working_tree_is_clean
+
+    assert working_tree_is_clean(ws)
+
+
+# ---------- ②终局候选绑定:hash 漂移 / 工件消失都拒绝 resolved ----------
+
+
+def test_finish_rejects_drifted_workspace_and_missing_candidate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    nodes, ws = _nodes(monkeypatch, tmp_path)
+    _fix_workspace(ws)
+    state = _state()
+    applied = nodes.apply(state)  # type: ignore[arg-type]
+    assert applied["status"] == "VERIFY"
+    candidate_id = str(applied["candidate_id"])
+
+    # 合法候选 + 平台验证全绿 → 绑定成立 → resolved
+    state.update(applied)
+    state["verify_failed_ok"] = True
+    state["verify_regression_ok"] = True
+    decided = nodes.finish(state)  # type: ignore[arg-type]
+    assert decided["status"] == "FINISHED" and decided["outcome"] == "resolved"
+
+    # ①hash 漂移:apply 冻结后再动工作区 → 旧候选的成功不得套到新代码上
+    target = ws / "src" / "dateparse.py"
+    target.write_text(
+        target.read_text(encoding="utf-8") + "\n# 事后漂移\n", encoding="utf-8", newline="\n"
+    )
+    drifted = nodes.finish(state)  # type: ignore[arg-type]
+    assert drifted["status"] == "VERIFY_FAILED"
+    assert "workspace diff sha256" in str(drifted["error"])
+
+    # ②补丁消失:工作区回到候选态但冻结工件被删 → load_candidate 判缺失,拒绝
+    from app.gitops.rollback import reset_workspace
+
+    reset_workspace(ws, nodes.baseline_commit)
+    _fix_workspace(ws)
+    shutil.rmtree(candidates_root(tmp_path) / candidate_id)
+    missing = nodes.finish(state)  # type: ignore[arg-type]
+    assert missing["status"] == "VERIFY_FAILED"
+    assert "missing or tampered" in str(missing["error"])
+
+
+# ---------- ③verify 覆盖伪造的旧绿证据 ----------
+
+
+def test_verify_overwrites_forged_green_checkpoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    nodes, ws = _nodes(monkeypatch, tmp_path)
+    _comment_workspace(ws)  # 门禁通过但修不好 bug
+    state = _state()
+    applied = nodes.apply(state)  # type: ignore[arg-type]
+    assert applied["status"] == "VERIFY"
+    candidate_id = str(applied["candidate_id"])
+
+    # 伪造"旧尝试全绿"证据:恢复/重试不得把它套到新代码上
+    assert write_candidate_checkpoint(
+        tmp_path,
+        candidate_id,
+        gate_ok=True,
+        verify_failed_ok=True,
+        verify_regression_ok=True,
+        round_no=2,
+        verification_attempt_id="OLD-GREEN",
+    )
+    forged = read_candidate_checkpoint(tmp_path, candidate_id)
+    assert forged is not None and forged.verification_attempt_id == "OLD-GREEN"
+
+    # 平台真实重跑 → 用真实结果 + fresh attempt id 覆盖
+    state.update(applied)
+    update = nodes.verify(state)  # type: ignore[arg-type]
+    assert update["verify_failed_ok"] is False  # 补丁没修 bug,真实失败
+
+    fresh = read_candidate_checkpoint(tmp_path, candidate_id)
+    assert fresh is not None
+    assert fresh.gate_ok is True
+    # 伪造的全绿被真实重跑覆盖:补丁没修 bug → failed 集失败;空回归集在平台
+    # 层是"跑全目录",残留失败用例同样不过 → 两个布尔都从伪造的 True 变 False
+    assert fresh.verify_failed_ok is False and fresh.verify_regression_ok is False
+    assert fresh.verification_attempt_id
+    assert fresh.verification_attempt_id != "OLD-GREEN"
+    assert fresh.verification_attempt_id == str(update["verification_attempt_id"])

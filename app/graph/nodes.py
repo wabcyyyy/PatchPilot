@@ -31,11 +31,18 @@ from app.agent.session import SessionState
 from app.context.assembler import ContextAssembler
 from app.context.task_memory import TaskMemory, load_memory_state, save_memory_state
 from app.gitops.testing import materialize_repo
-from app.graph.acceptance import acceptance_from_state, double_run_mismatch
+from app.graph.acceptance import (
+    VALIDATION_FAILED,
+    VALIDATION_PASSED,
+    acceptance_from_state,
+    candidate_binding_ok,
+    double_run_mismatch,
+)
 from app.graph.candidate import (
     accepted_contract_hashes,
     freeze_candidate,
     new_verification_attempt_id,
+    write_candidate_checkpoint,
 )
 from app.graph.gates import ensure_budget, run_gates
 from app.graph.loop_state import LoopSnapshot
@@ -1387,6 +1394,20 @@ class TaskNodes:
             forbid_test_files=self.ctx.forbid_test_files,
         )
         if gate.ok and not diff.is_empty:
+            # G14:门禁通过 → 落候选验证证据(checkpoint 记 gate_ok=True),供
+            # 后续 rollback 的"从具名候选续改"准入与报告审计;verify 的真实结果
+            # 由 verify 节点随后覆盖写回。
+            if candidate_update:
+                write_candidate_checkpoint(
+                    self.report_dir.parent,
+                    candidate_update["candidate_id"],
+                    gate_ok=True,
+                    verify_failed_ok=bool(state.get("verify_failed_ok")),
+                    verify_regression_ok=bool(state.get("verify_regression_ok")),
+                    round_no=state["round_no"],
+                    verification_attempt_id=str(state.get("verification_attempt_id") or ""),
+                    note="apply: gates passed",
+                )
             self.tracker.record(
                 tool="apply_gate", state="VERIFY", input_payload={"files": diff.changed_files}
             )
@@ -1398,6 +1419,19 @@ class TaskNodes:
             }
 
         violations = [str(v) for v in gate.violations] or ["[format] no patch applied"]
+        # G14:被门禁拒绝的候选同样保全工件(checkpoint 记 gate_ok=False,失败现场
+        # 可审计),并把候选引用带回——rollback 据此判定"此候选不可续改,复位基线"。
+        if candidate_update:
+            write_candidate_checkpoint(
+                self.report_dir.parent,
+                candidate_update["candidate_id"],
+                gate_ok=False,
+                verify_failed_ok=False,
+                verify_regression_ok=False,
+                round_no=state["round_no"],
+                verification_attempt_id=str(state.get("verification_attempt_id") or ""),
+                note="apply: gates rejected: " + "; ".join(violations)[:200],
+            )
         self.tracker.record(
             tool="apply_gate",
             state="VERIFY",
@@ -1410,8 +1444,11 @@ class TaskNodes:
         # "保全现场 → reset → 一次递增"(与验证失败同一条单线失败路径)。
         # 旧实现在这里预增、route_apply 再拿更新值比较:max_rounds=2 的首轮拒绝
         # 会被直接判耗尽,第二轮永远不发生。已拒绝候选由 rollback 复位,不泄漏到下一轮。
+        # G14:拒绝候选也把 candidate_id/hash 带回 state——rollback 读取其 checkpoint
+        # (gate_ok=False)判定"不可续改、必须整体复位",并避免把旧轮候选误当可续改对象。
         return {
             "status": "PATCH_REJECTED",
+            **candidate_update,
             "gate_violations": violations,
             "feedback": build_feedback(
                 [], "上一轮补丁被门禁拒绝:" + "; ".join(violations), repeat_streak=streak
@@ -1485,6 +1522,20 @@ class TaskNodes:
             # S03:每次真实重跑都刷新验证尝试 id——恢复不得沿用旧证据的身份
             "verification_attempt_id": new_verification_attempt_id(),
         }
+        # G14:验证真实重跑 → 把这次证据写回当前候选的 checkpoint(fresh attempt id)。
+        # 旧尝试的绿证据只属于那次验证,restore/重试不得把过去某个候选的成功套到新代码上。
+        candidate_id = state.get("candidate_id") or ""
+        if candidate_id:
+            write_candidate_checkpoint(
+                self.report_dir.parent,
+                candidate_id,
+                gate_ok=True,
+                verify_failed_ok=bool(update["verify_failed_ok"]),
+                verify_regression_ok=bool(update["verify_regression_ok"]),
+                round_no=state["round_no"],
+                verification_attempt_id=str(update["verification_attempt_id"]),
+                note="verify: platform rerun of failed + regression sets",
+            )
         # 回归集单独失败时也要有反馈(此前只处理 failed 集,回归失败反馈会悬空);
         # failed+regression 的失败签名合并成一组做"连续相同"检测(重复错误 → 换思路提示)
         failing_cases = [
@@ -1618,12 +1669,35 @@ class TaskNodes:
         非资源类拒绝(取消/空 diff/验证缺失)收敛 VERIFY_FAILED,语义不混装。
         """
         assert self.ledger is not None
+        diff = working_tree_diff(self.workspace)
         decision = acceptance_from_state(
             state,
             ledger=self.ledger,
-            diff_non_empty=not working_tree_diff(self.workspace).is_empty,
+            diff_non_empty=not diff.is_empty,
             cancelled=bool(self.cancel_event is not None and self.cancel_event.is_set()),
         )
+        # G14 候选绑定:终局只认"当前工作区 == 冻结候选"。apply 冻结后的任何额外改动
+        # (恢复漂移/落盘篡改/补丁消失)都不得把旧候选的验证结论套到新代码上。
+        binding_ok, binding_reason = candidate_binding_ok(
+            run_dir=self.report_dir.parent,
+            state=state,
+            workspace_diff_text=diff.diff_text,
+        )
+        if not binding_ok:
+            decision.resolved = False
+            if decision.validation_status == VALIDATION_PASSED:
+                decision.validation_status = VALIDATION_FAILED
+            decision.reasons.append("candidate binding: " + binding_reason)
+            self.tracker.record(
+                tool="candidate_binding",
+                round_no=state["round_no"],
+                state="FINISH",
+                input_payload={
+                    "candidate_id": state.get("candidate_id"),
+                    "candidate_hash": state.get("candidate_hash"),
+                },
+                error=binding_reason,
+            )
         self.tracker.record(
             tool="final_acceptance",
             round_no=state["round_no"],

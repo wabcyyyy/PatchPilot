@@ -16,6 +16,7 @@ plain 驱动器都遵守 Settings.verify_double_run——比较臂不允许少�
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -184,3 +185,40 @@ def acceptance_from_state(
                 f"task tokens {effective} exceed budget {budget} (state/ledger max)"
             )
     return decision
+
+
+def candidate_binding_ok(
+    *,
+    run_dir: Any,
+    state: dict[str, Any],
+    workspace_diff_text: str,
+) -> tuple[bool, str]:
+    """终局候选绑定(G14):工作区 diff 哈希必须等于当前候选的冻结哈希。
+
+    防"把过去某个候选的成功套到新代码上":apply 冻结后的任何额外改动(恢复漂移、
+    落盘篡改、补丁消失)都会让当前工作区不再是那个已验证的候选——拒绝 resolved。
+    state 无候选引用(旧任务/legacy 或候选缺失)时跳过绑定,不构成拒绝理由;
+    有引用但冻结工件缺失/被篡改则是明确拒绝("补丁消失")。
+    """
+    from app.graph.candidate import load_candidate
+
+    candidate_id = str(state.get("candidate_id") or "")
+    expected = str(state.get("candidate_hash") or "")
+    if not candidate_id or not expected:
+        return True, ""
+    actual = hashlib.sha256(workspace_diff_text.encode("utf-8")).hexdigest()
+    if actual != expected:
+        return False, (
+            f"workspace diff sha256 {actual[:12]} != candidate_hash {expected[:12]}"
+            " (workspace drifted after candidate freeze)"
+        )
+    loaded = load_candidate(run_dir, candidate_id)
+    if loaded is None:
+        return False, f"frozen candidate {candidate_id} missing or tampered"
+    manifest, _ = loaded
+    if manifest.diff_sha256 != expected:
+        return False, (
+            f"frozen candidate manifest sha256 {manifest.diff_sha256[:12]} "
+            f"!= candidate_hash {expected[:12]}"
+        )
+    return True, ""

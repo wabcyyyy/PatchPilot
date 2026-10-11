@@ -153,6 +153,105 @@ def load_candidate(run_dir: Path | str, candidate_id: str) -> tuple[CandidateMan
     return manifest, patch_text
 
 
+CHECKPOINT_VERSION = 1
+
+
+@dataclass
+class CandidateCheckpoint:
+    """一个候选补丁的验证证据记录(G14)。
+
+    每次候选的 patch/hash 已有 manifest 持久化;这里补**判定事实**:
+    gate 是否通过、平台 verify 双测试集的布尔、以及证据所属的验证尝试 id。
+    `verification_attempt_id` 是"这份证据是哪一次真实重跑产生的"——旧尝试的
+    绿证据不得套到新代码上。
+    """
+
+    candidate_id: str
+    version: int
+    round_no: int
+    gate_ok: bool
+    verify_failed_ok: bool
+    verify_regression_ok: bool
+    verification_attempt_id: str
+    note: str
+    updated_at: str
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> CandidateCheckpoint:
+        candidate_id = str(data.get("candidate_id", "") or "")
+        if not candidate_id:
+            raise TaskError("candidate checkpoint missing candidate_id")
+        if int(data.get("version", 0)) != CHECKPOINT_VERSION:
+            raise TaskError(f"unsupported checkpoint version: {data.get('version')}")
+        return CandidateCheckpoint(
+            candidate_id=candidate_id,
+            version=CHECKPOINT_VERSION,
+            round_no=int(data.get("round_no", 0) or 0),
+            gate_ok=bool(data.get("gate_ok", False)),
+            verify_failed_ok=bool(data.get("verify_failed_ok", False)),
+            verify_regression_ok=bool(data.get("verify_regression_ok", False)),
+            verification_attempt_id=str(data.get("verification_attempt_id", "") or ""),
+            note=str(data.get("note", "") or ""),
+            updated_at=str(data.get("updated_at", "") or ""),
+        )
+
+
+def write_candidate_checkpoint(
+    run_dir: Path | str,
+    candidate_id: str,
+    *,
+    gate_ok: bool,
+    verify_failed_ok: bool,
+    verify_regression_ok: bool,
+    round_no: int,
+    verification_attempt_id: str = "",
+    note: str = "",
+) -> bool:
+    """把候选的验证证据写进 `candidates/<id>/checkpoint.json`(G14)。
+
+    候选目录缺失时静默跳过并返回 False(候选已不是当前态,不据此补证据);
+    写入走 tmp+replace 原子写,崩溃只留下完整旧证据或完整新证据。
+    """
+    cdir = candidates_root(run_dir) / candidate_id
+    if not cdir.is_dir():
+        return False
+    checkpoint = {
+        "candidate_id": candidate_id,
+        "version": CHECKPOINT_VERSION,
+        "round_no": round_no,
+        "gate_ok": bool(gate_ok),
+        "verify_failed_ok": bool(verify_failed_ok),
+        "verify_regression_ok": bool(verify_regression_ok),
+        "verification_attempt_id": verification_attempt_id,
+        "note": note,
+        "updated_at": datetime.now(UTC).isoformat(timespec="milliseconds"),
+    }
+    _atomic_write(cdir / "checkpoint.json", json.dumps(checkpoint, ensure_ascii=False))
+    return True
+
+
+def read_candidate_checkpoint(run_dir: Path | str, candidate_id: str) -> CandidateCheckpoint | None:
+    """读候选验证证据;缺失/损坏/版本不符一律返回 None,调用方按"无证据"处理。"""
+    path = candidates_root(run_dir) / candidate_id / "checkpoint.json"
+    if not path.is_file():
+        return None
+    try:
+        return CandidateCheckpoint.from_dict(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError, TaskError) as exc:
+        log.warning("candidate %s checkpoint unreadable: %s", candidate_id, exc)
+        return None
+
+
+def is_candidate_gate_clean(run_dir: Path | str, candidate_id: str) -> bool:
+    """候选是否已通过图级质量门禁(G14 v2 续改的准入条件)。
+
+    只有 gate_ok=True 的候选才允许"从具名候选继续修复";门禁拒绝的候选
+    checkpoint 记 gate_ok=False,续改不放行、必须整体复位到基线。
+    """
+    checkpoint = read_candidate_checkpoint(run_dir, candidate_id)
+    return checkpoint is not None and bool(checkpoint.gate_ok)
+
+
 def reapply_candidate(
     workspace: Path | str,
     run_dir: Path | str,
