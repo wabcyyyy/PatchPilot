@@ -392,6 +392,31 @@ class Settings(BaseSettings):
             raise ValueError(f"repo_instructions size must be >= 0, got {value}")
         return value
 
+    # ---------- G09:受控命令、复现工件与诊断执行 ----------
+    # 受控命令的回退超时:profile 自带各自的上限,这里只兜底 profile 未给出的情形
+    command_timeout_seconds: int = 120
+    # 单条流的原始输出落盘上限(字节):超出部分如实计数丢弃,回执标注 dropped_bytes,
+    # 模型可见的 tail 在这之后才裁(超过 tail 上限的部分用 evidence_id 分页取回)
+    command_output_max_bytes: int = 2_000_000
+    # 回执里 stdout/stderr 模型可见的 tail 字符数(原文可经 read_evidence 取回)
+    command_tail_chars: int = 2000
+    # scratch 原始输出的总量额度:每轮写入前做一次最旧优先的回收,超限的旧 .raw 让位
+    command_scratch_max_bytes: int = 64_000_000
+
+    @field_validator("command_output_max_bytes", "command_scratch_max_bytes")
+    @classmethod
+    def _check_command_sizes(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"command limits must be >= 0 (0 = 不落盘), got {value}")
+        return value
+
+    @field_validator("command_tail_chars")
+    @classmethod
+    def _check_command_tail_chars(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"command_tail_chars must be >= 0, got {value}")
+        return value
+
     # PLAN 阶段(M5,范式 LOCALIZE→PLAN→ACT→VERIFY)。缺陷出处(PROGRESS.md D.8/D.11):
     # 计划从来不是工件——"计划如何修复"只是 LOCALIZE_PROMPT 要求塞进 finish.summary 的自由文本,
     # 付费实跑 runs/swe-hard-graph/3 两次独立跑法同形:PROPOSE 13 次 search / 10 次 read、

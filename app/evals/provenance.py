@@ -220,6 +220,14 @@ SNAPSHOT_KEYS: tuple[str, ...] = (
     "repo_instructions_enabled",
     "repo_instructions_max_file_bytes",
     "repo_instructions_max_total_bytes",
+    # G09 受控命令:回退超时、单条流原始输出的落盘额度、模型可见 tail 字符数、scratch
+    # 原始文件的总量额度——四个都决定"一条命令在回执里长什么样、原文能不能取回"。
+    # 与 tool_visible_max_chars/evidence_* 同族(改变模型可见面与取证面),不进豁免;
+    # profile 集本身的身份由 effective_policy.command_profiles_digest 单独记(它不是 Settings 键)。
+    "command_timeout_seconds",
+    "command_output_max_bytes",
+    "command_tail_chars",
+    "command_scratch_max_bytes",
 )
 SECRET_KEYS: frozenset[str] = frozenset({"llm_api_key", "api_token"})
 EXEMPT_KEYS: frozenset[str] = frozenset(

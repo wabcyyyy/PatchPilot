@@ -132,8 +132,10 @@ def test_p3_7_corrected_claims_are_pinned() -> None:
     #        runtime_profile 轨迹事件,localize/plan 的容量终止分支各加两行)
     # →914(G08:TaskNodes 新增 instructions 字段,_begin_assembly 交给装配器说明块,
     #        _observed_paths/_repo_instructions 两个方法插在 _note_memory 之前)
+    # →930(G09:WRITE_TOOLS 加 write_repro/run_command 两行 + DIAGNOSE_TOOLS 名单,
+    #        _build_ctx 加 execution_backend/cancel_event,apply 节点整体下移)
     assert "七项门禁" in _read("app/graph/gates.py")[0]
-    assert "七项门禁" in _read("app/graph/nodes.py")[913]
+    assert "七项门禁" in _read("app/graph/nodes.py")[929]
     # ADR-0002:compose 冒烟如实表述
     adr2 = _read("docs/adr/0002-execution-backend-local-默认.md")
     assert any("无留档的实测运行" in line for line in adr2[28:34]), adr2[28:34]

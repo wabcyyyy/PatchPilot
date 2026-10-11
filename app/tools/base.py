@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,16 @@ class ToolContext:
     # (候选 ctx、离线脚本与 23 处测试夹具都不必构造记忆)。registry 只在句柄存在时登记观测。
     memory: TaskMemory | None = None
     session: SessionState | None = None
+    # ---------- G09:受控命令与复现工件 ----------
+    # 任务执行后端(冻结口径):"" = 运行时读 Settings.execution_backend;
+    # 节点侧构造 ctx 时按受理时冻结的值传入,运行中改环境变量不改变已受理任务
+    execution_backend: str = ""
+    # 取消事件(协作式):run_command 在等待子进程/容器退出期间轮询它
+    cancel_event: threading.Event | None = None
+    # write_repro 的登记表:名字 → 内容 sha256(python_repro 只运行登记过的脚本)
+    repro_files: dict[str, str] = field(default_factory=dict)
+    # 受控命令的执行序号(scratch 原始输出文件与诊断副本的编号)
+    command_seq: int = 0
 
 
 @dataclass

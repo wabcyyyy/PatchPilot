@@ -224,6 +224,12 @@ def test_provenance_carries_new_traceability_fields() -> None:
         "repo_instructions_enabled",
         "repo_instructions_max_file_bytes",
         "repo_instructions_max_total_bytes",
+        # G09 受控命令:回退超时/原始输出落盘额度/tail 字符数/scratch 回收额度决定
+        # "一条命令的回执长什么样、原文能不能取回",与 tool_visible_max_chars 同族不可豁免
+        "command_timeout_seconds",
+        "command_output_max_bytes",
+        "command_tail_chars",
+        "command_scratch_max_bytes",
     } == set(SNAPSHOT_KEYS)
     started = datetime.fromisoformat(prov["started_at"])
     assert started.tzinfo is not None

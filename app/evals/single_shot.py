@@ -45,6 +45,9 @@ from app.tools.registry import FINISH_TOOL
 # G05 的 read_evidence 与 G06 的 update_memory 同理:一个属于"读自己已经拿到的东西",
 # 一个属于"登记自己的假设",两臂都给才不构成新变量
 # (教训登记在案:消融臂私加的未登记限制会把结论污染成实验设计的函数)。
+# G09 登记的不对称:write_repro/run_command **不进**本臂——pytest_selected 会把测试
+# 结果带给对照臂,与"one_shot 禁执行反馈"直接冲突(run_tests 的排除是同一先例)。
+# 做"受控命令"的单变量对照时必须按臂登记,不能当作默认对称能力。
 ONE_SHOT_TOOLS = [
     "list_files",
     "search_code",

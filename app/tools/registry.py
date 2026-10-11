@@ -19,6 +19,7 @@ from app.config import get_settings
 from app.context.ast_outline import SYMBOL_KINDS
 from app.context.evidence import EvidenceNotStored, EvidenceRef, build_store
 from app.tools.base import ToolContext, ToolResult
+from app.tools.commands import run_command, write_repro
 from app.tools.execution import run_tests
 from app.tools.files import list_files, read_evidence, read_file, search_code
 from app.tools.memory import SELF_RECORDING_TOOLS, describe_receipt, update_memory
@@ -196,6 +197,50 @@ def _build_registry() -> dict[str, ToolSpec]:
                 [],
             ),
             handler=run_tests,
+        ),
+        "write_repro": ToolSpec(
+            name="write_repro",
+            description=(
+                "把复现脚本写进任务 scratch(工作区之外,永不进补丁 diff),"
+                "返回登记名与内容 hash。之后可用 run_command(profile_id='python_repro') 运行它;"
+                "同名不同内容的脚本会被拒绝,换名字即可。"
+            ),
+            parameters=_schema(
+                "write_repro",
+                "登记复现脚本",
+                {"content": {"type": "string"}, "name": {"type": "string"}},
+                ["content"],
+            ),
+            handler=write_repro,
+        ),
+        "run_command": ToolSpec(
+            name="run_command",
+            description=(
+                "按受控 profile 执行诊断命令:profile_id ∈ {pytest_collect, pytest_selected,"
+                " python_repro, python_compile, ruff_check}。不接受任意 shell 字符串;"
+                "参数按 profile 校验(测试 id / 工作区内相对路径 / 已登记的 repro)。"
+                "命令在任务的诊断副本内运行,改动不进候选;原始输出已落盘,"
+                "可用 read_evidence 按 evidence_id 分页取回。"
+                "注意 exit_code=0 只是事实,不构成验收——平台 verify 才是唯一验收链。"
+            ),
+            parameters=_schema(
+                "run_command",
+                "执行受控命令",
+                {
+                    "profile_id": {"type": "string"},
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "target": {"type": "string"},
+                            "test_ids": {"type": "array", "items": {"type": "string"}},
+                            "paths": {"type": "array", "items": {"type": "string"}},
+                            "repro": {"type": "string"},
+                        },
+                    },
+                },
+                ["profile_id"],
+            ),
+            handler=run_command,
         ),
         "git_diff": ToolSpec(
             name="git_diff",

@@ -190,8 +190,17 @@ def _effective_policy(settings: Any) -> dict[str, Any]:
         "repo_instructions_enabled",
         "repo_instructions_max_file_bytes",
         "repo_instructions_max_total_bytes",
+        # G09:受控命令的运行额度(超时/输出落盘/tail/scratch 回收);profile 集本身的
+        # 身份以 digest 记录——argv 逐条 hash 进回执,这里记"当时有哪些 profile 可用"
+        "command_timeout_seconds",
+        "command_output_max_bytes",
+        "command_tail_chars",
+        "command_scratch_max_bytes",
     )
     policy = {k: getattr(settings, k, None) for k in keys}
+    from app.executor.command_profiles import profiles_digest
+
+    policy["command_profiles_digest"] = profiles_digest()
     # 有效值而不是配置值:repair_v2 的目标窗口会被声明容量夹小,报告里必须写出**实际采用**
     # 的那个数(以及它被夹过这件事),否则"配置写着 64k"会被读成"跑了 64k"。
     from app.agent.runtime import TaskRuntime

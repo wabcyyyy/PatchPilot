@@ -142,6 +142,31 @@ def describe_receipt(
             + (";超时" if output.get("timed_out") else "")
         )
         return f"run_tests {output.get('test_set', '?')}", "", "", verdict
+    if name == "run_command":
+        # 受控命令的回执(G09):只记事实读数,exit_code 不是验收
+        stdout = output.get("stdout") or {}
+        verdict = (
+            f"profile={output.get('profile_id', '?')} exit_code={output.get('exit_code')} "
+            + ("超时" if output.get("timed_out") else "")
+            + ("被取消" if output.get("cancelled") else "")
+            + f";stdout {stdout.get('raw_bytes', 0)}B"
+            + (
+                f"(另有 {stdout.get('dropped_bytes')}B 超额度未落盘)"
+                if stdout.get("dropped_bytes")
+                else ""
+            )
+            + f" evidence={stdout.get('evidence_id') or '未存'}"
+            + (f";{output.get('environment')}" if output.get("environment") else "")
+        )
+        return f"run_command {output.get('profile_id', '?')}", "", "", verdict
+    if name == "write_repro":
+        return (
+            f"write_repro {output.get('repro', '?')} "
+            f"({output.get('bytes', 0)}B, sha256 {output.get('sha256', '?')},在 scratch 不进补丁)",
+            "",
+            "",
+            "",
+        )
     return "", "", "", ""
 
 

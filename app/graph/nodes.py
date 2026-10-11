@@ -78,7 +78,18 @@ WRITE_TOOLS = [
     "git_diff",
     "apply_patch",
     "run_tests",
+    # G09:受控诊断命令与复现工件(诊断副本内执行,改动不进候选)
+    "write_repro",
+    "run_command",
     FINISH_TOOL,
+]
+# G10:diagnose_then_repair 模式的 LOCALIZE 白名单——调查阶段就能跑受控命令
+# (issue-only 任务要靠 pytest_collect/pytest_selected 提出失败测试),
+# 但绝不含 apply_patch(批准冻结之前不生产补丁)
+DIAGNOSE_TOOLS = [
+    *READ_TOOLS,
+    "write_repro",
+    "run_command",
 ]
 
 
@@ -379,6 +390,11 @@ class TaskNodes:
             # None 时工具层完全不做事,与接入前逐字节相同。
             memory=self.memory,
             session=self.session,
+            # G09:受控命令的冻结执行后端与协作式取消事件。后端在受理时冻结
+            # (TaskSpec.effective_policy.execution_backend 同源),运行中改环境变量
+            # 不改变已受理任务的命令落点。
+            execution_backend=settings.execution_backend,
+            cancel_event=self.cancel_event,
         )
 
     def restore_runtime(self, state: TaskState, baseline_commit: str) -> None:
