@@ -126,8 +126,10 @@ def test_p3_7_corrected_claims_are_pinned() -> None:
     # →690(G01:plan 节点的完成协议——docstring 扩写 + protocol_invalid 落事件块,apply 下移)
     # →698(G03:TaskNodes 新增 price_model 字段与账本构造口径收进 ledger_from_settings)
     # →700(G05:READ_TOOLS/WRITE_TOOLS 各加一行 read_evidence,apply 节点随之+2)
+    # →849(G06:TaskNodes 新增 session/memory/assembler 三字段与 _begin_assembly/
+    #        _open_agent_state 两个方法,apply 节点整体下移 149 行)
     assert "七项门禁" in _read("app/graph/gates.py")[0]
-    assert "七项门禁" in _read("app/graph/nodes.py")[699]
+    assert "七项门禁" in _read("app/graph/nodes.py")[848]
     # ADR-0002:compose 冒烟如实表述
     adr2 = _read("docs/adr/0002-execution-backend-local-默认.md")
     assert any("无留档的实测运行" in line for line in adr2[28:34]), adr2[28:34]

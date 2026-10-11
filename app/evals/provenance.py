@@ -198,6 +198,11 @@ SNAPSHOT_KEYS: tuple[str, ...] = (
     "evidence_max_item_bytes",
     "evidence_max_total_bytes",
     "evidence_page_bytes",
+    # G06 连续会话与任务记忆:开关决定"下一阶段的请求里有没有上一阶段的观测",
+    # 预算决定这块能占多少字符 —— 两者都改变模型可见上下文本身,与 context_window_tokens
+    # 同族,不是运维豁免(同一题开/关记忆的两次跑法不可比)
+    "task_memory_enabled",
+    "task_memory_max_chars",
 )
 SECRET_KEYS: frozenset[str] = frozenset({"llm_api_key", "api_token"})
 EXEMPT_KEYS: frozenset[str] = frozenset(
@@ -379,6 +384,9 @@ def protocol_identity(arm: str, policy: Any | None = None) -> dict[str, Any]:
         "tool_visible_max_chars": settings.tool_visible_max_chars,
         "evidence_enabled": settings.evidence_enabled,
         "evidence_page_bytes": settings.evidence_page_bytes,
+        # G06:阶段之间带不带工作记忆、带多少字符,同样是模型可见面
+        "task_memory_enabled": settings.task_memory_enabled,
+        "task_memory_max_chars": settings.task_memory_max_chars,
         "max_read_lines": settings.max_read_lines,
         "max_search_results": settings.max_search_results,
         **tool_schema_identity(),

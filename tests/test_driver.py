@@ -210,6 +210,9 @@ def test_provenance_carries_new_traceability_fields() -> None:
         "evidence_max_item_bytes",
         "evidence_max_total_bytes",
         "evidence_page_bytes",
+        # G06 记忆装配:改的是"下一阶段的请求里有没有上一阶段的观测",同上不可豁免
+        "task_memory_enabled",
+        "task_memory_max_chars",
     } == set(SNAPSHOT_KEYS)
     started = datetime.fromisoformat(prov["started_at"])
     assert started.tzinfo is not None

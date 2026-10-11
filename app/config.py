@@ -312,6 +312,21 @@ class Settings(BaseSettings):
             raise ValueError(f"max_search_files must be >= 1, got {value}")
         return value
 
+    # ---------- G06:连续会话与结构化任务记忆 ----------
+    # 缺陷出处:阶段之间只传一段模型自述的 findings 文本,读过的行范围、反例、已排除方向
+    # 全部落在阶段边界之外(付费实跑 runs/swe-hard-graph2/3:PROPOSE 13 次 search / 10 次 read、
+    # apply_patch 0 次 —— 拿着摘要重新调查)。记忆块决定"下一阶段的请求里到底有没有这些证据"。
+    task_memory_enabled: bool = True
+    # 记忆块的字符预算(与 repo_map_max_chars 同族:它改变模型可见上下文本身,不是运维参数)
+    task_memory_max_chars: int = 3000
+
+    @field_validator("task_memory_max_chars")
+    @classmethod
+    def _check_task_memory_max_chars(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"task_memory_max_chars must be >= 0, got {value}")
+        return value
+
     # PLAN 阶段(M5,范式 LOCALIZE→PLAN→ACT→VERIFY)。缺陷出处(PROGRESS.md D.8/D.11):
     # 计划从来不是工件——"计划如何修复"只是 LOCALIZE_PROMPT 要求塞进 finish.summary 的自由文本,
     # 付费实跑 runs/swe-hard-graph/3 两次独立跑法同形:PROPOSE 13 次 search / 10 次 read、

@@ -21,6 +21,7 @@ from app.context.evidence import EvidenceNotStored, EvidenceRef, build_store
 from app.tools.base import ToolContext, ToolResult
 from app.tools.execution import run_tests
 from app.tools.files import list_files, read_evidence, read_file, search_code
+from app.tools.memory import SELF_RECORDING_TOOLS, describe_receipt, update_memory
 from app.tools.output_filter import bound_structure
 from app.tools.patching import apply_patch, git_diff, reset_to_baseline
 from app.tools.symbols import describe_file, find_symbol
@@ -208,6 +209,51 @@ def _build_registry() -> dict[str, ToolSpec]:
             parameters=_schema("reset_workspace", "回滚工作区", {}, []),
             handler=reset_to_baseline,
         ),
+        "update_memory": ToolSpec(
+            name="update_memory",
+            description=(
+                "把你这一轮的**假设**与**已排除方向**登记进任务记忆(它是跨阶段带过去的,"
+                "下一阶段的请求里会原样出现)。hypotheses 每项要 text + status"
+                "(hypothesis|supported|refuted)+ refs(用观测行里的 E 引用号,不能编);"
+                "excluded 每项要 text + reason。"
+                "这里**不能**声明已修复或已验证 —— 判定只由平台的验收链给,写 verified 会被点名拒绝。"
+            ),
+            parameters=_schema(
+                "update_memory",
+                "登记假设与排除方向",
+                {
+                    "hypotheses": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "text": {"type": "string"},
+                                "status": {
+                                    "type": "string",
+                                    "enum": ["hypothesis", "supported", "refuted"],
+                                },
+                                "refs": {"type": "array", "items": {"type": "string"}},
+                            },
+                            "required": ["text"],
+                        },
+                    },
+                    "excluded": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "text": {"type": "string"},
+                                "reason": {"type": "string"},
+                                "refs": {"type": "array", "items": {"type": "string"}},
+                            },
+                            "required": ["text", "reason"],
+                        },
+                    },
+                },
+                [],
+            ),
+            handler=update_memory,
+        ),
         FINISH_TOOL: ToolSpec(
             name=FINISH_TOOL,
             description="结束任务。success=true 表示你确信补丁已修复问题并通过测试。",
@@ -275,6 +321,8 @@ def execute(
     # 事件才有 id 可指,而主工具事件仍按**未裁**的 output 记摘要(裁过的形状进不了取证链,
     # 会重演 M16.9 那类"模型当时看到过什么不可复原")。
     _apply_visible_view(ctx, name, result, round_no=round_no, state=state)
+    # 观测登记(G06)紧随其后:失效标记已经打在代数递增那一行,这条观测因此带着正确的代数
+    _record_memory(ctx, name, args, result, round_no=round_no, state=state)
     ctx.tracker.record(
         tool=name,
         round_no=round_no,
@@ -381,6 +429,57 @@ def model_payload(result: ToolResult) -> Any:
     if not result.ok:
         return {"error": result.error}
     return result.visible if result.visible is not None else result.output
+
+
+def _record_memory(
+    ctx: ToolContext,
+    name: str,
+    args: dict[str, Any],
+    result: ToolResult,
+    *,
+    round_no: int,
+    state: str,
+) -> None:
+    """把这条真实回执登记成任务记忆里的一条**观测**(G06;模型一个字都没参与)。
+
+    `ctx.memory` 为 None(候选 ctx、离线脚本、既有测试夹具)时直接返回 —— 没接记忆的每一次
+    运行必须与今天逐字节相同,这是"默认不改变行为"的接线纪律,不是可选优化。
+    """
+    memory = ctx.memory
+    if memory is None:
+        return
+    if name in MUTATING_TOOLS and result.ok:
+        # 写之前的观测全部失效:补丁改了文件,那些行范围就不再是现状
+        memory.mark_stale(from_revision=ctx.workspace_revision)
+    if name in SELF_RECORDING_TOOLS:
+        return
+    detail, path, line_range, verdict = describe_receipt(
+        name, args, result.output, error=result.error
+    )
+    if not detail:
+        return
+    ref = result.evidence
+    bounded = result.visible.get("_bounded") if isinstance(result.visible, dict) else None
+    entry = memory.record_evidence(
+        source=name,
+        stage=state,
+        round_no=round_no,
+        detail=detail,
+        path=path,
+        line_range=line_range,
+        # 写类工具的这条观测描述的是**写完之后**的状态,所以带新代数;而 mark_stale 已经把
+        # 写之前那些观测标失效了 —— 两者一起才让"哪条还是现状"这一问题有确定答案
+        workspace_revision=ctx.workspace_revision,
+        evidence_id=ref.evidence_id if ref is not None else "",
+        sha256=ref.sha256 if ref is not None else "",
+        retrievable=bool(ref.retrievable) if ref is not None else False,
+        # 观测里写"模型那一屏被折掉了多少行",下一阶段的模型才知道上一阶段看到的是摘要
+        omitted_lines=int(bounded.get("omitted_lines") or 0) if isinstance(bounded, dict) else 0,
+        verdict=verdict,
+    )
+    if ctx.session is not None:
+        ctx.session.memory_version = memory.version
+        ctx.session.note_evidence(entry.ref)
 
 
 def _summarize_input(name: str, args: dict[str, Any]) -> dict[str, Any]:

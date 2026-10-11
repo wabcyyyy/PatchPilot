@@ -75,8 +75,8 @@
 
 - `app/evals/experiment_manifest.py:22` — `MANIFEST_SCHEMA_VERSION = 1`
 - `app/evals/experiment_manifest.py:122` — `def control_identity(self, arm: Arm) -> dict[str, Any]:`
-- `app/evals/provenance.py:231` — `RECLASSIFIED_TO_SNAPSHOT: tuple[str, ...] = (`
-- `app/evals/provenance.py:353` — `alias_proves_served_version`
+- `app/evals/provenance.py:236` — `RECLASSIFIED_TO_SNAPSHOT: tuple[str, ...] = (`
+- `app/evals/provenance.py:358` — `alias_proves_served_version`
 - `scripts/compare_experiments.py:33` — `ALLOWED_DIFFERENCES: frozenset[str]`
 - `scripts/compare_experiments.py:150` — `def compare_batches(`
 - `app/evals/metrics.py:161` — `def pair_runs(`

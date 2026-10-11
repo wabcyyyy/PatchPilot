@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Any
 
 from app.adapters.pytest_adapter import BugEnv
+from app.agent.session import SessionState
 from app.context.evidence import EvidenceRef, EvidenceStore
+from app.context.task_memory import TaskMemory
 from app.executor.whitelist import DEFAULT_WHITELIST
 from app.tools.tracker import Tracker
 
@@ -50,6 +52,10 @@ class ToolContext:
     # 原始回执仓(G05)。None = 尚未建;registry 在第一次需要落盘时按 report_dir 建,
     # 所以所有既有构造点(含 23 处测试夹具)一行未改就能工作。
     evidence: EvidenceStore | None = None
+    # 任务记忆与会话身份(G06)。两者默认 None ⇒ 未接线时的每一次运行与今天逐字节相同
+    # (候选 ctx、离线脚本与 23 处测试夹具都不必构造记忆)。registry 只在句柄存在时登记观测。
+    memory: TaskMemory | None = None
+    session: SessionState | None = None
 
 
 @dataclass

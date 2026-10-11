@@ -21,7 +21,9 @@ from pathlib import Path
 from typing import Any
 
 from app.adapters.pytest_adapter import run_pytest
+from app.agent.session import SessionState
 from app.config import get_settings
+from app.context.task_memory import TaskMemory, load_memory_state
 from app.errors import BudgetError, TaskCancelled, TaskError
 from app.evals.bugset import BugTask
 from app.evals.pricing import estimate_cost
@@ -218,6 +220,14 @@ def run_task(
         # CREATED → BASELINE:bug 仓库是纯工作树,运行时物化为 git 仓库并固定基线 commit
         ws_dir = run_dir / "workspace"
         baseline_commit = materialize_repo(bug.repo_dir, ws_dir, extra_commit=False)
+        # G06:plain 引擎与 graph 同一口径 —— 会话身份与任务记忆由 ctx 带给工具层。
+        # 恢复时优先读回 run_dir 里那一份(观测是崩溃前真实发生过的,不是重新推断)。
+        memory = None
+        session = None
+        if getattr(settings, "task_memory_enabled", False):
+            memory = load_memory_state(run_dir) or TaskMemory(task_id)
+            session = SessionState(task_id, memory.session_id)
+            memory.session_id = session.session_id
         ctx = ToolContext(
             task_id=task_id,
             workspace=ws_dir,
@@ -232,6 +242,8 @@ def run_task(
             # P1-4 整改:资源上限此前只落在硬编码默认值上,settings 改了不生效
             max_read_lines=settings.max_read_lines,
             max_search_results=settings.max_search_results,
+            memory=memory,
+            session=session,
         )
         tracker.record(
             tool="create_workspace",

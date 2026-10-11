@@ -24,6 +24,9 @@ from app.gitops.patcher import apply_patch as git_apply_patch
 
 if TYPE_CHECKING:  # 复盘 R-2:兑现 AGENTS"全量类型标注",运行时零导入成本
     from app.evals.bugset import BugTask
+from app.agent.session import SessionState
+from app.context.assembler import ContextAssembler
+from app.context.task_memory import TaskMemory, load_memory_state, save_memory_state
 from app.gitops.testing import materialize_repo
 from app.graph.acceptance import acceptance_from_state, double_run_mismatch
 from app.graph.candidate import (
@@ -58,6 +61,7 @@ READ_TOOLS = [
     "describe_file",
     "read_file",
     "read_evidence",
+    "update_memory",
     "git_diff",
     FINISH_TOOL,
 ]
@@ -68,6 +72,7 @@ WRITE_TOOLS = [
     "describe_file",
     "read_file",
     "read_evidence",
+    "update_memory",
     "git_diff",
     "apply_patch",
     "run_tests",
@@ -158,14 +163,20 @@ class TaskNodes:
     # G03:折价用的模型身份(与报告里的 model_name 同源)。空串=回落到 Settings.llm_model;
     # fake 回放传什么都拿不到价目,费用维度自然不开 —— 零花费路径不该被价表挡。
     price_model: str = ""
+    # G06:连续会话身份与任务记忆。None ⇒ __post_init__ 按 Settings 建(`task_memory_enabled`
+    # 关掉时保持 None,于是阶段装配面与接入之前逐字节相同);显式传实例的调用方(恢复/测试)
+    # 优先用传入的那份 —— 恢复要沿用崩溃前那条会话与那一版记忆,不是新建一条。
+    session: SessionState | None = None
+    memory: TaskMemory | None = None
+    assembler: ContextAssembler | None = None
 
     def __post_init__(self) -> None:
         if self.policy is None:
             from app.evals.experiment_policy import agent_policy
 
             self.policy = agent_policy()
+        settings = get_settings()
         if self.ledger is None:
-            settings = get_settings()
             # getattr 兜底:测试替身(部分字段的 SimpleNamespace settings)落在"无预算"一侧,
             # 与本文件 _persistent_context 的既有惯例一致。
             # G03:构造口径收进 ledger_from_settings(与 plain 引擎同一份),并且带上
@@ -178,6 +189,109 @@ class TaskNodes:
                 price_model=self.price_model or str(getattr(settings, "llm_model", "") or ""),
                 run_dir=self.report_dir.parent,
             )
+        # ---------- G06:会话身份与任务记忆 ----------
+        # `task_memory_enabled` 关掉 ⇒ 两者都不建,阶段装配面与接入之前逐字节相同
+        # (getattr 兜底同样让 SimpleNamespace 测试桩落在"关闭"一侧)。
+        if self.assembler is None:
+            self.assembler = ContextAssembler()
+        if self.memory is None and getattr(settings, "task_memory_enabled", False):
+            task_id = str(getattr(self.bug, "id", "") or "")
+            # 恢复优先读回崩溃前那一份:记忆是"平台观测到的事实",重新推断一遍就是造假
+            stored = load_memory_state(self.report_dir.parent)
+            self.memory = stored if stored is not None else TaskMemory(task_id)
+        if self.memory is not None and self.session is None:
+            self.session = SessionState(self.memory.task_id, self.memory.session_id)
+            self.memory.session_id = self.session.session_id
+        # 本阶段装配好的上下文(骨架 + 记忆块);None = 尚未装配,退回"只有骨架"的旧形状
+        self._stage_context: str | None = None
+
+    def _begin_assembly(self, stage: str, round_no: int, allowed_tools: list[str] | None) -> str:
+        """装配本阶段的 system 附加文本(仓库骨架 + 工作记忆块),每 (阶段, 轮次) 只装配一次。
+
+        放在节点里而不是 `_persistent_context` 里,是因为装配需要知道"这是哪个阶段、开放哪些
+        能力"——那属于会话身份(G06 要把它记进 SessionState),而骨架本身不知道。
+        """
+        skeleton = self._repo_skeleton(self.workspace)
+        if self.memory is None or self.assembler is None:
+            self._stage_context = skeleton
+            return skeleton
+        context = self.assembler.assemble(
+            stage=stage,
+            round_no=round_no,
+            session=self.session,
+            memory=self.memory,
+            skeleton=skeleton,
+            max_chars=int(getattr(get_settings(), "task_memory_max_chars", 0) or 0),
+            current_revision=self.ctx.workspace_revision if self.ctx is not None else 0,
+            allowed_tools=allowed_tools or [],
+        )
+        if context.reused:
+            # 同一 (阶段, 轮次) 第二次装配 ⇒ 复用第一次的成品,并把"没有叠加"这件事留在轨迹里
+            self.tracker.record(
+                tool="context_assembly_reused",
+                round_no=round_no,
+                state=stage,
+                input_payload={"memory_version": context.memory_version},
+                output_summary=context.as_dict(),
+            )
+        else:
+            self.tracker.record(
+                tool="context_assembled",
+                round_no=round_no,
+                state=stage,
+                input_payload={"memory_version": context.memory_version},
+                output_summary=context.as_dict(),
+            )
+        self._stage_context = context.text
+        return context.text
+
+    def _note_memory(self, event: str, **payload: Any) -> None:
+        """平台侧事实进记忆并同时落盘(观测/判定/候选/计划这些不由模型写的内容)。"""
+        if self.memory is None:
+            return
+        getattr(self.memory, event)(**payload)
+        save_memory_state(self.report_dir.parent, self.memory)
+
+    def _open_agent_state(self) -> None:
+        """把受理时冻结的目标/约束/验收清单登记进记忆,并留下会话身份事件(G06)。
+
+        prepare 与崩溃恢复共用这一处:记忆是从 `memory_state.json` 读回的那一份,
+        重放同一组冻结上下文是幂等的(`set_context` 只覆盖传入的非空字段)。
+        getattr 兜底:直接构造 TaskNodes 的测试桩(bug 只有部分字段)落在"不登记"一侧。
+        """
+        if self.memory is None:
+            return
+        settings = get_settings()
+        allowed = getattr(self.bug, "allowed_paths", None) or []
+        acceptance = [
+            *list(getattr(self.bug, "failed_tests", []) or []),
+            *list(getattr(self.bug, "regression_tests", []) or []),
+        ]
+        self.memory.set_context(
+            goal=str(getattr(self.bug, "issue_text", "") or ""),
+            constraints=[
+                f"可改路径:{', '.join(str(p) for p in allowed) if allowed else '未显式限制(仍受门禁)'}",
+                "禁止修改测试文件与 pytest 控制文件(门禁)",
+                f"任务级 token 预算:{settings.token_budget}",
+                f"补丁文件数上限:{settings.max_patch_files}",
+            ],
+            acceptance=[str(x) for x in acceptance],
+        )
+        save_memory_state(self.report_dir.parent, self.memory)
+        self.tracker.record(
+            tool="session_opened",
+            state="BASELINE",
+            input_payload={
+                "session_id": self.session.session_id if self.session else "",
+                "protocol_version": self.session.protocol if self.session else "",
+            },
+            output_summary={
+                "memory_version": self.memory.version,
+                "acceptance_items": len(acceptance),
+                # resumed=True ⇒ 这份记忆是崩溃前那一份,不是新建的
+                "resumed": bool(self.memory.evidence or self.memory.plans),
+            },
+        )
 
     def _take_resume_snapshot(self, stage: str, round_no: int) -> LoopSnapshot | None:
         """按"当前阶段+当前轮次"领取快照;不匹配返回 None(冷启动)。"""
@@ -208,6 +322,10 @@ class TaskNodes:
             # P1-4 整改:资源上限此前只落在硬编码默认值上,settings 改了不生效
             max_read_lines=settings.max_read_lines,
             max_search_results=settings.max_search_results,
+            # G06:记忆与会话句柄交给工具层,回执才会被自动登记成观测(registry._record_memory)。
+            # None 时工具层完全不做事,与接入前逐字节相同。
+            memory=self.memory,
+            session=self.session,
         )
 
     def restore_runtime(self, state: TaskState, baseline_commit: str) -> None:
@@ -220,6 +338,9 @@ class TaskNodes:
         """
         self.baseline_commit = baseline_commit
         self.ctx = self._build_ctx(state)
+        # 恢复同样要过一遍冻结上下文:记忆是从 run_dir 读回的那一份(不是新建),
+        # 会话身份沿用崩溃前那个 session_id,于是快照绑定校验比的是同一条会话。
+        self._open_agent_state()
 
     def prepare(self, state: TaskState) -> dict[str, Any]:
         """物化题目仓库为 git 工作区,固定基线 commit。"""
@@ -228,6 +349,7 @@ class TaskNodes:
                 self.bug.repo_dir, self.workspace, extra_commit=False
             )
             self.ctx = self._build_ctx(state)
+            self._open_agent_state()
             self.tracker.record(
                 tool="create_workspace",
                 state="BASELINE",
@@ -294,6 +416,17 @@ class TaskNodes:
     # ---------- 持久记忆(M2 仓库骨架) ----------
 
     def _persistent_context(self, workspace: Path) -> str:
+        """节点侧拿到的"持久上下文" = 本阶段装配好的文本(骨架 + 工作记忆块)。
+
+        没装配过(直接调用方、候选路径、既有测试桩)就退回"只有骨架"的形状 —— 与 G06 之前
+        逐字节相同。三个跑模型的节点各自在 `run_plain_loop` 之前调 `_begin_assembly`,
+        所以这里的返回值对同一 (阶段, 轮次) 是稳定的:模型不会每轮看到一份新拼装的说明。
+        """
+        if self._stage_context is not None:
+            return self._stage_context
+        return self._repo_skeleton(workspace)
+
+    def _repo_skeleton(self, workspace: Path) -> str:
         """LOCALIZE/PROPOSE 共用的仓库骨架:纯本地 ast 生成、零 LLM 请求、每阶段一次。
 
         缺陷证据(PROGRESS.md D.4/D.11):结构从未进过提示,模型只能自己 list_files 现场
@@ -318,6 +451,9 @@ class TaskNodes:
 
     def localize(self, state: TaskState) -> dict[str, Any]:
         assert self.ctx is not None
+        # 装配本阶段的可见上下文(骨架 + 此前的工作记忆);LOCALIZE 是第一个阶段,
+        # 此时记忆里还没有观测 ⇒ 与接入前逐字节相同
+        self._begin_assembly("LOCALIZE", state["round_no"], READ_TOOLS)
         try:
             outcome = run_plain_loop(
                 self.ctx,
@@ -507,6 +643,9 @@ class TaskNodes:
             previous_plan=state.get("plan", ""),
             round_no=state["round_no"],
         )
+        # 计划阶段的能力集合只有 finish(不给检索/写入面),但**证据照样带过去**:
+        # 记忆块里是定位阶段真实读过的文件与行范围,不是模型自述的一句结论(T10 的观察点)
+        self._begin_assembly("PLAN", state["round_no"], [FINISH_TOOL])
         try:
             outcome = run_plain_loop(
                 self.ctx,
@@ -562,6 +701,7 @@ class TaskNodes:
                     "plan_chars": len(provisional),
                 },
             )
+            self._note_memory("record_plan", plan_text=provisional, degraded=True)
             return {**usage, "status": "PROPOSE_PATCH", "plan": provisional}
         except TaskCancelled:
             raise  # 交给 runner 收敛为 CANCELLED,不得吞成 NEEDS_REVIEW
@@ -591,6 +731,13 @@ class TaskNodes:
                 error=f"plan protocol invalid: {outcome.protocol_reason}",
             )
 
+        # 计划是**工件**,进记忆并带版本号:失败轮回 PLAN 修订时,PROPOSE 看到的是同一份
+        # 记忆里的最新计划,而不是 state 里一段可能被覆盖的字符串
+        self._note_memory(
+            "record_plan",
+            plan_text=outcome.summary,
+            degraded=(outcome.completion == "protocol_invalid"),
+        )
         return {
             "status": "PROPOSE_PATCH",
             "plan": outcome.summary,
@@ -639,6 +786,8 @@ class TaskNodes:
             return {"status": "BUDGET_EXCEEDED", "outcome": "failed", "error": str(exc)}
 
         prompt = self._propose_prompt(state, state["round_no"])
+        # 补丁阶段带着定位/计划两个阶段的真实观测进入(而不是只带一段自述结论)
+        self._begin_assembly("PROPOSE_PATCH", state["round_no"], list(self.policy.propose_tools))
         try:
             outcome = run_plain_loop(
                 self.ctx,
@@ -729,6 +878,14 @@ class TaskNodes:
                 "candidate_id": candidate.candidate_id,
                 "candidate_hash": candidate.diff_sha256,
             }
+            # 候选进记忆(G06):下一轮的 PROPOSE 看得见"当前候选是哪一份、hash 是什么",
+            # 而不是只看见一句"你上次改的文件没修好"
+            self._note_memory(
+                "record_candidate",
+                candidate_id=candidate.candidate_id,
+                candidate_hash=candidate.diff_sha256,
+                workspace_revision=self.ctx.workspace_revision if self.ctx else 0,
+            )
             self.tracker.record(
                 tool="candidate_frozen",
                 round_no=state["round_no"],
@@ -942,6 +1099,17 @@ class TaskNodes:
                 "failed_ok": failed_report.all_passed,
                 "regression_ok": regression_report.all_passed,
             },
+        )
+        self._note_memory(
+            "record_evidence",
+            source="platform.verify",
+            stage="VERIFY",
+            round_no=state["round_no"],
+            detail="平台独立重跑双测试集(判定不采信模型自述)",
+            workspace_revision=self.ctx.workspace_revision if self.ctx else 0,
+            verdict=(
+                f"failed_ok={failed_report.all_passed} regression_ok={regression_report.all_passed}"
+            ),
         )
         return update
 
@@ -1311,6 +1479,11 @@ class TaskNodes:
                 "verify_regression_ok": state.get("verify_regression_ok", False),
             }
         reset_workspace(self.workspace, self.baseline_commit)
+        # 工作区回到基线 ⇒ 此前在"打过补丁的工作区"里读到的行范围不再是现状。
+        # 代数由 graph 在这里递增(复位是平台动作,不经工具层),并立刻把旧观测标失效。
+        if self.ctx is not None:
+            self.ctx.workspace_revision += 1
+            self._note_memory("mark_stale", from_revision=self.ctx.workspace_revision)
         self.tracker.record(
             tool="reset_workspace",
             state="PROPOSE_PATCH",

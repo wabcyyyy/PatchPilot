@@ -106,6 +106,40 @@ def _read_final_report(run_dir: Path) -> dict[str, Any] | None:
         return None
 
 
+def binding_mismatch(
+    loop_snapshot: Any, session: Any, memory: Any
+) -> tuple[list[str], dict[str, Any]]:
+    """快照绑定 vs 当前会话/记忆 → (不一致的字段名, 两侧读数)。
+
+    只有**两侧都有绑定**才可能不一致:旧快照(没有 session_id)与未接记忆的运行都返回空,
+    走既有语义。把"没绑定"也判成 mismatch 会让升级前留下的每一份快照一律待审,
+    那是伪造迁移成功,不是严格。
+    """
+    if loop_snapshot is None or not getattr(loop_snapshot, "session_id", ""):
+        return [], {}
+    current_session_id = getattr(session, "session_id", "") if session else ""
+    current_memory_hash = memory.state_hash() if memory is not None else ""
+    readings = {
+        "snapshot": {
+            "session_id": loop_snapshot.session_id,
+            "memory_version": loop_snapshot.memory_version,
+        },
+        "current": {
+            "session_id": current_session_id,
+            "memory_version": memory.version if memory is not None else 0,
+        },
+    }
+    mismatched = [
+        name
+        for name, (expected, actual) in {
+            "session_id": (loop_snapshot.session_id, current_session_id),
+            "memory_hash": (loop_snapshot.memory_hash, current_memory_hash),
+        }.items()
+        if expected and expected != actual
+    ]
+    return mismatched, readings
+
+
 def prepare_resume(
     nodes: TaskNodes,
     graph: Any,
@@ -217,6 +251,25 @@ def prepare_resume(
     if stage:
         loop_snapshot = load_loop_snapshot(run_dir, stage=stage, round_no=round_no, task_id=task_id)
         nodes.resume_snapshot = loop_snapshot
+
+    # G06 绑定校验:快照写明"我属于哪条会话、哪一版记忆"时,恢复方必须能对上。
+    # 对不上就是待审(NEEDS_REVIEW),绝不"默默冷启动一次"——那等于用一份没人核验过的
+    # 工作记忆继续收费运行。旧快照没有绑定(字段为空)仍走既有语义,不算 mismatch。
+    if loop_snapshot is not None and loop_snapshot.session_id:
+        mismatched, readings = binding_mismatch(loop_snapshot, nodes.session, nodes.memory)
+        if mismatched:
+            nodes.tracker.record(
+                tool="resume_binding_mismatch",
+                state="RESUME",
+                input_payload={"stage": stage, "round_no": round_no, "turn": loop_snapshot.turn_no},
+                output_summary={"mismatched": mismatched, **readings},
+                error="resume refused: session/memory binding mismatch (needs review)",
+            )
+            return ResumeDecision(
+                action="reject",
+                reason=f"resume binding mismatch: {mismatched}",
+                detail={"mismatched": mismatched, "stage": stage},
+            )
 
     # ③ 按 next 节点分流(S03 表)
     if node in REVALIDATE_NODES:

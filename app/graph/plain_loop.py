@@ -11,8 +11,11 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
+from app.agent.session import SessionState
 from app.config import get_settings
+from app.context.task_memory import save_memory_state
 from app.context.token_window import compact_messages
 from app.errors import BudgetError, TaskCancelled
 from app.gitops.differ import working_tree_diff
@@ -352,9 +355,16 @@ def run_plain_loop(
             )
 
     def _write_snapshot(turn_no: int) -> None:
-        """落一份当前 turn 边界的工作记忆;失败只记日志(见 loop_state 模块边界)。"""
+        """落一份当前 turn 边界的工作记忆;失败只记日志(见 loop_state 模块边界)。
+
+        G06 把**会话身份与记忆版本一起绑进快照**:恢复方比的就是"这条会话、这一版记忆"。
+        记忆与快照必须在同一个边界落盘 —— 分两处写就会出现"快照是第 19 轮、记忆是第 12 轮"
+        的错配,而 PROPOSE 看到的证据索引已经不是崩溃前那一刻的那份。
+        """
         if not snapshot_enabled:
             return
+        session = getattr(ctx, "session", None)
+        memory = getattr(ctx, "memory", None)
         save_loop_snapshot(
             ctx,
             LoopSnapshot(
@@ -367,8 +377,14 @@ def run_plain_loop(
                 tokens_completion=tokens_completion,
                 last_content=last_content,
                 task_id=ctx.task_id,
+                session_id=session.session_id if session is not None else "",
+                session_hash=session.identity_hash() if session is not None else "",
+                memory_version=memory.version if memory is not None else 0,
+                memory_hash=memory.state_hash() if memory is not None else "",
             ),
         )
+        if memory is not None:
+            save_memory_state(Path(ctx.report_dir).parent, memory)
 
     for turn_no in range(start_turn, max_turns + 1):
         if cancel_event is not None and cancel_event.is_set():
@@ -381,6 +397,18 @@ def run_plain_loop(
                 tokens_completion,
                 turns=turn_no,
                 last_content=last_content,
+            )
+        # 配对不变量(G06):即将发出去的消息里若有"assistant 声明了 tool_call 但没有回执",
+        # 严格端点直接 400(实测整题崩成 NEEDS_REVIEW)。这条检查放在**唯一**的发送前点,
+        # 而不是指望四个回填分支各自记得配对;补上的回执是显式标注的占位串,不伪造成功。
+        messages, repaired = SessionState.repair_orphans(messages)
+        if repaired:
+            ctx.tracker.record(
+                tool="message_pairing_repaired",
+                round_no=round_no,
+                state=state_label,
+                input_payload={"turn": turn_no},
+                output_summary={"placeholder_replies": repaired, "messages": len(messages)},
             )
         context_tokens = messages_tokens(messages)
         if window > 0 and context_tokens > window:
@@ -667,6 +695,13 @@ def run_plain_loop(
             for c in response.tool_calls
         ]
         messages.append(assistant_payload)
+        session = getattr(ctx, "session", None)
+        if session is not None:
+            session.note_turn(turn_no)
+            for call in response.tool_calls:
+                session.declare_call(
+                    call.id, call.name, stage=state_label, round_no=round_no, turn_no=turn_no
+                )
 
         for call in response.tool_calls:
             if call.name == FINISH_TOOL:
@@ -727,6 +762,9 @@ def run_plain_loop(
             # 成 8000 字符硬切,切点落在字符串中间,而丢掉的那段从来没落过盘(PROGRESS D.5)。
             content = json.dumps(model_payload(result), ensure_ascii=False, default=str)
             messages.append({"role": "tool", "tool_call_id": call.id, "content": content})
+            if session is not None:
+                # 被阶段白名单挡下的调用同样有回执(否则它就是一条孤儿声明)
+                session.answer_call(call.id)
 
         # turn 边界:本轮所有工具结果都已回填,这是唯一可安全续跑的切点
         _write_snapshot(turn_no)

@@ -14,7 +14,7 @@
 
 - **LangGraph 状态机**:CREATED → BASELINE → LOCALIZE → PLAN → PROPOSE_PATCH → APPLY_PATCH → VERIFY → FINISHED,
   外加 INVALID_TASK / PATCH_REJECTED / VERIFY_FAILED / BUDGET_EXCEEDED / NEEDS_REVIEW 异常分支;
-- **10 个受控 Agent 工具**:list_files / search_code / find_symbol / describe_file / read_file / read_evidence / apply_patch / run_tests / git_diff / reset_workspace,
+- **11 个受控 Agent 工具**:list_files / search_code / find_symbol / describe_file / read_file / read_evidence / apply_patch / run_tests / git_diff / reset_workspace / update_memory,
   每次调用记录完整轨迹(JSONL + SQLite);
 - **七项质量门禁**:格式 / 禁改测试文件 / 路径越界 / 修改范围 / 影子模块 / 命令白名单 / 资源预算,
   附 10 个攻击样例(`bugs/attacks/`)验证拦截;
@@ -29,6 +29,12 @@
 - **可信验收链(2026-10-08 spec)**:任务契约哈希幂等、完整测试身份匹配(类链/参数化)、
   受理输入冻结副本 + 环境预检、崩溃后按候选补丁重应用并完整重验、
   任务级资源账本与共享终局验收(`docs/adr/0009`、`docs/adr/0010`);
+- **证据可取回 + 跨阶段传递(2026-10-11 升级 SPEC G05/G06)**:工具回执在**序列化之前**按数据结构裁剪
+  (发出的消息恒为合法 JSON,并标注省略行数与保留的原始行号区间),原文落 `<run_dir>/evidence/`,
+  `read_evidence` 按钉在工件上的游标分页取回;任务记忆由平台从真实回执自动登记观测,
+  模型只能提交带引用的假设(`update_memory`,写"已验证"会被点名拒绝),
+  阶段之间带过去的是这些观测而非模型自述;恢复快照绑定会话/记忆 hash,不一致即待审
+  (`docs/adr/0012`、`docs/adr/0013`);
 - **指标与消融**:评测指标带版本(空补丁不再计入严格定位),同引擎两臂消融策略;
   比较器把**控制身份**(配置快照、端点/价目/容器/协议指纹、任务与源码身份)与
   **观测结果**(verdict/token/轮数/耗时/费用)分开——结果不同合法,配置漂移即报错,
