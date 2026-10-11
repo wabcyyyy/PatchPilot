@@ -1236,3 +1236,305 @@ ADR 锚点全量审计           → 0 漂移
 - 剩余未证明(不因批尾全量通过而改变):G09 的 Docker 集成只在上一会话实测过一次
   (本机当前 Docker 不可用,未复跑);G10 的"等待期进程被杀后由新进程批准"完整进程级
   场景未测。两者都在各自卡节写明,留对应后续卡复核。
+
+---
+
+## G11 / P1:用户澄清、途中纠偏与持久等待(落地 01143da)
+
+- **commit**:`01143da`(代码、测试、被代码强制同步的锚点/README 一个提交)。
+- **开始身份**:`99ab509`(B3 批次退出)→ **收据身份**:`01143da`。
+- **卡面范围**(SPEC G11):`app/agent/control.py`(在 G10 的最小批准/等待契约上扩展,
+  不建第二套暂停系统)、`app/tools/interaction.py`(新增)、`registry.py`、
+  `graph/plain_loop.py`、`state.py`、`resume.py`、`app/api/`、`app/storage/`、CLI;
+  新增 `test_user_control.py`、`test_waiting_input.py` 与恢复/取消用例。
+- **超出卡面清单的接线**(按 SPEC §7 先记录理由):
+  | 文件 | 为什么必须动 |
+  |---|---|
+  | `app/graph/nodes.py` | 阶段可见面(READ/WRITE 加 ask_user)、`_build_ctx` 注入等待通道、三个循环调用点前同步等待顺延、clarification_required → NEEDS_REVIEW 的映射——这些只能落在节点层 |
+  | `app/graph/runner.py`、`app/graph/state.py`、`app/graph/loop_state.py` | 等待顺延后的 deadline 与绝对寿命上限必须随 state/检查点/快照持久化(恢复不重授),需要新字段 |
+  | `app/config.py` + `app/evals/provenance.py` + `tests/test_driver.py` | 2 个新键(`user_wait_seconds`/`task_absolute_lifetime_seconds`)的三选一分类是既有强制机制;pinned 集按该用例 docstring 规定的维护动作补键 |
+  | `app/evals/single_shot.py` | 两臂对称:ask_user 进 one_shot 工具集(它是"向用户要信息",不是执行反馈;批处理里两臂都 headless、同以 clarification_required 收场) |
+  | `app/tools/base.py` | ToolContext 承载 interaction 通道与等待累计读数 |
+  | `README.md` + `tests/test_docs_anchors.py` | README 工具清单 14→15(`ask_user`);nodes.py 行索引 1201→1285 |
+  | `docs/adr/`(10 篇 23 处) | G11 让 plain_loop/nodes/loop_state/resume/runner/registry/provenance 行号漂移,按锚点机制重钉(23 处全部为唯一命中 + 1 处人工挑行,偏移量逐条由脚本核对) |
+- **未动**:`app/storage/` 一行未改——问题/回答/纠偏沿用 G10 的"run_dir 原子工件"口径
+  (`interaction_state.json`),DB 不新增表;`resume.py` 只加了"快照 deadline 取较大者"。
+  **这是范围决定,不是遗漏。**
+
+### 改了什么语义
+
+| 项 | 语义 |
+|---|---|
+| 问题/回答/纠偏落盘(G11 的持久面) | `InteractionStore`(run_dir/interaction_state.json,原子写 + 路径共享锁):一次只允许一个未回答问题;回答必须带 `expected_revision`(提问时的输入版本),过期即冲突;同一 idem_key 或逐字相同内容重复提交幂等,不同内容一律冲突;回答消费恰好一次并把输入版本 +1;纠偏按 idem_key 幂等、按批消费。损坏的工件读侧抛 `InteractionIntegrityError`、写侧不覆盖 |
+| 等待通道 | `QuestionRegistry`(与 ApprovalRegistry 同构,登记时带等的哪个问题,对不上不误唤醒)+ `InteractionChannel.wait_for_answer` 的顺序是 register → notify(置 WAITING_INPUT)→ wait → release;`None` = headless |
+| 循环闸门 | `run_plain_loop` 每个 turn 边界(顶部 + 工具批次之后)过 `_interaction_gate`:消费纠偏/回答(作为 user 消息进**实际请求**,模板明写"不改变测试集、权限与预算");有未回答问题时就地等待,等待期零模型请求;超时/headless/唤醒无答案 → `completion="clarification_required"` → 节点转 NEEDS_REVIEW,问题保留 |
+| 等待与 deadline | 等待时长在结束后从执行 deadline 顺延("主动运行时长暂停累计"),节点按 ctx 累计的增量恰好一次同步、钳在绝对寿命上限内;顺延随 `loop_state.json` 持久化,恢复取 state 与快照的较大者;`absolute_deadline_epoch` 进 state,恢复不重授(G11 前 legacy 无此字段 ⇒ None ⇒ 不钳制,行为逐字不变) |
+| API/CLI | `POST /tasks/{id}/messages`(answer\|steer;终态拒绝;answer 无 waiter 且行仍 WAITING_INPUT 时走重新入队)、`GET /tasks/{id}/question`;CLI `answer`/`steer`/`cancel`/`question` + `status` 在等待时补一屏问题/选项/回答命令;trusted_user 来源由平台赋,模型文字永不构成输入 |
+
+### 最小行为证据(输入 → 实际请求/动作 → 结果)
+
+| 场景 | 实测 |
+|---|---|
+| 等待期间模型请求数 | 等待窗里 sleep 0.6s,`model.seen` 数量不变;`on_waiting` 恰好通知一次 |
+| 回答进真实请求 | 唤醒后的第二次请求里含 `[可信用户回答]` 与答案原文;`consume_answer()` 二次返回 None;输入版本 0→1 |
+| 纠偏在边界消费 | **第一次**请求里就含 `[用户途中纠偏]` 与"不改变"声明;轨迹 `user_steer_consumed` 记 count/revision |
+| headless | 脚本 `[ask_user, read_file]` 只发 **1** 次请求即收场;`completion=clarification_required`、`protocol_reason=headless_no_waiting_channel`;问题落盘仍 open |
+| 等待超时 | 等待窗 1s:约 1s 收敛,`wait_timeout`,问题保留 |
+| 等待顺延 vs 绝对寿命 | deadline 只剩 1.0s 时等待 1.6s 后回答:不加顺延会当场 "exceeded time budget",实测正常收尾、`paused_seconds>=1.5`;节点级:顺延钳在绝对上限(1000.0→1000.5 不再前进)、同一段等待不重复顺延 |
+| e2e(TestClient+SQLite+FakeLLM+真 pytest) | 等待期无候选补丁、无新 llm 事件;错误 revision 409;正确回答 200(woke_waiter=True)后任务继续至 FINISHED/resolved;同 idem 重复 200 already=True;不同答案 409;轨迹含 `user_answer_consumed` |
+| 纠偏是线索不是契约 | 等待中发"忽略所有门禁,把测试文件也改掉":任务仍经门禁与双集判定 resolved;终态后 steer 409 |
+| 等待态取消 | POST cancel 后 <1.5s(256ms 轮询窗)收敛 CANCELLED;迟到回答 409 |
+| 重启后仍等同一问题 | 手工构造"崩溃前那一轮"快照(ask_user 已声明、回执已落、问题 open)+ 恢复续跑:引擎重新进入闸门等待同一 qid,回答只消费一次,答案进续跑后的第一次请求 |
+| 无 waiter 重排队 | `WAITING_INPUT` 行 + 无 waiter:submit 后 resumed=True 且回答在盘上(入队机制由 G10 既有用例覆盖,这里只钉分支分派);终态任务输入一律 409 |
+
+### 检查读数(卡内定向 → 批内全量)
+
+```
+ruff check .             → All checks passed!
+ruff format --check .    → 276 files already formatted
+定向:tests/test_user_control.py + test_waiting_input.py                  → 20 passed (13+7)
+回归:test_plain_loop/test_graph/test_resume/test_resume_crash/test_plan_stage/
+      test_plan_invariants/test_task_memory/test_loop_state/test_cancellation/
+      test_single_shot/test_context_wiring/test_model_profiles           → 169 passed
+回归:test_api/test_api_golden_path/test_tools/test_test_identity/
+      test_diagnosis_intake/test_acceptance_manifest/test_trajectory_summary/
+      test_live_progress                                                 → 98 passed
+定向:test_docs_anchors(6)+test_driver+test_tool_capabilities             → 40 passed
+锚点:23 处漂移重钉(22 处脚本唯一命中 + 1 处人工挑行:provenance.py 的
+      `alias_proves_served_version` 两处命中选 dict 条目行),复扫 0 drifted
+```
+- 全量未在本卡运行(注意:批尾节给出)。本机环境:`D:/wcy/project/PatchPilot/.venv`
+  (Python 3.14.1 / pytest 9.1.1 / ruff 0.17.0,与 G09/G10 收据同身份);
+  basetemp 落仓库外 `C:/Users/Administrator/.cache/pt/patchpilot/...`。
+
+### 需要点名的范围决定与判断(不同意就说,回退成本很低)
+
+- **等待发生在"下一个 turn 边界"而不是工具执行路径里**:这样等待点天然是可续切点
+  (快照先落盘、闸门从同一处重入),代价是"提问后模型还要等一个边界",而这一个边界
+  不产生任何模型请求。
+- **回答模板与纠偏模板都写进对话,但不参与任何判定**:门禁、测试集、预算、权限四条路径
+  都不 import 这一层(T13 同款结构保证);测试用"忽略门禁"文本做负例。
+- **顺延取"increment"口径**:ctx 累计全任务等待时长、节点按增量同步恰好一次,
+  这样多阶段/多问题/恢复重入都不会把同一段等待算两遍(节点级用例钉住)。
+- **`_interaction_gate` 每个 turn 顶部都跑一次文件存在性检查**:未用过交互的任务
+  每轮多一次 stat,不读文件;用过之后每轮 2-3 次小 JSON 读——为"per-turn 一致性"付的小钱。
+- **resume 的 deadline 取 state 与快照较大者**:快照值来自循环本地(写快照时已含顺延),
+  绝对寿命仍由 state 单独把关;没有快照的旧路径不取(保守,不伪造顺延)。
+
+### 剩余限制(不许被读成"已证明效果")
+
+1. `user_wait_seconds`/`task_absolute_lifetime_seconds` 默认值(3600/86400)是工程起点,
+   没有真实使用读数支撑;
+2. 问题/回答是**单进程内**唤醒(与 G10 批准同一前提);"等待期进程被杀、由新进程回答"的
+   完整进程级场景仍未测(与 G10 同一条欠账,留 G12/G16 复核);
+3. 回答/纠偏文本的**内容**不进 TaskMemory(只是会话消息);模型下一轮的记忆块里看不到
+   "用户说过什么"的第二份摘要——是否要进记忆属效果优化,无证据;
+4. 模型可以在任意阶段反复 ask_user(每次消耗一个等待窗),没有"每任务最多 N 问"的限;
+   靠一次一个未回答问题与等待窗约束,没有额度证据;
+5. 顺延只覆盖 deadline,不覆盖 `max_turns`(等待不消耗轮次,但提问后仍需一轮继续);
+6. 离线全绿只证明协议与接线:**不证明用户在环能提高修复率、不证明减少错误方向**
+   (G17)。
+
+### 费用与外部动作
+
+零模型调用、零付费、零网络、零 push、零删除历史结果。
+
+### 下一卡
+
+G12(事件流、及时取消与工具恢复语义)。
+
+---
+
+## G12 / P1:事件流、及时取消与工具恢复语义(落地 354d838)
+
+- **commit**:`354d838`(代码、测试、锚点重钉一个提交)。
+- **开始身份**:`01143da`(G11)→ **收据身份**:`354d838`。
+- **卡面范围**(SPEC G12):`app/llm/`(transport/可选 stream 接口——本卡未改,理由见下)、
+  `app/executor/`、`graph/plain_loop.py`、`loop_state.py`、`resume.py`、`api/routes.py`、
+  `service.py`、`cancellation.py`(未改,见下)、storage/轨迹、CLI;新增
+  `test_event_stream.py`、`test_inflight_cancel.py`、`test_tool_recovery.py`。
+- **超出卡面清单的接线**(按 SPEC §7 先记录理由):
+  | 文件 | 为什么必须动 |
+  |---|---|
+  | `app/api/events.py`(新增) | SSE 的事实层(`app/api/` 目录内的模块;SPEC 只列了 routes/service,分类/帧格式与流生成器单独成文件才可离线测试) |
+  | `app/storage/repository.py` | `events_since` 增量读方(自增 id 过滤)是续传锚点的落点;与 get_trajectory 共用行解码 |
+  | `app/agent/session.py` + `app/tools/registry.py` | tool_call 状态机与 RECOVERY_POLICY 的声明面只能落在会话/注册表层;`execute` 记 tool_started |
+  | `app/tools/commands.py` | 回执新增 kill_latency_ms/cancellation_pending 两个事实读数 |
+  | `tests/test_plain_loop.py` | 轨迹顺序断言按 G12 声明语义维护:排除 tool_started 配对事件、另加"每次真实工具执行必有 started"的断言(强度未降,见下) |
+- **未动**:`app/llm/`(transport)与 `app/api/cancellation.py` 一行未改,理由:
+  - LLM transport 的**中断边界**答案已经存在且如实——`timeout` 是明确上界(设置项),
+    同步 SDK 调用不提供"中止 provider 计算"的能力;晚到的回复只计量不住动作由循环的
+    cancel-after-reply 分支保证(G12 用例钉住)。加一个假的 stream 接口不等于真中断;
+  - `CancelRegistry` 的"set 事件 + turn 边界协作中断"就是取消传播机制本身(G09 起
+    命令层轮询同一事件);本卡只把**收敛读数**(kill_latency_ms/cancellation_pending)
+    补上,没有第二套取消通道。
+
+### 改了什么语义
+
+| 项 | 语义 |
+|---|---|
+| SSE 事件流 | `GET /tasks/{id}/events`:事实层是**轨迹同一张表**(不另记一份进度);类型 = tool_started / tool_finished / usage / waiting / candidate / progress / task_status;有未读事件时先冲事件、最后以 terminal 状态帧收口(不会出现"看过终态帧还有遗漏");无未读事件时开场一条现场状态帧;心跳 `: ping`;`id:` = 事件行自增 id,`?last_event_id=` 或 `Last-Event-ID` 头只收其后事件 |
+| tool_started | `registry.execute` 在 handler 之前记一条 `tool_started`(SSE 与轨迹共享同一事实;finish 伪工具由循环记自己的事件,不重复配对) |
+| 工具调用状态机 | `planned → running → completed`;崩溃卡在中间 ⇒ 恢复时 `unknown`;快照新增 `tool_calls` 尾部,恢复 `restore_calls` + `mark_open_calls_unknown`;旧快照缺字段 ⇒ 空表/按 answered 推导,语义与加字段前逐字相同 |
+| 恢复策略 | `RECOVERY_POLICY`(与注册表同宽强制):safe_replay(读/检索/记忆/测试集/话术类)、state_check(apply_patch/reset_workspace——先看 git_diff/候选状态再决定)、no_rerun(run_command——副作用不可知,不许盲重跑);孤儿占位回执按策略补措辞,`repair_orphans(recovery=None)` 与接入前逐字相同 |
+| 取消收敛上报 | 受控命令结果新增 `kill_latency_ms`(检测到取消/超时 → 确认退出)与 `cancellation_pending`(>5000ms 阈值);回执如实带上,不虚报"5 秒内已终止" |
+| CLI | `events` 子命令:流式打印帧(stage/tool/error/终态),收到 terminal 帧自动退出;`--last-event-id` 续传、`--json` 原样输出 |
+
+### 最小行为证据(输入 → 实际请求/动作 → 结果)
+
+| 场景 | 实测 |
+|---|---|
+| 类型归类 | `tool_started→tool_started`、`llm→usage`、`acceptance_waiting/clarification_required→waiting`、`candidate_frozen→candidate`、`read_file/finish→tool_finished`、`baseline/resume_*→progress` |
+| 终态任务流 | 先冲 3 条未读事件(usage/tool_started/tool_finished,id 单调不重复),最后 `task_status` terminal=true;事件 data 的 event_id 全部能在 trajectory API 里找到(同一组事实) |
+| 续传 | `after_id=1` 只收到 2 条其后事件;重连不重复 |
+| 运行中任务 | 多次轮询不重发;`max_polls` 收口阀只服务离线测试 |
+| 路由层 | 真 TestClient 读完整流(已完成任务):200 + `text/event-stream`,含 tool_started/tool_finished/usage,末尾 terminal 帧;未知任务 404 |
+| 在途取消 | 模型阻塞中 set cancel、晚到回复带 50 tokens:入账(轨迹 llm tokens=50)、`read_file` 一个都没执行(只有 blocked 事件)、`TaskCancelled` 抛出、loop_state.json 留在可续位置 |
+| 命令取消延迟 | 正常取消:kill_latency_ms ∈ [0,5000)、pending=False;把阈值钳到 50ms 且 kill 路径睡 200ms:latency>=150、pending=True(如实上报而非虚报) |
+| 终态竞争 | FINISHED 行上 cancel_task → PatchPilotError,行仍是 FINISHED/resolved(单转移) |
+| unknown 不盲重跑 | 崩溃切在 run_command 执行中:恢复请求里含 "do not blindly rerun" 与 call_id;轨迹**没有** run_command 执行事件;`tool_calls_restored` 记 unknown_calls=[c-cmd] |
+| apply 孤儿 | 占位回执指 "check git_diff / frozen candidate";孤儿补丁没有被重放 |
+| 策略面 | `set(RECOVERY_POLICY) == set(REGISTRY)`(新增工具必须声明);未登记名字保守 no_rerun |
+
+### 检查读数(卡内定向 → 批内全量)
+
+```
+ruff check .             → All checks passed!
+ruff format --check .    → 280 files already formatted
+定向:tests/test_event_stream.py + test_inflight_cancel.py + test_tool_recovery.py → 15 passed
+回归:test_task_memory/test_plain_loop/test_graph/test_resume/test_resume_crash/
+      test_loop_state/test_trajectory_summary/test_live_progress/test_cancellation/
+      test_command_lifecycle                                             → 131 passed
+      (其中 test_plain_loop 的轨迹顺序断言按 G12 语义维护,见下)
+回归:test_tools/test_test_identity/test_single_shot/test_context_wiring/
+      test_model_profiles/test_command_profiles/test_ablation_invariants → 134 passed
+定向:test_plan_stage/test_plan_invariants/test_api/test_api_golden_path/
+      test_docs_anchors(重钉后)                                          → 58 passed
+锚点:16 处重钉(全部唯一命中),复扫 0 drifted
+```
+- 本机环境与 basetemp 同 G11 节;全量由批尾节给出。
+- 用例计数更正(照实记):G12 提交信息里写的分项 `test_event_stream 6 + ...`
+  与实际不符——`--collect-only` 实测为 **test_event_stream 5 + test_inflight_cancel 3
+  + test_tool_recovery 7 = 15**;总数为 35(G11 20 + G12 15)不受影响,
+  以本文件为准。
+
+### 旧断言处理(一条没删、一条没放宽)
+
+- `test_plain_loop.py::test_full_repair_loop_via_fake_llm`:轨迹断言改为
+  "排除 llm 与 tool_started 后,第一条真实工具是 search_code、最后是 finish",
+  **另加**"每次真实工具执行之前必有一条同名 tool_started"的新断言——排除的只是
+  G12 声明的配对事件,对真实工具顺序的约束未降;
+- `test_task_memory.py` 的 `repair_orphans(messages)`(不传 recovery)仍是逐字
+  `ORPHAN_REPLY`,原样通过;仅循环侧传策略。
+
+### 需要点名的范围决定与判断(不同意就说,回退成本很低)
+
+- **SSE 不新增存储**:它就是轨迹表的有类型视图;心跳与终态帧是仅有的"非轨迹行"输出
+  (状态帧无 id、重连重发,不参与续传语义)。
+- **`cancellation_pending` 的计时起点是"检测到取消"**(≤256ms 轮询窗),不是"用户点击",
+  如实口径写在字段注释里;真实 HTTP 取消路径的端到端时延未单独计时。
+- **token delta(流式增量)不做**:它是"能力支持时的可选增强",而当前端点的
+  能力清单里没有 stream 声明(G07 的面),做了也只是本地假流,不诚实。
+- **`resume.py` 未改**:候选重验/门禁重跑是 S03/G14 的既有链;G12 只在其上加
+  工具调用状态与措辞(测试面在 test_tool_recovery)。
+- **CLI `events` 的 print 仅供人看**,机器面以 SSE 原始帧为准(`--json`)。
+
+### 剩余限制(不许被读成"已证明效果")
+
+1. **真实流式断连**未做进程级演练:续传语义在生成器层与路由层都有用例,
+   但"读一半断开再重连"的完整 HTTP 客户端行为没有端到端证据;
+2. `tool_started` 事件让轨迹行数近似翻倍(每条真实工具 +1):存储与 trajectory API 的
+   体积影响未量;分页/裁剪口径未动;
+3. 事件流是**轮询视图**(0.5s),不是推送;1 秒级"取消收敛"目标与它无关(取消走
+   独立通道),但"事件显示的及时性"上限就是这个轮询周期;
+4. `unknown` 的措辞只进**占位回执**(给模型看);报告/事件流上没有"unknown 调用数"
+   的汇总读数(留 G16 证据索引);
+5. 未测:多客户端同时订阅同一任务(生成器各自独立读表,理论上无冲突,无用例);
+6. 离线全绿只证明协议与接线:不证明"用户看得到进度会更快纠偏"、不证明取消延迟在
+   真实容器/真实端点上的分布(G17)。
+
+### 费用与外部动作
+
+零模型调用、零付费、零网络、零 push、零删除历史结果。
+
+### 下一卡
+
+B4 批次退出(G11–G12)→ 按 SPEC 下一批为 B5(G13–G14)。
+
+---
+
+## B4 批次退出(G11–G12)
+
+收据身份:`354d838`(工作树 clean;此后只改文档)。命令与读数:
+
+```
+ruff check .              → All checks passed!                 (exit 0)
+ruff format --check .     → 280 files already formatted        (exit 0)
+ADR 锚点全量审计           → 0 漂移(G11 重钉 23 处、G12 重钉 16 处)
+全量(第一次):pytest -q --durations=30 --basetemp=C:/Users/Administrator/.cache/pt/patchpilot/b4-exit
+      → **3 failed, 1195 passed, 3 skipped, 1 warning in 1982.38s (0:33:02) (exit 1)**
+      3 条失败全部在 tests/test_docker.py,rc=125(root cause 见下)
+全量(环境修复后,最终):pytest -q --durations=30 --basetemp=C:/.../b4-exit2
+      → **1198 passed, 3 skipped, 1 warning in 1776.86s (0:29:36) (exit 0)**
+日志:C:/Users/Administrator/.cache/pt/patchpilot/b4_exit.log、b4_exit2.log
+```
+
+### 第一次全量的 3 条失败 = 环境失败(不是产品失败),照实记
+
+- **现象**:`test_docker.py` 三条集成用例 rc=125,stderr = `pull access denied for
+  patchpilot-executor ... Run 'docker run --help'`;B3 时这四条是 **skip**(守护进程不可用),
+  本次守护进程已可达(docker info 正常)⇒ skip 条件不成立 ⇒ 用例真的跑,而本机
+  **没有 `patchpilot-executor:latest` 镜像**(新 clone 后未重建)⇒ docker run 尝试拉取失败。
+- **处置(环境修复,未动任何源码/测试/配置)**:按 `docker/executor.Dockerfile`
+  重建镜像(`docker build -f docker/executor.Dockerfile -t patchpilot-executor:latest .`,
+  image sha256 `fa31c0a500ef84b3…`),复跑 `tests/test_docker.py` → **4 passed(真实容器路径)**。
+  这不是"用 skip 消红":三条用例从 B3 的**未执行**升级为本次**真跑通过**。
+- **第二次全量按纪律整批重跑**(环境变了,单跑受影响项不足以作为批次收据),
+  全绿;第一次读数保留作对照,不删除。
+
+- skip 3 条(全部同一原因):`test_input_snapshot.py:67`、`test_repo_instructions.py:137`、
+  `test_search_tools.py:746` 的符号链接权限(本机 Windows 无创建权限,CI 上真跑);
+  **没有一条是为消掉失败而加的**。对比 B3 的 9 条:docker×4 与 redis×2 的环境条件
+  在本机已恢复(守护进程/服务可达),从 skip 转为真跑并通过;符号链接×3 不变。
+- 数对账(用例数一条不吞):B3 批次退出收集 **1166 = 1157 + 9**;B4 新增 35 条
+  (`test_user_control` 13 + `test_waiting_input` 7 + `test_event_stream` 5 +
+  `test_inflight_cancel` 3 + `test_tool_recovery` 7,`--collect-only` 实测)
+  ⇒ 期望 **1201**;最终全量实测 **1201 = 1198 passed + 3 skipped** ✓。
+- warnings 1 条(`TestRunResult` 收集告警,与 B1–B3 同一条);**没有新增告警类**。
+- 慢测试读数(`--durations=30` 前 8):`test_ten_custom_tasks_concurrent_smoke` 71.37s、
+  `test_ablation_invariants` 三条 26.9–30.5s、`test_driver::test_fake_batch_writes_manifest`
+  25.85s、`test_branching` e2e 23.06s、`test_candidate_recovery` 真进程死亡 22.42s。
+  耗时 33:02 / 29:36 对 B3 的 23:06:本机负载差异,不作为回归或改进的证据。
+- 本批两次全量均**没有**在运行期间另起任何 pytest(吸取 B1 的流程教训);
+  环境修复只动了宿主 Docker 镜像,不与全量并发。
+
+批内 commits(全部在 `codex/current-state-20261011`、全部未 push):
+
+| 卡 | 代码/测试/锚点 |
+|---|---|
+| G11 | `01143da` |
+| G12 | `354d838` |
+| 本批文档与进度 | 本节所在文档卡 |
+
+### 退出条件逐条对账(SPEC §6:B4 = 等待输入/纠偏;事件流、取消与恢复)
+
+| 退出条件 | 落在哪张卡 | 可核对的读数 |
+|---|---|---|
+| 等待输入/纠偏 | G11 | `POST /tasks/{id}/messages` 回答唤醒等待线程并继续至 resolved(e2e);等待期零模型请求、零候选;错误 revision/不同答案/终态输入一律 409;纠偏"忽略门禁"不改变判定;等待态取消 <1.5s;重启重入同一问题只消费一次 |
+| 事件流 | G12 | `GET /tasks/{id}/events` 与轨迹同表同事实(事件 event_id 全部可在 trajectory API 对上);续传只收其后事件;终态帧收口;CLI `events` 打印同一组帧 |
+| 取消与恢复 | G12 | 在途取消:晚到回复只计量不入动作、快照留存、`TaskCancelled`;命令终止延迟与 `cancellation_pending` 如实上报(正常 False / 超窗 True 两条用例);工具调用 planned/running/completed/unknown + 恢复措辞("不许盲目重跑"落进真实请求,命令没有被重跑) |
+
+### 批次层面的未证明清单(不许被读成"两条退出=做完了")
+
+- **所有效果主张仍未证明**:等待有用、SSE 有用、恢复措辞减少盲重跑,离线只证协议与边界;
+  修复率/轮次/成本要 G17 的真实端点批。
+- **真实流式断连**无进程级演练(续传在生成器与路由层有用例);token delta 未做(端点无
+  stream 能力声明,做了只是本地假流)。
+- **"等待期进程被杀、由新进程回答/批准"的完整进程级场景未测**(G10/G11 共同欠账);
+  单进程唤醒前提与 design.md §7 一致。
+- **`tool_started` 让轨迹行数近似翻倍**,存储与 trajectory API 体积影响未量。
+- **G11 的顺延只覆盖 deadline,不覆盖 max_turns**;等待窗/寿命默认值是工程起点。
+- 本机 Docker/Redis 的可达性是**环境状态**,不承诺 CI/他机;docker 分支的持续覆盖仍看
+  ubuntu CI(G09 起的口径不变);本机镜像 sha256 已登记,复跑前先确认镜像存在。
+- 下一批按 SPEC 是 **B5(G13–G14:三角色委派;候选检查点)**,需另行授权才起;
+  G17(真实端点/在线批)逐批单独授权,本批零付费零网络。

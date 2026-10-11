@@ -1785,3 +1785,81 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
   当前 1166 = 1157 + 9 闭合。**跨会话恒定差 12 条**(旧会话 1105/1128 vs 今日同提交
   1093/1116)机制未定位,按"不混用口径"登记,留 G16 复核。
 - **下一批**:B4(G11–G12;依赖见 SPEC §6,需用户授权后起)。
+
+## 26. B4 / G11:ask_user、持久等待与途中纠偏(2026-10-11)
+
+- 用户在会话里授权起 B4;G11 落地 `01143da`(代码+测试+锚点同步一个提交),
+  完整语义表、范围扩张理由、行为证据与限制见进度文件 G11 节(单一进度源)。
+- **等待是盘上工件,不是内存事件**:`run_dir/interaction_state.json`(InteractionStore)
+  一次只允许一个未回答问题;回答必须带提问时的 `expected_revision`,过期/不同内容冲突、
+  同 idem 或逐字相同幂等;消费恰好一次并把输入版本 +1;损坏即拒且不覆盖。
+- **唤醒通道与 G10 批准同构**:QuestionRegistry 登记时带 qid(对不上不误唤醒);
+  `InteractionChannel` 的顺序 = register → notify(WAITING_INPUT)→ wait → release;
+  `None` = headless(问题照落盘,循环以 `clarification_required` 结构化收场)。
+- **闸门在 turn 边界**:消费纠偏/回答为 user 消息进**实际请求**;等待期零模型请求
+  (用例量过:0.6s 窗口里 `model.seen` 不变);模板明写"不改变测试集、权限与预算",
+  门禁/预算/权限三条路径都不读这层(负例:"忽略所有门禁" 的任务照常 resolved)。
+- **等待与 deadline**:等待时长结束后从执行 deadline 顺延(增量恰好一次,钳在
+  绝对寿命 `task_absolute_lifetime_seconds` 内);顺延随 loop_state 快照持久化,
+  恢复取 state 与快照较大者;`absolute_deadline_epoch` 进 state,恢复不重授。
+- **API/CLI**:`POST /tasks/{id}/messages`(answer|steer;终态 409;无 waiter 且行仍
+  WAITING_INPUT → 重新入队)、`GET /tasks/{id}/question`;CLI 新增
+  answer/steer/cancel/question,status 等待时补回答命令提示。
+- **收据 @`01143da`**:ruff/format 全绿;定向 20 passed(13+7);回归 169+98+40 passed;
+  ADR 锚点 23 处重钉、0 漂移;README 工具清单 14→15。**全量:未运行**(批尾统一)。
+- **点名判断/限制**:回答与纠偏不进 TaskMemory(只是会话消息);单进程唤醒(与 G10 同
+  前提);"等待期进程被杀由新进程回答"完整进程级场景未测;等待窗 3600/寿命 86400 是
+  工程起点,无真实读数;顺延只覆盖 deadline 不覆盖 max_turns。
+
+## 27. B4 / G12:SSE 事件流、取消收敛上报与工具恢复语义(2026-10-11)
+
+- G12 落地 `354d838`;完整语义表、范围扩张理由、行为证据与限制见进度文件 G12 节。
+- **SSE 是轨迹表的有类型视图**:`GET /tasks/{id}/events`(tool_started/tool_finished/
+  usage/waiting/candidate/progress/task_status);有未读事件先冲事件、最后以 terminal
+  状态帧收口;`id:` = 事件行自增 id,`?last_event_id=`/`Last-Event-ID` 只收其后事件,
+  重连不重复;心跳 `: ping`;事件 event_id 全部可在 trajectory API 里对上(同一组事实)。
+- **tool_started 与恢复策略**:`registry.execute` 执行前记 started;`RECOVERY_POLICY`
+  与注册表同宽强制(safe_replay/state_check/no_rerun);孤儿占位回执按策略补措辞
+  ("check git_diff"/"do not blindly rerun"),`repair_orphans(recovery=None)` 逐字不变。
+- **tool_call 状态机**:planned→running→completed;崩溃卡中间 ⇒ 恢复 unknown;
+  快照新增 `tool_calls` 尾部;恢复 `restore_calls` + unknown 标记 + 措辞
+  ("不许盲目重跑"落进真实请求,run_command 没有被重跑,轨迹记账)。
+- **取消收敛如实上报**:受控命令新增 `kill_latency_ms` 与 `cancellation_pending`
+  (检测到取消→确认退出 >5s 即 pending;正常取消 False 有实测);在途取消的晚到
+  回复只计量不入动作(TaskCancelled + 快照留存);终态行不可被 cancel 覆盖。
+- **未动**:`app/llm/`(transport)与 `api/cancellation.py`——timeout 是明确上界、
+  同步调用不可中止 provider 计算(如实声明),取消通道沿用 G09 起的协作式中断,
+  加假 stream 接口不诚实;token delta 同理不做。
+- **收据 @`354d838`**:ruff/format 全绿;定向 15 passed(test_event_stream 5 +
+  test_inflight_cancel 3 + test_tool_recovery 7;提交信息里的分项笔误以进度文件为准);
+  回归 131+134+58 passed;ADR 锚点 16 处重钉、0 漂移。**全量:未运行**(批尾统一)。
+- **旧断言处理**:`test_plain_loop` 的轨迹顺序断言按 G12 语义维护(排除 llm 与
+  tool_started,另加 started 配对断言,强度未降);其余一条未删未放宽。
+- **点名判断/限制**:真实流式断连无端到端演练;事件流是 0.5s 轮询视图;unknown 只进
+  占位回执,报告无汇总;取消计时的起点是"检测到取消"(≤256ms 轮询窗)而非用户点击;
+  离线只证协议,不证"看得到进度会更快纠偏"(G17)。
+
+## 28. B4 批次退出(G11–G12,2026-10-11)
+
+收据身份 `354d838`(工作树 clean;此后只改文档)。详细对账见进度文件的「B4 批次退出」节。
+
+- **全量(最终)**:`1198 passed, 3 skipped, 1 warning in 1776.86s(29:36)`,exit 0
+  (日志 `.cache/pt/patchpilot/b4_exit2.log`)。数对账:B3 收集 1166 = 1157 + 9;
+  B4 新增 35 条(test_user_control 13 / test_waiting_input 7 / test_event_stream 5 /
+  test_inflight_cancel 3 / test_tool_recovery 7)⇒ 1201 = 1198 + 3 逐条闭合。
+- **skip 9 → 3**:docker×4 与 redis×2 的环境条件在本机恢复(守护进程与服务可达),
+  从 skip 转为真跑并通过;剩余 3 条是符号链接权限(Windows 本机,CI 上真跑),
+  无一为消红而加。
+- **第一次全量的 3 条失败是环境失败**:`test_docker.py` rc=125 —— 守护进程可达但本机
+  **缺 `patchpilot-executor:latest` 镜像**(新 clone 后未重建)。处置 = 按
+  `docker/executor.Dockerfile` 重建镜像(image sha256 `fa31c0a500ef84b3…`),
+  复跑 test_docker → **4 passed(真实容器)**;随后**整批重跑**取得最终收据。
+  未动任何源码/测试/配置;第一次读数保留对照。
+- **退出条件逐条有读数**:等待输入/纠偏(G11:回答唤醒 e2e 至 resolved、等待期零模型请求、
+  409 谱系、等待态取消 <1.5s、重入只消费一次);事件流(G12:与轨迹同表同事实、续传、
+  终态收口、CLI 同一组帧);取消与恢复(G12:晚到回复只计量不入动作、命令延迟与
+  `cancellation_pending` 如实上报、planned/running/completed/unknown 与"不许盲目重跑"措辞)。
+- **未证明清单**:效果类主张全部待 G17;真实流式断连无进程级演练;token delta 未做;
+  "等待期进程被杀由新进程回答/批准"完整场景未测;`tool_started` 使轨迹行数近翻倍,
+  体积影响未量;本机 Docker/Redis 可达性只是环境状态,不承诺 CI/他机。
+- **下一批**:B5(G13–G14:轻量角色委派;候选检查点与可控局部进展),需另行授权才起。
