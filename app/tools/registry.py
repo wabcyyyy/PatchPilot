@@ -6,23 +6,33 @@
 
 from __future__ import annotations
 
+import hashlib
 import inspect
+import json
 import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from app.config import get_settings
 from app.context.ast_outline import SYMBOL_KINDS
+from app.context.evidence import EvidenceNotStored, EvidenceRef, build_store
 from app.tools.base import ToolContext, ToolResult
 from app.tools.execution import run_tests
-from app.tools.files import list_files, read_file, search_code
+from app.tools.files import list_files, read_evidence, read_file, search_code
+from app.tools.output_filter import bound_structure
 from app.tools.patching import apply_patch, git_diff, reset_to_baseline
 from app.tools.symbols import describe_file, find_symbol
 
 log = logging.getLogger(__name__)
 
 FINISH_TOOL = "finish"
+
+#: 会改动工作区的工具:成功一次就让 workspace_revision +1(G05 的 stale 判定就靠它)。
+#: 写代数住在 registry 而不是 patching.py,是为了让"什么算一次写入"只有一处定义 ——
+#: 门禁拒绝/协议拒绝走的是 fail 分支,不留代数,也就不产生任何"看起来改过了"的旧引用。
+MUTATING_TOOLS = frozenset({"apply_patch", "reset_workspace"})
 
 
 @dataclass
@@ -136,6 +146,29 @@ def _build_registry() -> dict[str, ToolSpec]:
             ),
             handler=read_file,
         ),
+        "read_evidence": ToolSpec(
+            name="read_evidence",
+            description=(
+                "分页取回某条回执的**原始内容**(上一句里 evidence.evidence_id 指的那份)。"
+                "被裁掉的行没有丢:这条工具读的是落盘原文,不是模型可见的那一屏。"
+                "evidence_id 必填;cursor 用上一次返回的 next_cursor 原样传回来,别自己编;"
+                "limit_bytes 只能要更少(上限由平台决定)。"
+                "注意 stale=true 时这份内容是**工作区改动前**的,不能当现状用——"
+                "要现状就重新 read_file。查某个文件的另外几十行请用 read_file(offset),"
+                "read_evidence 是给「这一屏当时到底写了什么」用的。"
+            ),
+            parameters=_schema(
+                "read_evidence",
+                "取回原始回执",
+                {
+                    "evidence_id": {"type": "string"},
+                    "cursor": {"type": "string"},
+                    "limit_bytes": {"type": "integer"},
+                },
+                ["evidence_id"],
+            ),
+            handler=read_evidence,
+        ),
         "apply_patch": ToolSpec(
             name="apply_patch",
             description=(
@@ -236,6 +269,12 @@ def execute(
             result = ToolResult.fail(f"{type(exc).__name__}: {exc}")
 
     duration_ms = int((time.monotonic() - started) * 1000)
+    if name in MUTATING_TOOLS and result.ok:
+        ctx.workspace_revision += 1
+    # 有界视图 + 原文落盘(G05):必须在轨迹记录之前做完,后面那条 evidence_bounded
+    # 事件才有 id 可指,而主工具事件仍按**未裁**的 output 记摘要(裁过的形状进不了取证链,
+    # 会重演 M16.9 那类"模型当时看到过什么不可复原")。
+    _apply_visible_view(ctx, name, result, round_no=round_no, state=state)
     ctx.tracker.record(
         tool=name,
         round_no=round_no,
@@ -255,6 +294,93 @@ def execute(
         result.error,
     )
     return result
+
+
+def _apply_visible_view(
+    ctx: ToolContext, name: str, result: ToolResult, *, round_no: int, state: str
+) -> object | None:
+    """把这条回执裁进模型可见上限,同时把**裁前的原文**落进任务证据仓。
+
+    三条硬约束:
+    1. 裁在数据结构上、序列化之前 —— 发出去的消息永远是合法 JSON(旧路径切在 JSON 中间);
+    2. 只有真的动了才加 `_bounded`/`evidence` 两个键。装得下的回执形状一字不变,
+       存量轨迹与两臂对照解析的形状不受影响(也符合"不新增未登记的差异");
+    3. 落盘失败(超体积/超配额)必须**明说** `retrievable=false`,不做静默丢弃。
+    """
+    settings = get_settings()
+    cap = settings.tool_visible_max_chars
+    if cap <= 0:
+        return None
+    payload: Any = result.output if result.ok else {"error": result.error}
+    report = bound_structure(
+        payload,
+        max_chars=cap,
+        head_lines=settings.refine_head_lines,
+        tail_lines=settings.refine_tail_lines,
+    )
+    if not report.changed:
+        return None
+    raw_json = json.dumps(payload, ensure_ascii=False, default=str)
+    ref: EvidenceRef | None = None
+    if settings.evidence_enabled:
+        if ctx.evidence is None:
+            ctx.evidence = build_store(ctx.report_dir, ctx.task_id)
+        try:
+            ref = ctx.evidence.save(
+                raw_json, source=name, workspace_revision=ctx.workspace_revision
+            )
+        except EvidenceNotStored as exc:
+            ref = exc.ref  # 拒落也带着身份:字节数/hash 仍然可对上,只是取不回来
+    visible = report.value if isinstance(report.value, dict) else {"value": report.value}
+    visible["_bounded"] = report.metadata(visible_max_chars=cap)
+    if ref is None:
+        visible["_bounded"]["raw_saved"] = False
+        visible["_bounded"]["note"] = (
+            "evidence store is disabled: the omitted lines are not retrievable in this run"
+        )
+    else:
+        visible["evidence"] = ref.as_dict()
+    result.visible = visible
+    result.evidence = ref
+    excerpt_json = json.dumps(visible, ensure_ascii=False, default=str)
+    summary: dict[str, Any] = {
+        "evidence_id": ref.evidence_id if ref is not None else "",
+        "retrievable": bool(ref.retrievable) if ref is not None else False,
+        "raw_chars": report.raw_chars,
+        "shown_chars": len(excerpt_json),
+        "omitted_lines": report.omitted_lines,
+        "dropped_items": report.dropped_items,
+        "raw_sha256": _sha256(raw_json),
+        "excerpt_sha256": _sha256(excerpt_json),
+        "workspace_revision": ref.workspace_revision if ref is not None else ctx.workspace_revision,
+    }
+    if ref is not None and not ref.retrievable:
+        summary["reason"] = ref.reason
+    # 这条事件回答的是取证问题:"原文是什么形状、excerpt 是什么形状、还能不能取回"。
+    # 主工具事件仍按未裁的 output 记摘要,两者一起才拼得出"模型当时看到的那一屏"。
+    ctx.tracker.record(
+        tool="evidence_bounded",
+        round_no=round_no,
+        state=state,
+        input_payload={"tool": name},
+        output_summary=summary,
+    )
+    return visible
+
+
+def _sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+
+
+def model_payload(result: ToolResult) -> Any:
+    """发回给模型的那一份:被裁过就是「有界视图 + 元数据」,没裁过就是原 output。
+
+    循环层只走这一个入口。留着第二个各自 `json.dumps(result.output)` 的地方,就等于留着
+    第二条绕过 G05 有界协议的路 —— 而旧缺陷恰恰长在"序列化之后再按字符硬切"那一步。
+    """
+    if not result.ok:
+        return {"error": result.error}
+    return result.visible if result.visible is not None else result.output
 
 
 def _summarize_input(name: str, args: dict[str, Any]) -> dict[str, Any]:

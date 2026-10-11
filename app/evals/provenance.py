@@ -189,6 +189,15 @@ SNAPSHOT_KEYS: tuple[str, ...] = (
     # 复现口径与终态,与 context_window_tokens 同族(改变运行看到什么),不进豁免
     "loop_snapshot_enabled",
     "resume_on_restart",
+    # G05 有界视图与证据仓:这五键决定"模型一屏 receipt 里能看到多少行、被裁掉的原文
+    # 还能不能取回来"。换任何一个数都是另一种运行条件(与 refine_head_lines 同族,而
+    # G04 已把那一族从豁免里挪出来了),尤其 evidence_enabled=false 会让"取回"这件事
+    # 从能力变成不可用 —— 绝不能留在豁免里悄悄改变两臂的可见面。
+    "tool_visible_max_chars",
+    "evidence_enabled",
+    "evidence_max_item_bytes",
+    "evidence_max_total_bytes",
+    "evidence_page_bytes",
 )
 SECRET_KEYS: frozenset[str] = frozenset({"llm_api_key", "api_token"})
 EXEMPT_KEYS: frozenset[str] = frozenset(
@@ -366,6 +375,10 @@ def protocol_identity(arm: str, policy: Any | None = None) -> dict[str, Any]:
         "refine_head_lines": settings.refine_head_lines,
         "refine_tail_lines": settings.refine_tail_lines,
         "max_output_chars": settings.max_output_chars,
+        # G05:一屏 receipt 的可见上限与"被裁的行还能不能取回",都属于模型可见面
+        "tool_visible_max_chars": settings.tool_visible_max_chars,
+        "evidence_enabled": settings.evidence_enabled,
+        "evidence_page_bytes": settings.evidence_page_bytes,
         "max_read_lines": settings.max_read_lines,
         "max_search_results": settings.max_search_results,
         **tool_schema_identity(),

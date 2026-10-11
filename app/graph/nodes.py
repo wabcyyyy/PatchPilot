@@ -57,6 +57,7 @@ READ_TOOLS = [
     "find_symbol",
     "describe_file",
     "read_file",
+    "read_evidence",
     "git_diff",
     FINISH_TOOL,
 ]
@@ -66,6 +67,7 @@ WRITE_TOOLS = [
     "find_symbol",
     "describe_file",
     "read_file",
+    "read_evidence",
     "git_diff",
     "apply_patch",
     "run_tests",

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from app.adapters.pytest_adapter import BugEnv
+from app.context.evidence import EvidenceRef, EvidenceStore
 from app.executor.whitelist import DEFAULT_WHITELIST
 from app.tools.tracker import Tracker
 
@@ -42,6 +43,13 @@ class ToolContext:
     # 自适应分支触发信号(卡5):连续"补丁应用失败"的次数(门禁/协议拒绝不计——
     # 那是可修正的单线反馈,只有真应用失败才说明当前思路在原地打转)
     patch_fail_streak: int = 0
+    # 工作区写入代数(G05):0 = 受理时冻结的输入快照,每次成功的写操作(apply_patch /
+    # reset_workspace)在 registry 里 +1。证据引用靠它判断"我看到的还是不是当前内容",
+    # 而不是让模型拿一份改前的源码当现状用。
+    workspace_revision: int = 0
+    # 原始回执仓(G05)。None = 尚未建;registry 在第一次需要落盘时按 report_dir 建,
+    # 所以所有既有构造点(含 23 处测试夹具)一行未改就能工作。
+    evidence: EvidenceStore | None = None
 
 
 @dataclass
@@ -49,6 +57,13 @@ class ToolResult:
     ok: bool
     output: Any = None
     error: str | None = None
+    # 这条回执的原始文本落在证据仓的位置(超大且被裁过时才有值)。它不是给模型的
+    # 字段,而是给上层/G06 任务记忆建引用用的身份。
+    evidence: EvidenceRef | None = None
+    # **发给模型**的那一份:超过可见上限时由 registry 生成(有界视图 + `_bounded` +
+    # `evidence` 元数据)。None = 没裁过,发 `output` 原样。与 output 分两个字段是刻意的:
+    # 取证摘要读 output(未裁),消息组装读 visible(已裁),两边都不必靠猜。
+    visible: Any = None
 
     @classmethod
     def fail(cls, error: str) -> ToolResult:

@@ -56,9 +56,10 @@ def git_diff(ctx: ToolContext) -> ToolResult:
         output={
             "changed_files": diff.changed_files,
             "is_empty": diff.is_empty,
-            "diff": diff.diff_text
-            if len(diff.diff_text) <= 20_000
-            else diff.diff_text[:20_000] + "\n... (truncated)",
+            # 整份 diff 交给统一的那一道有界视图(app/tools/registry.py + output_filter):
+            # 此前这里自己 `[:20_000] + "(truncated)"`,同一份信息于是有两套裁剪器,而被切掉的
+            # 尾巴既没落盘也取不回来——模型只能重跑一次 apply_patch 再猜改了哪些行。
+            "diff": diff.diff_text,
         },
     )
 

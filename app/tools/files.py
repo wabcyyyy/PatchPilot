@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import get_settings
+from app.context.evidence import EvidenceLookupError, build_store
 from app.tools.base import ToolContext, ToolResult
 from app.tools.paths import looks_like_text, relpath_within
 from app.tools.search import ENGINE_KEY, compile_pattern, grep_files
@@ -196,3 +197,57 @@ def search_code(
     if context > 0:
         output["context_lines"] = context  # 夹扣后的实际值:模型以为自己传了 5000,得看见真给了几行
     return ToolResult(ok=True, output=output)
+
+
+def read_evidence(
+    ctx: ToolContext, evidence_id: str, cursor: str = "", limit_bytes: int = 0
+) -> ToolResult:
+    """按引用分页取回**当时那份原始回执**(G05)。
+
+    为什么需要它:模型可见视图是在数据结构上裁出来的(长字段折行、列表丢尾巴),
+    裁掉的每一行都落在 `<run_dir>/evidence/<id>.json` 里;没有这一步,"被裁掉的原文"
+    和"从来没存在过"在模型那边就是同一个读数。
+
+    边界(SPEC 契约 4):
+    - 只认**本任务**索引里的 id。id 是随机 hex,不是路径,也不参与任何路径拼接;
+      别的任务的 id 在这里读成 not found,不给"存在但拒读"的旁证;
+    - 单页字节上限由 `Settings.evidence_page_bytes` 决定,`limit_bytes` 只能要更少;
+    - 游标钉在工件上:把 A 的游标拿到 B 上用 → 结构化报错;
+    - `workspace_revision` 与当前不符时 `stale=true`:这份内容**不能当现状用**,
+      要现状请重新 read_file/describe_file。
+    """
+    # 仓还没建也照常查:答案统一是"本任务没登记这个 id"。若在这里回"这个任务还没存过东西",
+    # 就等于给了一条"你的任务是空的"旁证,而跨任务引用的拒绝形状应当与非空任务一致。
+    if ctx.evidence is None:
+        ctx.evidence = build_store(ctx.report_dir, ctx.task_id)
+    try:
+        page = ctx.evidence.read(evidence_id, cursor=cursor, limit_bytes=limit_bytes)
+    except (EvidenceLookupError, ValueError) as exc:
+        return ToolResult.fail(f"cannot read evidence: {exc}")
+    ref = page.ref
+    stale = ref.workspace_revision != ctx.workspace_revision
+    payload: dict[str, Any] = {
+        "evidence_id": ref.evidence_id,
+        "source": ref.source,
+        "kind": ref.kind,
+        "workspace_revision": ref.workspace_revision,
+        "current_revision": ctx.workspace_revision,
+        "stale": stale,
+        "sha256": ref.sha256[:16],
+        "offset": page.offset,
+        "returned_bytes": page.returned_bytes,
+        "total_bytes": ref.raw_bytes,
+        "total_lines": ref.raw_lines,
+        "eof": page.eof,
+        "text": page.text,
+    }
+    if page.next_cursor:
+        payload["next_cursor"] = page.next_cursor
+    if not page.line_aligned:
+        payload["line_aligned"] = False
+    if stale:
+        payload["note"] = (
+            "这份回执记录的是工作区改动前的内容,不能当作当前代码使用;"
+            "要现状请用 read_file/describe_file 重新取。"
+        )
+    return ToolResult(ok=True, output=payload, evidence=ref)

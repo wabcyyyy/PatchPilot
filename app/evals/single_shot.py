@@ -42,12 +42,15 @@ from app.tools.registry import FINISH_TOOL
 # reset_workspace 一并去掉:没有执行反馈时"回滚重来"没有判据,留着只会掩盖消融点。
 # M3 的 find_symbol/describe_file 必须在两臂同时在场:消融变量是"有无测试反馈/有无重试",
 # 不是"有无检索工具",少一边给一边就把对照臂变成残臂(与 WRITE_TOOLS 同步)。
+# G05 的 read_evidence 同理:它属于"读自己已经拿到的东西",两臂都给才不构成新变量
+# (教训登记在案:消融臂私加的未登记限制会把结论污染成实验设计的函数)。
 ONE_SHOT_TOOLS = [
     "list_files",
     "search_code",
     "find_symbol",
     "describe_file",
     "read_file",
+    "read_evidence",
     "git_diff",
     "apply_patch",
     FINISH_TOOL,

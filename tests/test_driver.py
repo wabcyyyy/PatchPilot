@@ -204,6 +204,12 @@ def test_provenance_carries_new_traceability_fields() -> None:
         "refine_head_lines",
         "refine_tail_lines",
         "docker_image",
+        # G05 有界视图与证据仓:可见上限/能否取回都改变模型那一屏的内容,同上不可豁免
+        "tool_visible_max_chars",
+        "evidence_enabled",
+        "evidence_max_item_bytes",
+        "evidence_max_total_bytes",
+        "evidence_page_bytes",
     } == set(SNAPSHOT_KEYS)
     started = datetime.fromisoformat(prov["started_at"])
     assert started.tzinfo is not None

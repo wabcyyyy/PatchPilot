@@ -1,0 +1,101 @@
+{
+  "probe": "g05-bounded-view",
+  "scanned_root": "D:\\wcy\\project\\PatchPilot",
+  "evidence_work_dir": "C:\\Users\\25924\\AppData\\Local\\Temp\\g05-probe-n0lhqh7t",
+  "sources": 4,
+  "over_visible_cap": 3,
+  "legacy_json_broken": 3,
+  "bounded_json_valid_all": true,
+  "raw_reassembled_all": true,
+  "note": "零模型零网络;素材为本地缓存的真实上游仓库源码",
+  "rows": [
+    {
+      "file": "base-SWE-sphinx-doc__sphinx-75900/sphinx/util/cfamily.py",
+      "raw_chars": 13425,
+      "raw_sha256": "eacbfdcbf423230c",
+      "visible_max_chars": 8000,
+      "over_cap": true,
+      "legacy": {
+        "chars": 8015,
+        "json_valid": false,
+        "chars_dropped_without_trace": 5410,
+        "raw_kept_on_disk": false
+      },
+      "bounded": {
+        "chars": 2457,
+        "json_valid": true,
+        "omitted_lines": 345,
+        "dropped_items": 0,
+        "evidence_id": "89ccf29b3b4144c8871254c97916c77e",
+        "retrievable": true,
+        "raw_reassembles_byte_for_byte": true
+      }
+    },
+    {
+      "file": "base-SWE-astropy__astropy-87070/astropy/io/fits/card.py",
+      "raw_chars": 16473,
+      "raw_sha256": "64bce36f94772837",
+      "visible_max_chars": 8000,
+      "over_cap": true,
+      "legacy": {
+        "chars": 8015,
+        "json_valid": false,
+        "chars_dropped_without_trace": 8458,
+        "raw_kept_on_disk": false
+      },
+      "bounded": {
+        "chars": 2174,
+        "json_valid": true,
+        "omitted_lines": 344,
+        "dropped_items": 0,
+        "evidence_id": "6db6e39e6b5d4c5697a22482b3c315d8",
+        "retrievable": true,
+        "raw_reassembles_byte_for_byte": true
+      }
+    },
+    {
+      "file": "base-SWE-pylint-dev__pylint-69030/pylint/lint/run.py",
+      "raw_chars": 8690,
+      "raw_sha256": "30d52f5ce5df9b04",
+      "visible_max_chars": 8000,
+      "over_cap": true,
+      "legacy": {
+        "chars": 8015,
+        "json_valid": false,
+        "chars_dropped_without_trace": 675,
+        "raw_kept_on_disk": false
+      },
+      "bounded": {
+        "chars": 2612,
+        "json_valid": true,
+        "omitted_lines": 177,
+        "dropped_items": 0,
+        "evidence_id": "0c3865d438aa4c1984e6a7c21f79003d",
+        "retrievable": true,
+        "raw_reassembles_byte_for_byte": true
+      }
+    },
+    {
+      "file": "base-SWE-psf__requests-11420/requests/adapters.py",
+      "raw_chars": 7331,
+      "raw_sha256": "66ff898bfe1de943",
+      "visible_max_chars": 8000,
+      "over_cap": false,
+      "legacy": {
+        "chars": 7331,
+        "json_valid": true,
+        "chars_dropped_without_trace": 0,
+        "raw_kept_on_disk": false
+      },
+      "bounded": {
+        "chars": 7331,
+        "json_valid": true,
+        "omitted_lines": 0,
+        "dropped_items": 0,
+        "evidence_id": "",
+        "retrievable": false,
+        "raw_reassembles_byte_for_byte": null
+      }
+    }
+  ]
+}

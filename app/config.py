@@ -140,6 +140,40 @@ class Settings(BaseSettings):
     # 模型可见层输出折叠的工具消息保留头尾行数(原始 junit/stderr 证据不受影响)
     refine_head_lines: int = 40
     refine_tail_lines: int = 15
+    # ---------- G05:工具回执的有界视图与原始证据仓 ----------
+    # 缺陷出处:回执经 json.dumps 后被按**字符**硬切(fold_output 对单行 JSON 只剩 hard_cap
+    # 这条路),切点落在字符串或键值对中间 ⇒ 模型收到结构损坏的 JSON,而丢掉的那段从来没有
+    # 落过盘。现在改成"在数据结构上裁 + 原文落盘可分页取回",这一条是**模型可见视图**的上限。
+    # 默认 8000 = 与旧实现实际生效的那个数一致(不是收紧也不是放宽)。置 0 = 不裁(旧口径的
+    # hard_cap=0),此时超大回执仍合法,只是把整个窗口吃掉。
+    tool_visible_max_chars: int = 8000
+    # 证据仓总开关。关闭后裁剪照做,但**原文取不回来**——这是有信息损失的开关,
+    # 所以默认开,且属复现口径(SNAPSHOT_KEYS)而不是运维豁免。
+    evidence_enabled: bool = True
+    # 单个原始工件的体积上限:超了就不落盘(并在回执里明说 retrievable=false),
+    # 而不是让一个巨型 diff 把磁盘吃穿
+    evidence_max_item_bytes: int = 2_000_000
+    # 一个任务的证据仓总量:满了同样明说,不静默覆盖旧证据
+    evidence_max_total_bytes: int = 64_000_000
+    # read_evidence 单页字节上限(模型可以要更少,要更多只会拿到这一页的天花板)
+    evidence_page_bytes: int = 4000
+
+    @field_validator(
+        "tool_visible_max_chars", "evidence_max_item_bytes", "evidence_max_total_bytes"
+    )
+    @classmethod
+    def _check_non_negative_sizes(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"size limits must be >= 0 (0 = 不限制), got {value}")
+        return value
+
+    @field_validator("evidence_page_bytes")
+    @classmethod
+    def _check_evidence_page_bytes(cls, value: int) -> int:
+        if value < 256:
+            raise ValueError(f"evidence_page_bytes must be >= 256, got {value}")
+        return value
+
     # 自适应 Best-of-N(卡5):默认单线,仅在"同一断言连续 2 轮失败"或"补丁连续 2 次
     # 应用失败"时开一轮 2 候选并行择优,且每任务至多一次。置 false 即回到 V1 单线行为。
     adaptive_branching_enabled: bool = True

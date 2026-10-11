@@ -22,8 +22,7 @@ from app.llm.base import AssistantTurn, Model, messages_tokens
 from app.llm.usage import ModelResponseEnvelope, UsageEnvelope, estimate_request
 from app.prompts import SYSTEM_PROMPT, TEXT_COMPLETION_REPAIR
 from app.tools.base import ToolContext, ToolResult
-from app.tools.output_filter import fold_output
-from app.tools.registry import FINISH_TOOL, _summarize_input, execute, tool_schemas
+from app.tools.registry import FINISH_TOOL, _summarize_input, execute, model_payload, tool_schemas
 
 log = logging.getLogger(__name__)
 
@@ -722,14 +721,11 @@ def run_plain_loop(
                 result = execute(
                     ctx, call.name, call.arguments, round_no=round_no, state=state_label
                 )
-            payload = result.output if result.ok else {"error": result.error}
-            content = json.dumps(payload, ensure_ascii=False, default=str)
-            # 模型可见层折叠:头 tail 保留 + hard_cap 兜底(原始报告/junit 证据不动)
-            content = fold_output(
-                content,
-                head=settings.refine_head_lines,
-                tail=settings.refine_tail_lines,
-            )
+            # 有界视图(G05):裁剪发生在**序列化之前、数据结构上**,所以发出去的一定是合法
+            # JSON;被裁掉的原文同一次落进任务证据仓,模型用 read_evidence 分页取回。
+            # 此前这里是 `json.dumps(...)` 之后再 fold_output —— 单行 JSON 让头尾折叠立刻退化
+            # 成 8000 字符硬切,切点落在字符串中间,而丢掉的那段从来没落过盘(PROGRESS D.5)。
+            content = json.dumps(model_payload(result), ensure_ascii=False, default=str)
             messages.append({"role": "tool", "tool_call_id": call.id, "content": content})
 
         # turn 边界:本轮所有工具结果都已回填,这是唯一可安全续跑的切点
