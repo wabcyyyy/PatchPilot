@@ -239,6 +239,17 @@ class Settings(BaseSettings):
     # 子任务专用模型(空 = 沿用父模型;身份与价目随任务冻结)
     subtask_model: str = ""
 
+    # G14 有界停止:同一组失败/同一候选连续无进展多少轮后,不再整体 reset 重试,
+    # 收敛为 NEEDS_REVIEW(不靠增加 max_rounds 绕预算)。0 = 关闭该界限。
+    max_identical_failures: int = 3
+
+    @field_validator("max_identical_failures")
+    @classmethod
+    def _check_max_identical_failures(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"max_identical_failures must be >= 0, got {value}")
+        return value
+
     @field_validator("subtask_budget_share")
     @classmethod
     def _check_subtask_budget_share(cls, value: float) -> float:

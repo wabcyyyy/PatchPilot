@@ -245,6 +245,9 @@ SNAPSHOT_KEYS: tuple[str, ...] = (
     "subtask_budget_share",
     "subtask_max_turns",
     "subtask_model",
+    # G14 有界停止:同一组失败连续多少轮后收敛 NEEDS_REVIEW,决定轨迹在哪个轮次、
+    # 以什么终态收尾(改这个数就是改运行条件,与 task_timeout_seconds 同族,不进豁免)
+    "max_identical_failures",
 )
 SECRET_KEYS: frozenset[str] = frozenset({"llm_api_key", "api_token"})
 EXEMPT_KEYS: frozenset[str] = frozenset(

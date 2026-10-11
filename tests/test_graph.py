@@ -213,6 +213,7 @@ def test_checkpoint_roundtrip(tmp_path: Path) -> None:
     """
     from app.graph.checkpoint import make_sqlite_checkpointer
     from app.graph.state import TaskState
+    from app.task_spec import build_task_spec, write_task_spec_file
 
     bug = load_bug("BUG-001", BUG_ROOT)
     cp_db = tmp_path / "cp" / "checkpoints.sqlite"
@@ -231,6 +232,19 @@ def test_checkpoint_roundtrip(tmp_path: Path) -> None:
     )
     graph = build_graph(nodes, checkpointer=checkpointer)
     thread = {"configurable": {"thread_id": "T-CP"}}
+    # G14:finish 的候选绑定需要受理契约(task_spec.json 提供 manifest 的
+    # task_spec_hash/source_snapshot_hash),直连 TaskNodes 时按 runner 口径写契约
+    spec = build_task_spec(
+        bug,
+        engine="graph",
+        arm="agent",
+        model_provider="fake-replay",
+        model_name="",
+        max_turns=20,
+        max_rounds=bug.max_rounds,
+        replay=_localize_script() + _propose_script(_fix_diff()),
+    )
+    write_task_spec_file(tmp_path, spec)
     final: TaskState = graph.invoke(
         {
             "bug_id": bug.id,
@@ -580,12 +594,21 @@ def test_build_feedback_repeat_hint_threshold() -> None:
 def test_repeat_failure_streak_prompts_new_direction(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """verify 连续两轮同一失败签名 → 第二轮反馈注入"换思路"提示。"""
+    """verify 连续两轮同一失败签名 → 第二轮反馈注入"换思路"提示。
+
+    G14 v2 续改语义:R1 的 comment 补丁门禁通过但验证失败(streak=1)后,rollback
+    从具名候选继续(工作区保留补丁),R2 脚本"无改动 finish"重走 apply→verify,
+    得到与 R1 完全相同的失败签名(streak=2),验证提示注入发生在第二轮。
+    G14 有界停止:max_identical_failures=2 → R2 后无新增证据收敛 NEEDS_REVIEW,
+    不靠增加轮数绕预算(也验证 route_rollback 不把 NEEDS_REVIEW 落回 plan)。
+    """
     captured = _capture_feedback(monkeypatch)
     bug = load_bug("BUG-001", BUG_ROOT)
-    model = FakeLLM(
-        _localize_script() + _propose_script(_comment_diff()) + _propose_script(_comment_diff())
-    )
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "max_identical_failures", 2)
+    no_change_finish = [{"tool": "finish", "args": {"success": True, "summary": "候选已保留,重验"}}]
+    model = FakeLLM(_localize_script() + _propose_script(_comment_diff()) + no_change_finish)
     result = run_task_graph(bug, model, runs_root=tmp_path / "runs")
 
     verify_feedback = [c for c in captured if c["cases"]]

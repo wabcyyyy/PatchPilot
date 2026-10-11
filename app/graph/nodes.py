@@ -41,7 +41,9 @@ from app.graph.acceptance import (
 from app.graph.candidate import (
     accepted_contract_hashes,
     freeze_candidate,
+    is_candidate_gate_clean,
     new_verification_attempt_id,
+    reapply_candidate,
     write_candidate_checkpoint,
 )
 from app.graph.gates import ensure_budget, run_gates
@@ -1358,7 +1360,11 @@ class TaskNodes:
                 source_snapshot_hash=accepted_source_hash,
                 baseline_commit=self.baseline_commit,
                 round_no=state["round_no"],
-                parent_candidate_id=state.get("candidate_id") or None,
+                # G14 v2:续改轮从"具名候选"起步,新候选的父 = 续改起点候选;
+                # 非续改轮沿用当前候选引用(幂等重复冻结同 diff 同 id)
+                parent_candidate_id=(
+                    state.get("continue_from_candidate_id") or state.get("candidate_id") or None
+                ),
                 generated_call_ids=[
                     c["call_id"]
                     for c in (self.ledger.snapshot()["calls"] if self.ledger else [])
@@ -2156,6 +2162,75 @@ class TaskNodes:
                 "verify_failed_ok": state.get("verify_failed_ok", False),
                 "verify_regression_ok": state.get("verify_regression_ok", False),
             }
+        # G14 有界停止:同一组失败连续 `max_identical_failures` 轮、且换思路的出口
+        # (自适应分支)已用过或不存在 → 收敛 NEEDS_REVIEW,不再整体 reset 重试
+        # (不靠增加 max_rounds 绕预算)。分支可用且未用 → 交给下面的分支路径重新规划。
+        limit = int(getattr(get_settings(), "max_identical_failures", 0) or 0)
+        streak = int(state.get("repeat_streak", 0) or 0)
+        if (
+            limit > 0
+            and streak >= limit
+            and (state.get("branching_used", False) or self.branch_model_factory is None)
+        ):
+            self.tracker.record(
+                tool="bounded_stop",
+                round_no=state["round_no"],
+                state="VERIFY",
+                input_payload={"round": state["round_no"]},
+                output_summary={
+                    "repeat_streak": streak,
+                    "max_identical_failures": limit,
+                    "branching_used": state.get("branching_used", False),
+                    "preserved_diff_bytes": len(preserved),
+                },
+                error=f"identical failures {streak} >= {limit} without new evidence",
+            )
+            return {
+                "status": "NEEDS_REVIEW",
+                "outcome": "needs_review",
+                "error": (
+                    f"bounded stop: identical failures {streak} >= {limit} without new evidence"
+                ),
+                "preserved_diff": preserved,
+            }
+
+        # G14 v2 续改:候选门禁干净且轮数未耗尽 → reset 到基线后重应用具名候选,
+        # 下一轮 PROPOSE 从该候选继续修复(保留已证实的局部进展,避免每次整体
+        # reset 丢弃)。"部分测试通过"只是一条事实——续改产生的新候选会重新过
+        # 门禁并完整 verify,旧验证结论全部失效。分支信号优先(上面 bounded-stop
+        # 未拦截且此处 not _should_branch):streak>=2 仍走 reset+分支,不截断换思路。
+        candidate_id = str(state.get("candidate_id") or "")
+        if (
+            candidate_id
+            and state["round_no"] < self.max_rounds
+            and not self._should_branch(state)
+            and is_candidate_gate_clean(self.report_dir.parent, candidate_id)
+        ):
+            reapply_candidate(self.workspace, self.report_dir.parent, candidate_id)
+            if self.ctx is not None:
+                self.ctx.workspace_revision += 1
+                self._note_memory("mark_stale", from_revision=self.ctx.workspace_revision)
+            self.tracker.record(
+                tool="continue_from_candidate",
+                round_no=state["round_no"],
+                state="PROPOSE_PATCH",
+                input_payload={"round": state["round_no"]},
+                output_summary={"candidate_id": candidate_id},
+            )
+            return {
+                "status": "PROPOSE_PATCH",
+                "round_no": state["round_no"] + 1,
+                # 续改起点候选:apply 冻结新候选时作父引用;candidate_id 保留旧值,
+                # 下一轮 apply 幂等/覆盖。验证结论置 False,完整重验。
+                "continue_from_candidate_id": candidate_id,
+                "verify_failed_ok": False,
+                "verify_regression_ok": False,
+                "feedback": (
+                    f"候选 {candidate_id} 门禁通过但验证未全绿,已从该候选继续修复"
+                    "(未整体复位到源码基线);请在候选基础上做最小修改。"
+                ),
+            }
+
         reset_workspace(self.workspace, self.baseline_commit)
         # 工作区回到基线 ⇒ 此前在"打过补丁的工作区"里读到的行范围不再是现状。
         # 代数由 graph 在这里递增(复位是平台动作,不经工具层),并立刻把旧观测标失效。
@@ -2182,6 +2257,11 @@ class TaskNodes:
         return {
             "status": "PROPOSE_PATCH",
             "round_no": state["round_no"] + 1,
+            # G14:整体复位后清候选引用——残留的旧 candidate_hash 会让下一轮 finish
+            # 绑定判定误拒("工作区 diff != 旧候选"),也必须从续改谱系里摘除
+            "continue_from_candidate_id": "",
+            "candidate_id": "",
+            "candidate_hash": "",
             "verify_failed_ok": False,
             "verify_regression_ok": False,
             # M4 失败反思:工作区已被复位,下一轮 PROPOSE 是新会话,除了失败用例还得知道
@@ -2194,10 +2274,11 @@ class TaskNodes:
     def route_rollback(self, state: TaskState) -> str:
         """BUDGET_EXCEEDED → 终点;VERIFY_FAILED(S10a 对照臂首次验证失败即终局)
         → 终点(agent 臂的 rollback 不产出该状态,此边对默认臂是死代码);
-        APPLY_PATCH(分支合流)→ apply 节点做图级门禁复核;
+        NEEDS_REVIEW(G14 有界停止:连续相同失败无新增证据)→ 终点,不得落回
+        plan 死循环;APPLY_PATCH(分支合流)→ apply 节点做图级门禁复核;
         其余 → 下一轮重规划(M5:返回串仍是既有的 "propose" 键名,builder 把它接到 plan 节点,
         这样状态串与本函数返回值都不动,只有节点目标改变)。"""
-        if state["status"] in ("BUDGET_EXCEEDED", "VERIFY_FAILED"):
+        if state["status"] in ("BUDGET_EXCEEDED", "VERIFY_FAILED", "NEEDS_REVIEW"):
             return "end"
         if state["status"] == "APPLY_PATCH":
             return "apply"

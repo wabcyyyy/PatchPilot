@@ -243,6 +243,8 @@ def test_provenance_carries_new_traceability_fields() -> None:
         "subtask_budget_share",
         "subtask_max_turns",
         "subtask_model",
+        # G14 有界停止:同失败连续多少轮后收敛 NEEDS_REVIEW,决定轨迹终点,同题不可比
+        "max_identical_failures",
     } == set(SNAPSHOT_KEYS)
     started = datetime.fromisoformat(prov["started_at"])
     assert started.tzinfo is not None

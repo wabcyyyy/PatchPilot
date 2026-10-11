@@ -41,6 +41,7 @@ def _fake_settings(**kw: object) -> SimpleNamespace:
         "task_timeout_seconds": 900,
         "context_window_tokens": 0,
         "context_keep_recent_turns": 6,
+        "verify_double_run": False,
     }
     values.update(kw)
     return SimpleNamespace(**values)
@@ -177,6 +178,10 @@ def test_gate_rejected_candidate_is_preserved_and_rollback_resets(
     state.update(result)
     rolled = nodes.rollback(state)  # type: ignore[arg-type]
     assert rolled["status"] == "PROPOSE_PATCH" and rolled["round_no"] == 3
+    # G14:被拒候选不放行续改——整体复位,候选引用全部清空(防旧 hash 误绑)
+    assert rolled["continue_from_candidate_id"] == ""
+    assert rolled["candidate_id"] == ""
+    assert rolled["candidate_hash"] == ""
     from app.gitops.rollback import working_tree_is_clean
 
     assert working_tree_is_clean(ws)
@@ -262,3 +267,86 @@ def test_verify_overwrites_forged_green_checkpoint(
     assert fresh.verification_attempt_id
     assert fresh.verification_attempt_id != "OLD-GREEN"
     assert fresh.verification_attempt_id == str(update["verification_attempt_id"])
+
+
+# ---------- ④v2 续改:从具名候选继续修复,新候选谱系,完整重验 ----------
+
+
+def test_rollback_continues_from_gate_clean_candidate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import json
+
+    nodes, ws = _nodes(monkeypatch, tmp_path)
+    _fix_workspace(ws)  # 合法修复(BUG-001)
+    state = _state()
+    applied = nodes.apply(state)  # type: ignore[arg-type]
+    assert applied["status"] == "VERIFY"
+    candidate_id = str(applied["candidate_id"])
+
+    # verify 失败(模拟:候选没修全)→ rollback 判定续改而非整体复位
+    state.update(applied)
+    state["verify_failed_ok"] = False
+    state["verify_regression_ok"] = False
+    rolled = nodes.rollback(state)  # type: ignore[arg-type]
+    assert rolled["status"] == "PROPOSE_PATCH" and rolled["round_no"] == 3
+    assert rolled["continue_from_candidate_id"] == candidate_id
+    assert "已从该候选继续修复" in str(rolled["feedback"])
+
+    # 工作区保持候选 diff(重应用后),不是空基线——局部进展被保留
+    from app.gitops.differ import working_tree_diff
+
+    continued_diff = working_tree_diff(ws).diff_text
+    assert continued_diff.strip() and "if not value.strip()" in continued_diff
+
+    # 下一轮 apply:模型未改动 → 冻结出新轮候选身份(新 hash 身份),谱系父 = 续改起点
+    state.update(rolled)
+    state["round_no"] = 3
+    reapplied = nodes.apply(state)  # type: ignore[arg-type]
+    assert reapplied["status"] == "VERIFY"
+    new_id = str(reapplied["candidate_id"])
+    assert new_id and new_id != candidate_id
+    manifest = json.loads(
+        (candidates_root(tmp_path) / new_id / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["parent_candidate_id"] == candidate_id
+    assert manifest["round_no"] == 3
+
+    # 续改后完整 verify:真实重跑重新验收,旧验证结论全部失效重验
+    state.update(reapplied)
+    update = nodes.verify(state)  # type: ignore[arg-type]
+    assert update["verify_failed_ok"] is True  # 正确修复 → 通过
+    fresh = read_candidate_checkpoint(tmp_path, new_id)
+    assert fresh is not None
+    assert fresh.gate_ok is True and fresh.verify_failed_ok is True
+    assert fresh.verification_attempt_id == str(update["verification_attempt_id"])
+
+
+# ---------- ⑤有界停止:连续相同失败无新增证据 → NEEDS_REVIEW ----------
+
+
+def test_bounded_stop_stops_identical_failures_without_progress(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    nodes, _ws = _nodes(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "app.graph.nodes.get_settings", lambda: _fake_settings(max_identical_failures=3)
+    )
+    # 分支已用过且同失败连 3 轮 → 不再 reset 重试,收敛 NEEDS_REVIEW
+    state = _state(repeat_streak=3, branching_used=True)
+    rolled = nodes.rollback(state)  # type: ignore[arg-type]
+    assert rolled["status"] == "NEEDS_REVIEW" and rolled["outcome"] == "needs_review"
+    assert "bounded stop" in str(rolled["error"])
+    # 现场仍保全(不 reset,证据原样保留)
+    assert rolled["preserved_diff"] == ""
+
+    # streak 未达门槛 → 不停止
+    below = nodes.rollback(_state(repeat_streak=2, branching_used=True))  # type: ignore[arg-type]
+    assert below["status"] != "NEEDS_REVIEW"
+
+    # limit=0(关闭)→ 永不有界停止
+    monkeypatch.setattr(
+        "app.graph.nodes.get_settings", lambda: _fake_settings(max_identical_failures=0)
+    )
+    off = nodes.rollback(_state(repeat_streak=9, branching_used=True))  # type: ignore[arg-type]
+    assert off["status"] != "NEEDS_REVIEW"
