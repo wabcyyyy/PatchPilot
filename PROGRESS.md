@@ -1602,3 +1602,46 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
 - **下一卡**:G06(连续会话与结构化任务记忆)。G05 的 `EvidenceRef` 是它的引用单位;
   SPEC §5 的"先去重复/替换可取回的大输出"要求 `compact_messages` 的存根带上 `evidence_id`
   (现在不带),这条刻意留给 G06,不在本卡顺手改。
+
+---
+
+## 21. B2 / G06:连续会话与结构化任务记忆(2026-10-11)
+
+- 开工身份 `6874d90`(G05 文档收口)→ 代码卡 `cd92f00`。逐卡语义、范围扩张、限制清单见
+  `docs/work-notes/agent-upgrade-progress-2026-10-10.md` 的 G06 节。
+- **缺陷有付费现场**:同一题两次独立运行(`runs/swe-hard-graph2`、`graph3`),定位阶段读过目标文件
+  之后,补丁阶段仍然 13 次 search / 10 次 read、`apply_patch` 0 次。当时的归因"暂定 findings 太薄"
+  已被数据推翻(把已查线索拼进去 63→397 字符,重复调查一次没少)——真正缺的是
+  **平台可核对的观测,并且它对新阶段可见**。
+- **观测由平台写,模型只提假设**:每条真实工具回执折成一行事实进 `TaskMemory`
+  (含行范围、是否被裁、失败计数);模型唯一的记忆通道 `update_memory` 只接受
+  `hypothesis|supported|refuted`,写 `verified` 被点名拒绝。渲染三区分开,
+  模型的话不会伪装成事实。
+- **失效看得见**:观测带 `workspace_revision`,`apply_patch`/`reset_workspace` 与 rollback 的
+  复位都会推进代数并把更早的观测标 `stale`(G05 的 `read_evidence` 引用一起带过去)。
+- **配对规则收成一处**:`SessionState.repair_orphans()` 在发送前补齐孤儿 tool_call(显式占位,
+  不伪造成功)并落 `message_pairing_repaired`;此前这条不变量散在四个回填分支里靠自觉。
+- **恢复要认得回哪一条会话**:turn 边界快照绑定 session/记忆 hash,记忆本体在同一边界落
+  `memory_state.json`;`binding_mismatch()` 两侧都有绑定且不一致才拒绝 → 待审。
+  **未绑定的历史快照不算 mismatch**——否则升级前每一份快照一律待审,那是伪造迁移成功。
+- **接线没有破坏既有形状**:`_persistent_context` 保持原表达式与语义(装配过用装配,
+  否则用骨架),`test_repo_map.py` 三条守卫(逐字源码形状、关闭即 `["", ""]`、候选点只带变体提示)
+  原样通过;空记忆不出块,所以 LOCALIZE(第一个阶段)的 system 与接入前逐字节相同。
+- **新增 ADR-0013**:反方节明写"同一阶段内新增观测不会立刻重渲染 system"(幂等换 stable prefix)、
+  "`update_memory` 不进 PLAN"(保 G01 单次文本契约)、"候选 ctx 不共享记忆"(G13 再定共享域)。
+- **收口**:ruff check / format 全绿(252 files);全量三轮 —— 第一轮 **2 failed / 1058 passed**
+  (两条 resume 用例被我自己新加的绑定校验误伤),修掉幂等缺陷后第二轮 **1 failed / 1060 passed**
+  (唯一红是我新增用例顶漂了 ADR-0013 的三条锚点),重钉后第三轮
+  **1061 passed / 4 skipped / 4 warnings,EXIT=0**(= G05 的 1030 + 本卡 31,skip 同一组 4 条);
+  21 处 ADR 锚点重钉 + nodes.py 行索引 700→849(`test_docs_anchors` 6 passed),
+  `test_resume` + `test_resume_crash` + `test_loop_state` 57 passed。
+- **本轮抓到并修掉的自身缺陷(两条)**:① `TaskMemory.set_context()` 无条件升版本,而恢复路径会重放同一份
+  冻结上下文 ⇒ 记忆 hash 与崩溃前不同 ⇒ 新校验把自己的恢复判成 mismatch、任务错误收敛成待审。
+  修法是"内容真的变了才升版本",并由专门一条幂等用例钉住。教训与 G03 同源:
+  **新增一条拒绝路径,必须先用既有通过用例跑一遍**;拒绝面最容易误伤放行路径,
+  而误伤表现为"保守待审"而不是崩溃,不跑全量就看不见。
+  ② 我新增的那条用例让 ADR-0013 自己的三条锚点行号漂移(第二轮全量唯一那条红),重钉后转绿——
+  机制按设计工作,但正确的次序是**动过被锚定的文件就立刻重钉**,不该留给全量去发现。
+- **仍未证明/未做**:记忆块能否真的减少重复调查要靠真实批(G17);
+  `task_memory_max_chars` 与骨架/规则抢窗口的联动标定属 G07;模型摘要(可选、有预算)未实现,
+  确定性摘要就是默认路径;`state.py`/`prompts.py` 本卡未动。

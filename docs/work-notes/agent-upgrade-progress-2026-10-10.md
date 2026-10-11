@@ -599,3 +599,144 @@ G06(连续会话与结构化任务记忆):`app/agent/session.py`、`app/context/
 SPEC §5 的"先去重复/替换可取回的大输出,再整理 TaskMemory,再压缩旧回合"要求
 `compact_messages` 的存根带上 `evidence_id`(现在不带)——这条会在 G06 里做,不在本卡顺手改。
 
+---
+
+## G06 / P1:连续会话与结构化任务记忆
+
+- **开始身份** `6874d90`(G05 文档收口)→ **代码结束身份** `cd92f00`;本进度与 PROGRESS §21 在紧随其后的 docs commit。
+- **允许的语义变更**:SPEC §3.2 明列的"任务内会话/记忆";交接提示已授权在 `app/graph` 必须掌握区按规格实现协议语义。
+- **声明范围内**:`app/agent/session.py`(新增)、`app/context/task_memory.py`(新增)、
+  `app/context/assembler.py`(新增)、`app/graph/plain_loop.py`、`nodes.py`、`loop_state.py`、
+  `resume.py`、`app/evals/driver.py`、`app/tools/base.py`、`tests/test_task_memory.py`(新增)。
+  `state.py`/`prompts.py` 本卡**未动**,理由见"需要点名的范围决定"。
+- **范围扩张(动手前先登记)**:
+  | 文件 | 为什么必须动 |
+  |---|---|
+  | `app/tools/registry.py` | `update_memory` 必须注册才能进阶段白名单(G01 的"可见面==执行面");观测登记也必须挂在唯一执行入口上,否则每个工具各写一套 |
+  | `app/tools/memory.py`(新增) | 观测折行(`describe_receipt`)与模型提交通道是工具层语义;SPEC G06 只列了 `tools/base.py`,工具实现按目录约定落在 `app/tools/` |
+  | `app/graph/nodes.py` | 阶段装配点、候选/判定事实登记、rollback 的代数推进都在节点里 |
+  | `app/config.py` + `app/evals/provenance.py` + `tests/test_driver.py` | 2 个新键的三选一归类是既有强制机制;pinned 集按该用例 docstring 规定的维护动作补键 |
+  | `app/evals/single_shot.py` | 两臂对称(见"需要点名的决定"第 3 条) |
+  | `README.md` + `tests/test_docs_anchors.py` + `docs/adr/0003/0004/0006/0007/0009/0011/0012` | 工具清单条数与名单以注册表为准绳;nodes.py 行索引 700→849;18 处 ADR 锚点因行漂移重钉(加上本卡自己 ADR-0013 的 3 处二次重钉,合计 21 处) |
+
+### 改了什么语义
+
+| 文件 | 语义 |
+|---|---|
+| `app/context/task_memory.py`(新) | `TaskMemory`:观测/判定/假设/排除四区,**事实与推断分开**;`record_evidence` 由平台写;`model_update` 只接受 `hypothesis|supported|refuted` 且 `supported/refuted` 必须引用真实存在的观测号,`verified/confirmed/resolved` 点名拒绝;`mark_stale(from_revision)`;`render` 三区分节、倒序保留最新、裁掉必须报数;**没有任何观测/假设/计划时不出块**(开局与接入前逐字节相同);`memory_state.json` 原子落盘,`schema_version` 不符一律当没有 |
+| `app/agent/session.py`(新) | `SessionState`:session_id / 协议版本 / 阶段序列 / 每阶段能力集合 / 记忆版本;`identity_hash()` 是恢复比对的身份;**配对规则唯一实现处** `orphan_tool_calls()` + `repair_orphans()`(补的是显式占位,不伪造成功) |
+| `app/context/assembler.py`(新) | `ContextAssembler` 按 `(阶段, 轮次)` **幂等**装配:骨架在前、记忆块随后、各只出现一次;二次装配返回同一成品并标 `reused=True` |
+| `app/tools/memory.py`(新) | `describe_receipt`:把每条真实回执折成一行可核对事实(含行范围、是否被裁、遍历域是否被裁、run_tests 的通过/失败计数与失败用例);失败回执同样是观测。`update_memory` 工具的 handler |
+| `app/tools/registry.py` | `execute()` 在 G05 的有界视图之后调 `_record_memory`(自动登记 + 写后失效);注册 `update_memory`;`MUTATING_TOOLS` 的代数推进与观测代数一致 |
+| `app/graph/plain_loop.py` | 每次**发送前**过一道孤儿补齐并落 `message_pairing_repaired`;`_write_snapshot` 绑定 session/memory 四个字段并在同一边界落 `memory_state.json` |
+| `app/graph/loop_state.py` | `LoopSnapshot` 新增 `session_id/session_hash/memory_version/memory_hash`(全部可空)。**不升 SNAPSHOT_VERSION**:字段是增量的,旧文件读回落在"未绑定",语义与加字段前逐字相同 |
+| `app/graph/resume.py` | `binding_mismatch()` 纯函数 + 在 `prepare_resume` 里接:两侧都有绑定且不一致 → `reject`(待审),并落 `resume_binding_mismatch` 事件带两侧读数 |
+| `app/graph/nodes.py` | `TaskNodes` 新增 session/memory/assembler 三字段(`task_memory_enabled=false` 时都不建);`_begin_assembly` / `_persistent_context`(改为"装配好就返回装配,否则返回骨架")/ `_open_agent_state`(冻结目标、约束、验收清单 + `session_opened` 事件);plan 产物、候选、verify 判定进记忆;rollback 推进代数并标失效 |
+| `app/evals/driver.py` | plain 引擎同样接会话与记忆(与 graph 的 `_build_ctx` 同一口径),恢复优先读回 run_dir 那一份 |
+
+### 最小行为证据(输入 → 实际请求/动作 → 结果)
+
+用例 31 条(`tests/test_task_memory.py`),关键五条:
+
+| 场景 | 实测 |
+|---|---|
+| T10 端到端:定位读过 `src/huge.py` 1-400 行(该回执超可见上限被裁)后进入 PLAN | PLAN 那一次**实际请求**的 system 里有 `[E1] LOCALIZE r0 read_file … 行 1-…` 与 `read_evidence("…")`;断言对象是 `model.seen[0]`,不是内部字段 |
+| 模型试图把假设写成事实 | `status="verified"` → `rejected[0]` 点名 `platform-only`,该条**不落库**;无引用的 `supported` 同样被拒 |
+| 崩溃切在"assistant 已声明、回执未落"之间 | 续跑的第一次请求里带着 `tool_call_id=orphan-1` 的显式占位回执,并落 `message_pairing_repaired`;旧路径会把孤儿原样发给端点 |
+| 快照绑定 | `load_loop_snapshot` 读回的 `session_id/session_hash/memory_hash/memory_version` 与当前会话/记忆逐项相等;`binding_mismatch` 在"快照有绑定、记忆版本不同"时返回 `["memory_hash"]`,而**未绑定快照返回 `([], {})`** |
+| 恢复重放同一份冻结上下文 | `set_context` 幂等:内容没变 ⇒ 版本与 hash 一字不动;真加了约束才 +1(这条就是第一轮两条 resume 红的根因) |
+
+反向对照一条都没写进实现:装配幂等(`reused=True`)与"空记忆不出块"这两条本身就是防叠加/防行为漂移的钉子,
+回归由 `test_repo_map.py::test_disabled_is_byte_identical_to_pre_change` 与
+`test_assembly_is_stable_within_a_stage` 分别守着。
+
+### 检查读数
+
+```
+.venv/Scripts/ruff.exe check .            → All checks passed!
+.venv/Scripts/ruff.exe format --check .   → 252 files already formatted
+定向:tests/test_task_memory.py                                            → 31 passed
+定向:tests/test_resume.py + test_resume_crash.py + test_loop_state.py      → 57 passed (0:00:32)
+定向:tool_capabilities + docs_anchors + repo_map + plan_invariants +
+      single_shot + provenance_anchor + driver + experiment_* + plan_stage +
+      plain_loop + context_wiring + loop_state + evidence_store           → 151 passed (0:02:43)
+全量第一轮:.venv/Scripts/pytest.exe -q --basetemp=D:/tmp/pt-upgrade-b2-g06full
+      → **2 failed, 1058 passed, 4 skipped, 4 warnings in 1488.59s (0:24:48)**,EXIT=1
+      (`test_graph_resume_finishes_and_reruns_every_gate`、
+      `test_resume_survives_an_unclean_process_death` 都收敛成 NEEDS_REVIEW)
+全量第二轮(修完幂等):.venv/Scripts/pytest.exe -q --basetemp=D:/tmp/pt-upgrade-b2-g06full2
+      → **1 failed, 1060 passed, 4 skipped, 4 warnings in 1562.66s (0:26:02)**,EXIT=1
+      (唯一一条红是 `test_docs_anchors` —— 我新增的幂等用例让 ADR-0013 的三条锚点行号漂移;
+      重钉后 `test_docs_anchors` 6 passed,代码一字未动)
+全量第三轮(锚点重钉后):.venv/Scripts/pytest.exe -q --basetemp=D:/tmp/pt-upgrade-b2-g06full3
+      → **1061 passed, 4 skipped, 4 warnings in 1403.81s (0:23:23)**,EXIT=0
+```
+
+**第一轮那两条红是我自己造的缺陷,不是既有回归。** 根因:`TaskMemory.set_context()` 无条件
+`version += 1`,而恢复路径(`restore_runtime → _open_agent_state`)会拿同一份冻结输入重放它 ——
+版本一升,记忆 hash 就和崩溃前那一份不同,于是我新加的绑定校验**把自己的恢复判成 mismatch**,
+两条 resume 用例被错误收敛成待审。修法:内容真的变了才升版本(幂等重放不升),
+并由 `test_set_context_is_idempotent_for_the_same_frozen_input` 单独钉住,
+docstring 里写明"这就是本轮真实红过的两条用例的根因"。
+教训与 G03 那条同源:**新增一条拒绝路径,必须先用既有的通过用例跑一遍**——
+拒绝面最容易在"本该放行"的路径上误伤,而误伤表现为待审(保守)而不是崩溃,不容易一眼看出。
+
+数对账:G05 收口的全量是 `1030 passed / 4 skipped`;G06 新增 31 条(`test_task_memory.py`)
+⇒ 期望 `1061 passed`。第二轮已经数到 `1060 passed + 1 failed`(那一条是锚点行号),
+重钉后第三轮实测 `1061 passed`,逐条闭合。skip 仍是同一组 4 条(符号链接权限 ×2、Redis 不可用 ×2),
+新增 skip 为 0;warnings 同为 4 类,与 G05 一致。日志
+`D:/tmp/pt-upgrade-b2-g06full.log`、`-g06full2.log`、`-g06full3.log`
+(本机 GBK 码页,读数按 gbk+replace 解码取)。耗时 24:48 / 26:02 按本机负载记账,不作回归结论。
+
+旧断言处理:一条没删、一条没放宽。`test_repo_map.py` 的三条形状守卫
+(`extra_system=self._persistent_context(self.workspace),` 逐字保留、关闭骨架时仍为 `["", ""]`、
+候选点仍只带变体提示)全部原样通过——为此把装配收进 `_begin_assembly`,
+`_persistent_context` 只做"装配过就用装配、没用过就用骨架"。
+`test_tool_capabilities.py` 18 条、`test_plan_invariants.py` 的 PLAN 可见面断言、
+`test_single_shot.py` 的两臂名单(比的是导入常量)原样通过。
+唯一被我的实现改动过的既有断言是 `test_docs_anchors.py` 的 nodes.py **行索引** 700→849
+(文档正文与被钉句子一字未动,这是该机制规定的维护动作)。
+`test_graph_resume_finishes_and_reruns_every_gate` 与 `test_resume_survives_an_unclean_process_death`
+的**断言一字未动**——第一轮红的原因在我这边(见上面「检查读数」里那条根因),修的是实现不是用例。
+
+### 需要点名的范围决定与判断
+
+1. **`state.py` 与 `prompts.py` 未动**:会话与记忆是**闭包对象**,不进 LangGraph state
+   (state 必须可 SqliteSaver 序列化,`SessionState` 里有锁与可变列表);模型可见文本
+   全部经 `_begin_assembly` 的装配面进来,没有新提示词。**这是范围决定,不是遗漏。**
+2. **`update_memory` 不进 PLAN 阶段**:PLAN 的可见面仍然只有 `finish`。给它一个可调用手段
+   等于重开 G01 刚堵掉的洞(合规纯文本必须一次请求就结束)。计划文本由平台代登记(`record_plan`)。
+3. **两臂对称**:`update_memory` 同时进 `READ_TOOLS`/`WRITE_TOOLS`/`ONE_SHOT_TOOLS`,
+   消融变量仍只有"有无执行反馈 / 有无重试"。
+4. **未绑定快照不判 mismatch**:否则升级前留下的每一份快照一律待审,那是伪造迁移成功。
+5. **装配幂等 ⇒ 同一阶段内新增观测不会立刻进 system**(跨阶段/跨轮次才重装配)。
+   选择幂等是为了保住 stable prefix;这条写进 ADR-0013 的反方节,不伪装成"证据自动同步"。
+6. **候选 ctx 不共享记忆与证据**:候选用 `report_dir/cand{i}`,索引各自独立。
+   G13 要传证据包时先定"合法共享域"。
+
+### 剩余限制
+
+1. 记忆块与骨架(、G08 的项目说明)抢同一份 system 预算;`task_memory_max_chars=3000` 是拍的起点,
+   G07 抬窗口时三者必须一起标定;
+2. 观测是**索引不是正文**:`[E1] … 行 1-400` 不带内容。模型可能因为"只看到索引"再读一遍,
+   省不省请求离线不知道(G17);
+3. `MEMORY_SCHEMA_VERSION=1` 无迁移路径:版本不符一律当没有记忆(保守冷启),
+   不做"猜着升版";
+4. `loop_state.json` 未升 `SNAPSHOT_VERSION`,依赖"新增字段全可空"这一前提;
+   真要改语义必须同时升这个数;
+5. `SessionState.calls` 落盘时截尾 200 条(快照体积保护),`orphan_tool_calls` 读的是
+   **即将发出的消息**而不是这本账,所以裁剪不影响判定;
+6. 离线全绿只证明接线与形状:**不证明修复率、不证明重复调查变少、不证明省 token**。
+
+### 费用与外部动作
+
+零模型调用、零付费、零网络、零 push、零删除历史结果。
+
+### 下一卡
+
+G07(模型能力 profile 与 repair_v2 上下文策略):`app/llm/profiles.py`、`app/agent/runtime.py`(新增)、
+`app/context/token_window.py`、`app/config.py`、`task_spec.py`、`resources.py`、`runner.py`、`nodes.py`、
+`plain_loop.py`、`driver.py`、`run_single.py`、`provenance.py`、`app/api/service.py` + `test_model_profiles.py`。
+G07 必须一并处理的登记项:`refine_head_lines/tail_lines` 与 `task_memory_max_chars`、
+`repo_map_max_chars` 的联动标定;`TransportRetryPolicy`/`RequestEstimate` 的生产装配点;
+`served_model` 采集;`repetition` 落进运行产物。
