@@ -1538,3 +1538,153 @@ ADR 锚点全量审计           → 0 漂移(G11 重钉 23 处、G12 重钉 16 
   ubuntu CI(G09 起的口径不变);本机镜像 sha256 已登记,复跑前先确认镜像存在。
 - 下一批按 SPEC 是 **B5(G13–G14:三角色委派;候选检查点)**,需另行授权才起;
   G17(真实端点/在线批)逐批单独授权,本批零付费零网络。
+
+---
+
+## B5 批次说明(G13–G14)
+
+## G13 / P2:轻量角色委派与现有候选分支统一(落地 6104506→31cde94)
+
+- **commits**:`6104506`(①配置冻结、角色表、子任务账本)、`5053d32`(②delegate 工具注册与
+  恢复语义)、`564ffd9`(③图引擎接线委派编排与候选统一 child runner)、`c4f7016`(④受理契约
+  与报告登记委派键与子任务贡献)、`31cde94`(⑤委派单元与接线测试)。
+- **开始身份**:`354d838`(B4 退出)→ **收据身份**:`31cde94`(工作树 clean,未 push)。
+- **卡面范围**(SPEC G13):`app/agent/roles.py`、`subtasks.py`(新增)、`app/tools/delegation.py`
+  (新增)、`registry.py`、`graph/nodes.py`、`runner.py`、`app/api/service.py`、
+  `app/evals/run_single.py`、`config.py`、`task_spec.py`、报告/轨迹;
+  新增 `tests/test_subagents.py`、`test_subagent_wiring.py`(SPEC 另点名 test_branching.py)。
+- **超出卡面清单的接线**(按 SPEC §7 先记录理由):
+  | 文件 | 为什么必须动 |
+  |---|---|
+  | `app/api/report.py`、`app/evals/driver.py` | 退出条件要求"报告能说明每个子任务贡献":报告/驱动登记子任务身份、角色与计量 |
+  | `app/task_spec.py` + `app/config.py` + `app/evals/provenance.py` + `tests/test_driver.py` | 6 个新键(delegation_enabled/max_subagent_concurrency/max_delegations/subtask_budget_share/subtask_max_turns/subtask_model)走受理契约三选一分类冻结,运行中改环境变量不改变已受理任务的委派形状 |
+  | `README.md` + `docs/adr/` 多篇 + `tests/test_docs_anchors.py` | delegate 进工具面,README 工具清单与 nodes/runner 等行号锚点重钉 |
+
+### 改了什么语义
+
+| 项 | 语义 |
+|---|---|
+| 三角色 | researcher(只读+受控诊断)/reviewer(只读冻结候选+测试集)/repair_candidate(隔离工作区修改并验证,无 ask_user);三者都不含 delegate 与 ask_user → 递归深度恒 1、等待语义只属主线 |
+| delegate 工具 | `delegate(role, task, evidence_ids?, candidate_id?)` 同步返回有界 ChildResult;被拒绝(预算不足/名额满/未配置)是合法 ToolResult,不让模型当异常重试 |
+| 名额/额度 | 默认两个并发、每任务三次、递归 1;父账本先原子预留,合计不超过任务有效限额 25%,可显式配置并冻结;剩余不足拒绝,不因分支重授额度 |
+| 统一 child runner | 既有 `_run_candidate`(自适应 Best-of-N)接入同一 child runner,两个候选各占一个名额,不叠加两套额度;分支合流前核对候选 hash 再走原 apply/gates/verify |
+| 有界返回 | ChildResult 含结论/证据引用/未验证假设/风险/候选引用/计量/终止原因;父只吸收摘要与引用,子"测试通过"不构成最终成功授权 |
+| 会话/身份 | 子任务独立模型会话、精简任务/证据包、适用规则与能力,不复制父消息;FakeLLM 子任务用独立冻结的 replay_subtasks 脚本/工厂,缺脚本明确拒绝,不沿用父游标/不偷偷调真实模型 |
+| 恢复语义 | 父取消 → CANCELLED;child 崩溃 → CRASHED;子工作区无候选身份(恶意 finish 拿不到平台候选) |
+
+### 最小行为证据(输入 → 实际请求/动作 → 结果)
+
+| 场景 | 实测(均离线 FakeLLM) |
+|---|---|
+| 越权拒绝 | 只读角色运行期改工作区被挡(researcher/reviewer 无 apply_patch);delegate/ask_user 不进任何子任务角色面;未知角色/未配置模型工厂/缺脚本一律拒绝 |
+| 名额与并发 | 并发=名额=槽位的取小语义有单元用例;预算不足拒绝委派,per-subtask 预算下限为 1 |
+| 落选消耗入账 | 全部候选落选仍占子任务名额并计入父账本(接线用例核对账本) |
+| 取消/崩溃 | 父取消 → CANCELLED;child 崩溃 → CRASHED |
+| 递归拒绝 | 子角色无 delegate → 递归委派在装配面即被挡 |
+| one_shot 对照臂 | one_shot 从不建 manager、从不出现 delegate 工具 |
+| CLI/API 同源 | CLI/API 共用模型工厂与能力装配;API 自定义任务离线覆盖实际委派接线 |
+| 恶意返回 | repair_candidate 声称"测试通过"不得拿到候选身份/通过平台验收 |
+
+### 检查读数(卡内定向 → 批内全量)
+
+```
+ruff check .             → All checks passed!
+ruff format --check .    → 286 files already formatted
+定向:test_subagents.py + test_subagent_wiring.py + test_branching.py → 45 passed (58.47s)
+锚点:test_docs_anchors.py → 6 passed(G13 各卡重钉 README 工具清单与 nodes/runner 行号锚点)
+```
+- 本机环境:`D:/wcy/project/PatchPilot/.venv`(Python 3.14.1 / pytest 9.1.1 / ruff 0.17.0,
+  与 B4 收据同身份);basetemp 落仓库外 `D:/tmp/pt`。全量未在本卡运行,批次全量收据见 B5 退出节。
+
+### 剩余限制(不许被读成"已证明效果")
+
+1. 委派是否提升修复率/降低轮次与成本,离线只证协议与边界,效果要 G17 真实端点批;
+2. 子任务只吸收"摘要+引用",不共享 TaskMemory 内容;reviewer 意见只能促使重新调查,不能覆盖平台验收;
+3. 递归深度恒 1、并发/次数上限是工程默认,无真实负载读数;
+4. 分支候选各占一个子任务名额已接线,但"分支与委派叠加"的端到端场景未单列演练。
+
+### 费用与外部动作
+
+零模型调用、零付费、零网络、零 push、零删除历史结果。
+
+### 下一卡
+
+G14(候选检查点、失败现场与可控局部进展)。
+
+---
+
+## G14 / P2:候选检查点、失败现场与可控局部进展(落地 94331f1→f732056→本节)
+
+- **commits**:`94331f1`(C1:候选检查点证据落盘 + 终局候选绑定)、`f732056`(C2:rollback
+  从具名候选续改 + 连续相同失败有界停止)、本节(C3:进度登记 + 锚点重钉)。
+- **开始身份**:`31cde94`(G13)→ **收据身份**:C3 提交后工作树 clean(未 push)。
+- **卡面范围**(SPEC G14):`app/gitops/snapshot.py`、`patcher.py`、`app/graph/nodes.py`、
+  `resume.py`、`acceptance.py`(只强化候选绑定)、`app/tools/patching.py`、`app/agent/subtasks.py`、
+  报告;新增 `tests/test_candidate_checkpoints.py`。
+- **超出卡面清单的接线**(按 SPEC §7 先记录理由):
+  | 文件 | 为什么必须动 |
+  |---|---|
+  | `app/graph/candidate.py` | 候选工件/证据的落点本就在此:新增 CandidateCheckpoint 读写、is_candidate_gate_clean、reapply_candidate(候选检查点与续改的载体,与既有 load_candidate/freeze_candidate 同文件) |
+  | `app/config.py` + `app/evals/provenance.py` + `tests/test_driver.py` | 新键 `max_identical_failures`(有界停止阈值,0=关闭)走三选一分类冻结 |
+  | `app/graph/state.py` | `continue_from_candidate_id` 引用随检查点持久化(只存引用不存内容,reset 清引用) |
+  | `docs/adr/` 多篇 + `tests/test_docs_anchors.py` | C2 使 config.py/provenance.py/nodes.py 行号漂移,按锚点机制重钉 8 处 |
+
+### 改了什么语义
+
+| 项 | 语义 |
+|---|---|
+| 候选检查点 | 每次候选 freeze 后落 checkpoint(round/gate_ok/验证布尔/verification_attempt_id/note);gate 拒绝也保全工件与 checkpoint(gate_ok=False,不冒充绿);verify 每次真实重跑用 fresh attempt id 覆盖旧证据 |
+| 终局候选绑定 | finish 只认"工作区 diff sha256 == state.candidate_hash == manifest.diff_sha256";hash 漂移、工件缺失/篡改、契约缺身份(task_spec.json)一律拒绝 resolved |
+| v2 续改 | rollback 判定"候选门禁干净 ∧ 轮数未耗尽 ∧ 无分支信号"时:reset 到基线 → 重应用具名候选 → 下一轮 PROPOSE 从该候选继续;新候选 parent=续改起点,旧验证结论全部失效、完整重验 |
+| 被拒候选 | gate 拒绝的候选把 candidate_id/hash 带回 state,rollback 读 checkpoint 判 gate_ok=False 走整体复位并清引用(防旧 hash 误绑) |
+| 有界停止 | 同一组失败连续 ≥ max_identical_failures 轮、且换思路出口(自适应分支)已用或不存在 → 收敛 NEEDS_REVIEW,现场保全不 reset;不靠增加 max_rounds 绕预算 |
+| 分支交互 | streak≥2 且分支可用 → 仍走 reset+分支(不截断换思路);bounded-stop 判定落在分支信号之后 |
+
+### 最小行为证据(输入 → 实际请求/动作 → 结果)
+
+| 场景 | 实测 |
+|---|---|
+| gate 拒绝 | 改测试文件制造 [files] 违规 → 工件与 checkpoint(gate_ok=False)保全,rollback 整体复位回基线、清候选引用 |
+| 合法候选续改 | comment 补丁门禁通过但验证失败 → rollback 从具名候选继续(工作区保留候选 diff),下一轮无改动 finish 重走 apply→verify,新候选谱系 parent=起点 |
+| hash 漂移/工件消失 | apply 冻结后再动工作区 → finish 拒绝("workspace diff sha256");删冻结工件 → "missing or tampered" 拒绝 |
+| 旧绿证据拒绝 | 伪造 OLD-GREEN checkpoint → verify 真实重跑用 fresh attempt id 覆盖,两个布尔回到真实失败 |
+| 同失败无进展停止 | streak=2(limit=2)→ 有界停止收敛 NEEDS_REVIEW(现场保全);streak 未达门槛不停止;limit=0 关闭 |
+| 回归适配 | test_graph::test_checkpoint_roundtrip 直连节点补 task_spec 契约后绑定成立;streak 提示用例适配续改语义(streak 1→2 后有界停止收尾,钉住 route_rollback 不把 NEEDS_REVIEW 落回 plan) |
+
+### 检查读数(卡内定向 → 批内全量)
+
+```
+ruff check .             → All checks passed!
+ruff format --check .    → 286 files already formatted
+锚点:test_docs_anchors.py → 6 passed(C1/C2 重钉 8 处:nodes.py×5、config.py×1、provenance.py×2)
+定向(C1):test_candidate_checkpoints.py(①–③)→ 通过(上一会话执行)
+定向(C2):test_graph + test_candidate_checkpoints + test_branching + test_driver +
+          test_candidate_recovery + test_docs_anchors → 80 passed (306.41s)
+G13+G14 全量:未运行,批次退出节给出
+```
+- 本机环境:`D:/wcy/project/PatchPilot/.venv`(Python 3.14.1 / pytest 9.1.1 / ruff 0.17.0);
+  basetemp 落仓库外 `D:/tmp/pt`。
+
+### 需要点名的范围决定与判断(不同意就说,回退成本很低)
+
+- **续改的准入不靠"验证部分通过"的灰度判定**:凡是"候选门禁干净"就允许从候选继续,
+  "部分测试通过"只作为事实登记,续改产生的新候选仍完整过门禁与双集(旧验证全部失效)。
+- **有界停止的判据是"连续相同失败"而非"轮数用尽"**:靠加轮数就绕预算;同一组失败无新证据
+  时,分支不可用/已用过才停(分支可用则交给重新规划)。
+- **bounded-stop 的 NEEDS_REVIEW 必须走终点**:route_rollback 原只对 BUDGET_EXCEEDED/
+  VERIFY_FAILED 回 "end",NEEDS_REVIEW 会落回 plan 死循环(C2 回归抓到,已修并钉用例)。
+
+### 剩余限制(不许被读成"已证明效果")
+
+1. 续改/有界停止的**效果主张**(是否减少整体复位、是否提升修复率/轮次)要 G17 真实端点批;
+2. `max_identical_failures=3` 是工程起点,无真实读数支撑;
+3. 候选续改与自适应分支的叠加场景仅由离线用例覆盖,无真实模型端到端;
+4. 恢复(restore/resume)路径的重验接线沿用 S03/G14 既有链,本卡未新增进程级续跑演练。
+
+### 费用与外部动作
+
+零模型调用、零付费、零网络、零 push、零删除历史结果。
+
+### 下一卡
+
+C4:B5 批次退出全量 pytest 收据(附 --durations=30)。
