@@ -11,7 +11,14 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.api.auth import require_token
 from app.api.report import render_markdown
-from app.api.schemas import TaskCreateIn, TaskListOut, TaskOut, TrajectoryPage
+from app.api.schemas import (
+    AcceptanceApproveIn,
+    AcceptanceOut,
+    TaskCreateIn,
+    TaskListOut,
+    TaskOut,
+    TrajectoryPage,
+)
 from app.errors import InvalidRequestError, PatchPilotError, TaskError
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_token)])
@@ -106,6 +113,25 @@ def cancel_task(task_id: str, request: Request):
         return TaskOut(**task)
     except TaskError as exc:
         return _error(404, "invalid_task", str(exc))
+    except PatchPilotError as exc:
+        return _error(409, "conflict", str(exc), task_id=task_id)
+
+
+@router.post("/tasks/{task_id}/acceptance", response_model=AcceptanceOut)
+def approve_acceptance(task_id: str, payload: AcceptanceApproveIn, request: Request):
+    """G10:trusted_user 批准 diagnose_then_repair 任务的验收清单(冻结 manifest)。"""
+    try:
+        result = _service(request).approve_acceptance(
+            task_id,
+            proposal_id=payload.proposal_id,
+            content_hash=payload.content_hash,
+            expected_revision=payload.expected_revision,
+        )
+        return AcceptanceOut(**result)
+    except TaskError as exc:
+        return _error(404, "invalid_task", str(exc), task_id=task_id)
+    except InvalidRequestError as exc:
+        return _error(422, "invalid_request", str(exc), task_id=task_id)
     except PatchPilotError as exc:
         return _error(409, "conflict", str(exc), task_id=task_id)
 

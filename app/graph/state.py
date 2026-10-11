@@ -80,3 +80,6 @@ class TaskState(TypedDict, total=False):
     candidate_id: str
     candidate_hash: str
     verification_attempt_id: str
+    # G10:diagnose_then_repair 的验收清单身份——diagnose 节点在冻结/沿用 manifest
+    # 时写回;报告与恢复核对"补丁生产的放行凭据是哪一份"(repair 任务恒缺省空串)
+    acceptance_manifest_hash: str

@@ -17,6 +17,9 @@ def build_graph(nodes: TaskNodes, checkpointer: Any | None = None) -> Any:
     graph.add_node("prepare", nodes.prepare)
     graph.add_node("baseline", nodes.baseline)
     graph.add_node("localize", nodes.localize)
+    # G10:issue-only 任务的验收清单节点(仅 diagnose 模式经过;repair 任务的
+    # 条件边不指向它,超步数与引入前逐字相同)
+    graph.add_node("diagnose", nodes.diagnose)
     graph.add_node("plan", nodes.plan)
     graph.add_node("propose", nodes.propose)
     graph.add_node("apply", nodes.apply)
@@ -25,14 +28,23 @@ def build_graph(nodes: TaskNodes, checkpointer: Any | None = None) -> Any:
     graph.add_node("rollback", nodes.rollback)
 
     graph.add_edge(START, "prepare")
+    # G10:diagnose 模式 prepare 后直接进调查(baseline 节点对空集等价于全仓跑)
     graph.add_conditional_edges(
-        "prepare", nodes.route_prepare, {"continue": "baseline", "end": END}
+        "prepare",
+        nodes.route_prepare,
+        {"continue": "baseline", "localize": "localize", "end": END},
     )
     graph.add_conditional_edges(
         "baseline", nodes.route_baseline, {"continue": "localize", "end": END}
     )
     # M5:范式是 LOCALIZE → PLAN → ACT(propose/apply)→ VERIFY,故 localize 之后先进 plan
-    graph.add_conditional_edges("localize", nodes.route_localize, {"continue": "plan", "end": END})
+    # G10:diagnose 模式在 localize 之后插入验收清单节点(diagnose → plan/END)
+    graph.add_conditional_edges(
+        "localize",
+        nodes.route_localize,
+        {"continue": "plan", "diagnose": "diagnose", "end": END},
+    )
+    graph.add_conditional_edges("diagnose", nodes.route_diagnose, {"continue": "plan", "end": END})
     graph.add_conditional_edges("plan", nodes.route_plan, {"continue": "propose", "end": END})
     graph.add_conditional_edges("propose", nodes.route_propose, {"apply": "apply", "end": END})
     graph.add_conditional_edges(

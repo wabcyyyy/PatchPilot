@@ -8,9 +8,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-from app.context.evidence import EvidenceRef
 from app.diagnosis.proposal import AcceptanceProposal
 from app.errors import InvalidRequestError
 from app.task_spec import MODE_DIAGNOSE_THEN_REPAIR

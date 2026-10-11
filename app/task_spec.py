@@ -296,11 +296,13 @@ class TaskSpec:
         if int(data.get("schema_version", 0)) != SCHEMA_VERSION:
             raise ValueError(f"unsupported task_spec schema_version: {data.get('schema_version')}")
         fields = set(TaskSpec.__dataclass_fields__)
-        missing = sorted(fields - set(data))
+        # mode 是 G10 新增字段:旧契约(引入之前落盘)没有它,"缺失"不构成拒绝——
+        # 缺字段=repair 是唯一忠实的读法(错误在下方按值校验里表达)
+        missing = sorted(fields - set(data) - {"mode"})
         if missing:
             raise ValueError(f"task_spec missing fields: {missing}")
-        kwargs = {name: data[name] for name in fields}
-        kwargs["mode"] = str(kwargs.get("mode") or MODE_REPAIR)
+        kwargs = {name: data[name] for name in fields if name != "mode"}
+        kwargs["mode"] = str(data.get("mode") or MODE_REPAIR)
         if kwargs["mode"] not in (MODE_REPAIR, MODE_DIAGNOSE_THEN_REPAIR):
             raise ValueError(f"unsupported task mode: {kwargs['mode']!r}")
         spec = TaskSpec(**kwargs)

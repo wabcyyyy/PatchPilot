@@ -43,6 +43,9 @@ def run_task_graph(
     resume: bool = False,
     tracker_sink: Callable[[dict[str, Any]], None] | None = None,
     arm: str = "agent",
+    mode: str = "repair",
+    approval_event: threading.Event | None = None,
+    on_waiting: Callable[[], None] | None = None,
 ) -> Any:
     """执行一个任务(状态机引擎);返回与 plain 引擎一致的 TaskResult。
 
@@ -127,6 +130,10 @@ def run_task_graph(
             branch_model_factory=branch_model_factory,
             policy=policy,
             price_model=model_name,
+            # G10:验收等待接线由调用方(服务层)注入;直接调用方不传 = headless,
+            # diagnose 模式到点不等待、如实 needs_review
+            approval_event=approval_event,
+            on_waiting=on_waiting,
         )
         checkpointer = (
             make_sqlite_checkpointer(run_dir / "checkpoints.sqlite") if use_checkpoint else None
@@ -170,8 +177,15 @@ def run_task_graph(
                     and bug.replay_script_path is not None
                     else None
                 ),
+                mode=mode,
             )
             write_task_spec_file(run_dir, task_spec)
+        # G10:任务模式与验收身份随受理契约走(旧契约缺 mode 字段按 repair 读);
+        # 回填给节点/工具层——propose_acceptance/manifest 通过这些字段与契约绑定,
+        # 受理后改环境变量不改变已受理任务走的是哪条路径。
+        nodes.mode = task_spec.mode
+        nodes.source_snapshot_hash = task_spec.source_snapshot_hash
+        nodes.task_spec_hash = task_spec.task_spec_hash
         graph = build_graph(nodes, checkpointer=checkpointer)
 
         initial: TaskState = {

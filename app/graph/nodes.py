@@ -689,6 +689,215 @@ class TaskNodes:
             return "diagnose"
         return "continue"
 
+    # ---------- DIAGNOSE(G10:issue-only 验收清单冻结) ----------
+
+    def _apply_manifest(self, manifest: Any) -> None:
+        """冻结清单生效:失败/回归集以 manifest 为唯一权威,apply_patch 放行凭据置真。
+
+        工具层的 apply_patch 门只读 ctx.acceptance_frozen;bug 的双集是 verify/提示
+        的实际读源(runner 的 restore_runtime 对恢复路径做同一件事,口径统一)。
+        """
+        self.bug.failed_tests = list(manifest.failed_tests)
+        self.bug.regression_tests = list(manifest.regression_tests)
+        if self.ctx is not None:
+            self.ctx.acceptance_frozen = True
+        self._acceptance_checked = True
+
+    def diagnose(self, state: TaskState) -> dict[str, Any]:
+        """验收清单节点:提议 → 平台红/绿校验 → 等待批准 → 冻结(SPEC §7 G10)。
+
+        提议只是候选:平台在**未修改的快照副本**上重做红/绿基线校验,读数进提议工件;
+        trusted_user 批准(API/CLI → 冻结 manifest → 唤醒本线程)之后才放行补丁生产。
+        headless(无线程事件或等待窗为 0)不等待:立即 needs_review 并保留提议工件,
+        绝不把"没批准的清单"当成功证据(对应 T15)。
+        """
+        assert self.ctx is not None
+        from app.agent.control import WAIT_APPROVED, WAIT_CANCELLED, wait_for_approval
+        from app.diagnosis.proposal import (
+            ManifestIntegrityError,
+            load_manifest,
+            load_proposal,
+            verify_baseline,
+            write_proposal,
+        )
+
+        run_dir = self.report_dir.parent
+
+        # 1) 已冻结(恢复路径/重复进入):直接沿用盘上清单,不重跑基线、不重新等待
+        try:
+            manifest = load_manifest(run_dir)
+        except ManifestIntegrityError as exc:
+            return {
+                "status": "NEEDS_REVIEW",
+                "outcome": "needs_review",
+                "error": f"acceptance manifest unreadable: {exc}",
+            }
+        if manifest is not None:
+            self._apply_manifest(manifest)
+            self.tracker.record(
+                tool="acceptance_frozen",
+                state="DIAGNOSE",
+                input_payload={"source": "resumed"},
+                output_summary={"manifest_hash": manifest.manifest_hash},
+            )
+            return {
+                "status": "PLAN",
+                "acceptance_manifest_hash": manifest.manifest_hash,
+                "failed_tests": list(manifest.failed_tests),
+                "regression_tests": list(manifest.regression_tests),
+            }
+
+        # 2) 取提议:本进程内工具提交的优先,否则读盘(恢复路径)
+        proposal = self.ctx.pending_acceptance
+        if proposal is None:
+            try:
+                proposal = load_proposal(run_dir)
+            except ManifestIntegrityError as exc:
+                return {
+                    "status": "NEEDS_REVIEW",
+                    "outcome": "needs_review",
+                    "error": f"acceptance proposal unreadable: {exc}",
+                }
+        if proposal is None:
+            return {
+                "status": "NEEDS_REVIEW",
+                "outcome": "needs_review",
+                "error": (
+                    "diagnosis finished without an acceptance proposal;"
+                    " no patch can be produced without an approved test list"
+                ),
+            }
+        self.tracker.record(
+            tool="acceptance_proposal",
+            state="DIAGNOSE",
+            input_payload={
+                "proposal_id": proposal.proposal_id[:12],
+                "content_hash": proposal.content_hash()[:12],
+            },
+            output_summary={
+                "failed_tests": len(proposal.failed_tests),
+                "regression_tests": len(proposal.regression_tests),
+            },
+        )
+
+        # 3) 红/绿基线校验:只在未验证过时真跑(恢复路径沿用已通过的读数,不重复烧测试)
+        if not proposal.baseline.get("verified"):
+            if (overrun := self._deadline_overrun()) is not None:
+                return {
+                    "status": "BUDGET_EXCEEDED",
+                    "outcome": "failed",
+                    "error": overrun,
+                    "resource_status": "exhausted",
+                }
+            check = verify_baseline(
+                python_exe=self.ctx.python_exe,
+                snapshot_dir=self.bug.repo_dir,
+                failed_tests=list(proposal.failed_tests),
+                regression_tests=list(proposal.regression_tests),
+                work_dir=run_dir / "acceptance",
+                timeout_seconds=get_settings().test_timeout_seconds,
+                env=self.ctx.env,
+            )
+            proposal.baseline = check.as_dict()
+            # 提议先落盘再等待:批准方(另一线程/端点)必须能读到内容 hash 与校验读数
+            write_proposal(run_dir, proposal)
+            self.tracker.record(
+                tool="acceptance_baseline",
+                state="DIAGNOSE",
+                input_payload={
+                    "red_exit_code": check.red_exit_code,
+                    "green_exit_code": check.green_exit_code,
+                },
+                output_summary=check.as_dict(),
+            )
+            if not check.verified:
+                reason = (
+                    check.collection_error
+                    or check.environment_failure
+                    or check.premise_error
+                    or "red/green baseline mismatch (unrelated failures or sets not as proposed)"
+                )
+                return {
+                    "status": "NEEDS_REVIEW",
+                    "outcome": "needs_review",
+                    "error": f"acceptance baseline not verified: {reason}",
+                }
+            if (overrun := self._deadline_overrun()) is not None:
+                return {
+                    "status": "BUDGET_EXCEEDED",
+                    "outcome": "failed",
+                    "error": overrun,
+                    "resource_status": "exhausted",
+                }
+
+        # 4) 等待 trusted_user 批准;0 / 无线程事件 = headless,不等待
+        wait_seconds = get_settings().acceptance_wait_seconds
+        self.tracker.record(
+            tool="acceptance_waiting",
+            state="DIAGNOSE",
+            input_payload={
+                "wait_seconds": wait_seconds,
+                "headless": self.approval_event is None,
+                "content_hash": proposal.content_hash()[:12],
+            },
+        )
+        if self.on_waiting is not None:
+            try:
+                self.on_waiting()
+            except Exception:  # 状态展示失败不得杀任务:等批准仍可能成功
+                log.exception("task %s: on_waiting callback failed", self.bug.id)
+        verdict = wait_for_approval(
+            self.approval_event, wait_seconds, cancel_event=self.cancel_event
+        )
+        if verdict == WAIT_CANCELLED:
+            raise TaskCancelled("cancelled while waiting for acceptance approval")
+        if verdict != WAIT_APPROVED:
+            return {
+                "status": "NEEDS_REVIEW",
+                "outcome": "needs_review",
+                "error": (
+                    "acceptance not approved within the wait window;"
+                    " proposal kept for review (no patch produced)"
+                ),
+            }
+
+        # 5) 醒来后重读冻结 manifest:批准方先冻结后唤醒;拿不到匹配清单决不放行
+        try:
+            manifest = load_manifest(run_dir)
+        except ManifestIntegrityError as exc:
+            return {
+                "status": "NEEDS_REVIEW",
+                "outcome": "needs_review",
+                "error": f"acceptance manifest unreadable after approval: {exc}",
+            }
+        if manifest is None or manifest.manifest_hash != proposal.content_hash():
+            return {
+                "status": "NEEDS_REVIEW",
+                "outcome": "needs_review",
+                "error": "approval wake without a matching frozen manifest; refusing to continue",
+            }
+        self._apply_manifest(manifest)
+        self.tracker.record(
+            tool="acceptance_frozen",
+            state="DIAGNOSE",
+            input_payload={"source": "approved"},
+            output_summary={
+                "manifest_hash": manifest.manifest_hash,
+                "approved_by": manifest.approved_by,
+                "approved_at": manifest.approved_at,
+            },
+        )
+        return {
+            "status": "PLAN",
+            "acceptance_manifest_hash": manifest.manifest_hash,
+            "failed_tests": list(manifest.failed_tests),
+            "regression_tests": list(manifest.regression_tests),
+        }
+
+    def route_diagnose(self, state: TaskState) -> str:
+        """批准冻结后进 PLAN;任何未冻结路径都是终点(无清单不生产补丁)。"""
+        return "continue" if state["status"] == "PLAN" else "end"
+
     def _provisional_findings(self, last_content: str) -> str:
         """额度耗尽时的暂定结论:模型最后一轮的实质文本 + 已调查过的线索清单。
 

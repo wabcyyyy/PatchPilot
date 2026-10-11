@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from app.errors import ConflictError, InvalidRequestError
-from app.executor.command_profiles import check_test_ids
+from app.executor.command_profiles import CommandProfileError, check_test_ids
 
 log = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ class AcceptanceProposal:
         evidence_ids: list[str] | None,
         source_snapshot_hash: str,
         task_spec_hash: str,
-    ) -> "AcceptanceProposal":
+    ) -> AcceptanceProposal:
         """构建并校验提议;测试身份语法/重叠/空集在这里拒绝(不写半截工件)。"""
         failed = dedupe_tests(failed_tests)
         regression = dedupe_tests(regression_tests)
@@ -144,7 +144,7 @@ class AcceptanceProposal:
         }
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "AcceptanceProposal":
+    def from_dict(data: dict[str, Any]) -> AcceptanceProposal:
         if int(data.get("schema_version", 0)) != PROPOSAL_SCHEMA_VERSION:
             raise ValueError(f"unsupported proposal schema_version: {data.get('schema_version')}")
         proposal = AcceptanceProposal(
@@ -170,7 +170,12 @@ class AcceptanceProposal:
 
 def dedupe_tests(ids: list[str]) -> list[str]:
     """语法校验 + 去重(保留首次出现顺序);非法 id 在这里被点名拒绝。"""
-    checked = check_test_ids([str(i) for i in (ids or [])])
+    try:
+        checked = check_test_ids([str(i) for i in (ids or [])])
+    except CommandProfileError as exc:
+        # 与命令侧共用同一套测试身份口径;提议面把"身份非法"表达成请求错误,
+        # 调用方(工具/节点)不需要认识执行层的异常类型
+        raise InvalidRequestError(str(exc)) from exc
     seen: set[str] = set()
     out: list[str] = []
     for item in checked:
@@ -207,8 +212,9 @@ class BaselineCheck:
     green_exit_code: int | None = None
     red_failed_ids: list[str] = field(default_factory=list)
     unrelated_failures: list[str] = field(default_factory=list)
-    collection_error: str = ""  # 身份歧义:收集不到提议的测试/收集期报错
+    collection_error: str = ""  # 身份歧义:收集不到提议的测试/收集期报错/非具体 node id
     environment_failure: str = ""  # 超时、junit 缺失等环境事实
+    premise_error: str = ""  # 提议前提不成立:提议的失败测试在基线上并没有失败
     checked_at: str = field(default_factory=_now_iso)
 
     @property
@@ -225,6 +231,7 @@ class BaselineCheck:
             "unrelated_failures": list(self.unrelated_failures),
             "collection_error": self.collection_error,
             "environment_failure": self.environment_failure,
+            "premise_error": self.premise_error,
             "checked_at": self.checked_at,
             "verified": self.verified,
         }
@@ -247,6 +254,7 @@ def verify_baseline(
     不冒充"已红"或"已绿"。
     """
     from app.adapters.pytest_adapter import RC_NO_TESTS_COLLECTED, run_pytest
+    from app.adapters.test_identity import case_matches, parse_node_id
 
     check = BaselineCheck()
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -276,12 +284,45 @@ def verify_baseline(
 
     if red_run.timed_out or green_run.timed_out:
         check.environment_failure = "baseline run timed out"
-    check.red_failed_ids = [
-        c.test_id for c in red_report.failed_cases if c.test_id
-    ]
-    check.unrelated_failures = sorted(
-        set(check.red_failed_ids) - set(failed_tests)
-    )
+
+    # 失败集身份:必须是具体 node id(S01 口径),且每条**真实失败**——"提议说它红"
+    # 与"它真的红"是两件事,这里只认后者。junit 的 classname 形态(点分模块)与请求
+    # 形态(文件路径)经共享解析器对齐,不做字面集合差(S01 的教训:字面差会把
+    # 合法形态读成"无关失败")。
+    red_identities = [parse_node_id(t) for t in failed_tests]
+    distinct_keys: list[tuple[str, str, str]] = []
+    status_by_key: dict[tuple[str, str, str], str] = {}
+    for file_attr, classname, case_name, status in red_report.case_results:
+        key = (file_attr, classname, case_name)
+        if key not in distinct_keys:
+            distinct_keys.append(key)
+            status_by_key[key] = status
+    for requested, identity in zip(failed_tests, red_identities, strict=True):
+        if identity is None:
+            check.collection_error = f"failed test is not a concrete node id: {requested}"
+            continue
+        matches = [key for key in distinct_keys if case_matches(identity, *key)]
+        if len(matches) != 1:
+            check.collection_error = (
+                f"failed test identity {'missing' if not matches else 'ambiguous'}: {requested}"
+            )
+            continue
+        if status_by_key.get(matches[0]) in ("passed", "skipped"):
+            check.premise_error = f"proposed failed test did not fail on the baseline: {requested}"
+
+    requested_identities = [i for i in red_identities if i is not None]
+    unrelated: set[str] = set()
+    red_failed_ids: list[str] = []
+    for file_attr, classname, case_name, status in red_report.case_results:
+        if status not in ("failure", "error"):
+            continue
+        composed = f"{classname}::{case_name}" if classname else case_name
+        red_failed_ids.append(composed)
+        if not any(case_matches(i, file_attr, classname, case_name) for i in requested_identities):
+            unrelated.add(composed)
+    check.red_failed_ids = red_failed_ids
+    check.unrelated_failures = sorted(unrelated)
+
     if red_report.exit_code in (RC_NO_TESTS_COLLECTED, RC_USAGE_ERROR) or red_report.errors:
         check.collection_error = (
             f"failed set not collectable as proposed (exit={red_report.exit_code},"
@@ -292,6 +333,8 @@ def verify_baseline(
         and red_report.exit_code not in (RC_NO_TESTS_COLLECTED, RC_USAGE_ERROR)
         and not red_report.errors
         and not check.unrelated_failures
+        and not check.collection_error
+        and not check.premise_error
         and not red_run.timed_out
     )
     check.green_ok = (
@@ -314,6 +357,9 @@ class AcceptanceManifest:
     regression_tests: list[str]
     source_snapshot_hash: str
     task_spec_hash: str
+    # 被批准的提议版本:参与 manifest_hash 的计算(批准对象 = 提议 content_hash),
+    # 冻结后不可换版本;approved_by/时间/基线读数不进身份
+    revision: int
     approved_by: str
     approved_at: str
     baseline: dict[str, Any]
@@ -328,6 +374,7 @@ class AcceptanceManifest:
             "regression_tests": list(self.regression_tests),
             "source_snapshot_hash": self.source_snapshot_hash,
             "task_spec_hash": self.task_spec_hash,
+            "revision": self.revision,
             "approved_by": self.approved_by,
             "approved_at": self.approved_at,
             "baseline": dict(self.baseline),
@@ -359,20 +406,23 @@ def load_manifest(run_dir: Path) -> AcceptanceManifest | None:
         regression_tests=[str(x) for x in data["regression_tests"]],
         source_snapshot_hash=str(data["source_snapshot_hash"]),
         task_spec_hash=str(data["task_spec_hash"]),
+        revision=int(data.get("revision") or 0),
         approved_by=str(data["approved_by"]),
         approved_at=str(data["approved_at"]),
         baseline=dict(data.get("baseline") or {}),
     )
+    # 与提议 content_hash 同源算法(同一具名载荷、同一 schema_version):
+    # manifest_hash 就是"被批准的提议身份",此处按清单自己的字段重算验真
     recomputed = _stable_hash(
         {
-            "schema_version": MANIFEST_SCHEMA_VERSION,
+            "schema_version": PROPOSAL_SCHEMA_VERSION,
             "task_id": manifest.task_id,
             "proposal_id": manifest.proposal_id,
             "failed_tests": manifest.failed_tests,
             "regression_tests": manifest.regression_tests,
             "source_snapshot_hash": manifest.source_snapshot_hash,
             "task_spec_hash": manifest.task_spec_hash,
-            "approved_by": manifest.approved_by,
+            "revision": manifest.revision,
         }
     )
     if recomputed != manifest.manifest_hash:
@@ -432,6 +482,7 @@ def freeze_manifest(
         regression_tests=list(proposal.regression_tests),
         source_snapshot_hash=proposal.source_snapshot_hash,
         task_spec_hash=proposal.task_spec_hash,
+        revision=proposal.revision,
         approved_by=approved_by,
         approved_at=_now_iso(),
         baseline=dict(proposal.baseline),

@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -25,6 +26,7 @@ KIND_ACCEPTANCE_REQUEST = "acceptance_request"
 
 WAIT_APPROVED = "approved"
 WAIT_TIMEOUT = "timeout"
+WAIT_CANCELLED = "cancelled"
 
 
 def _now_iso() -> str:
@@ -55,7 +57,7 @@ class ControlEvent:
         expected_revision: int = 0,
         question_id: str = "",
         idem_key: str = "",
-    ) -> "ControlEvent":
+    ) -> ControlEvent:
         if source not in (SOURCE_PLATFORM, SOURCE_TRUSTED_USER):
             raise ValueError(f"unsupported control event source: {source!r}")
         return ControlEvent(
@@ -117,10 +119,30 @@ class ApprovalRegistry:
             self._events.pop(task_id, None)
 
 
-def wait_for_approval(event: threading.Event | None, wait_seconds: int) -> str:
-    """等待批准:0 = 不等待(headless);超时返回 WAIT_TIMEOUT,不无限占用线程。"""
+def wait_for_approval(
+    event: threading.Event | None,
+    wait_seconds: int,
+    cancel_event: threading.Event | None = None,
+) -> str:
+    """等待批准:0 = 不等待(headless);超时返回 WAIT_TIMEOUT,不无限占用线程。
+
+    取消经 `cancel_event` 协作式中断(默认 None = 不监听,与引入取消之前逐字相同):
+    等待窗可能长达 acceptance_wait_seconds(默认 3600s),不能把取消拖到等待结束——
+    每 0.25s 醒一次查取消;取消优先于慢到的批准(批准已经落盘,取消只是停动作,
+    清单仍在盘上供人工复核)。
+    """
     if event is None:
         return WAIT_TIMEOUT
     if wait_seconds <= 0:
+        if cancel_event is not None and cancel_event.is_set():
+            return WAIT_CANCELLED
         return WAIT_APPROVED if event.is_set() else WAIT_TIMEOUT
-    return WAIT_APPROVED if event.wait(timeout=float(wait_seconds)) else WAIT_TIMEOUT
+    deadline = time.monotonic() + float(wait_seconds)
+    while True:
+        if cancel_event is not None and cancel_event.is_set():
+            return WAIT_CANCELLED
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return WAIT_TIMEOUT
+        if event.wait(timeout=min(0.25, remaining)):
+            return WAIT_APPROVED
