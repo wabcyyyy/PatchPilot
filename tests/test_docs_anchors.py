@@ -141,8 +141,11 @@ def test_p3_7_corrected_claims_are_pinned() -> None:
     #         absolute_deadline_epoch/_paused_synced 三字段与 _sync_wait_pause_deadline,
     #         _deadline_overrun 前补顺延,三个循环调用点各加同步与容量参数,
     #         localize/plan/propose 各加 clarification_required 分支)
+    # →1333(G13:TaskNodes 加 subtask_model_factory/subtask_manager 两字段与
+    #         _with_delegation 装配,_run_candidate 接入统一 child runner 扩写,
+    #         apply 节点整体下移)
     assert "七项门禁" in _read("app/graph/gates.py")[0]
-    assert "七项门禁" in _read("app/graph/nodes.py")[1285]
+    assert "七项门禁" in _read("app/graph/nodes.py")[1332]
     # ADR-0002:compose 冒烟如实表述
     adr2 = _read("docs/adr/0002-execution-backend-local-默认.md")
     assert any("无留档的实测运行" in line for line in adr2[28:34]), adr2[28:34]

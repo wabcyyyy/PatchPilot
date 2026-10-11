@@ -285,6 +285,9 @@ def run_task_graph(
             result.candidate_id = str(final.get("candidate_id") or "")
             result.candidate_hash = str(final.get("candidate_hash") or "")
             result.verification_attempt_id = str(final.get("verification_attempt_id") or "")
+            # G13:子任务贡献进报告(委派与分支候选都记;未开启委派时为空列表)
+            if nodes is not None and nodes.subtask_manager is not None:
+                result.subtasks = [c.as_dict() for c in nodes.subtask_manager.children]
             # S02(spec §3.1):终局验收的三态与用量事实进报告;state 未携带时
             # (预算路径提前收尾,没走到 finish 节点)回读账本真相,不冒充 unknown
             result.validation_status = final.get("validation_status", "not_run")

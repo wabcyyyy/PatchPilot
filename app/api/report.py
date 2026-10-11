@@ -92,5 +92,20 @@ def render_markdown(result: dict[str, Any]) -> str:
         lines += [f"- {_md_escape(v)}" for v in result["gate_violations"]]
     if result.get("error"):
         lines += ["", "## 错误信息", "", f"> {_md_escape(result['error'])}"]
+    # G13:逐条列出子任务贡献(委派与分支候选都记;旧报告无该键时如实不显示)
+    subtasks = result.get("subtasks") or []
+    if subtasks:
+        lines += ["", "## 子任务", ""]
+        for st in subtasks:
+            note = f"`{st.get('subtask_id')}`({st.get('role')}):"
+            note += "✅" if st.get("ok") else "❌"
+            note += (
+                f" {st.get('termination')} | turns={st.get('turns')} tokens={st.get('tokens_used')}"
+            )
+            if st.get("candidate_id"):
+                note += f" | 候选 {st.get('candidate_id')}:{str(st.get('candidate_hash'))[:12]}"
+            if st.get("error"):
+                note += f" | {_md_escape(st['error'])}"
+            lines.append(f"- {note}")
     lines += ["", f"> 轨迹与补丁:{result.get('run_dir', '.')}"]
     return "\n".join(lines) + "\n"

@@ -204,6 +204,14 @@ def _effective_policy(settings: Any) -> dict[str, Any]:
         # G10:验收清单等待窗(秒)。"等多久"与"等不等"改变终态形状(等待/needs_review),
         # 与 task_timeout_seconds 同族,冻结进有效策略。
         "acceptance_wait_seconds",
+        # G13:轻量角色委派——开关/并发/次数/额度/轮次/子模型身份全部冻结进受理契约,
+        # 运行中改环境变量不改变已受理任务的委派形状。
+        "delegation_enabled",
+        "max_subagent_concurrency",
+        "max_delegations",
+        "subtask_budget_share",
+        "subtask_max_turns",
+        "subtask_model",
     )
     policy = {k: getattr(settings, k, None) for k in keys}
     from app.executor.command_profiles import profiles_digest

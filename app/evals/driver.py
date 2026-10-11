@@ -105,6 +105,9 @@ class TaskResult:
     candidate_id: str = ""
     candidate_hash: str = ""
     verification_attempt_id: str = ""
+    # G13:子任务贡献摘要(role/subtask_id/ok/termination/计量/候选引用/错误)。
+    # 报告逐条列出,不以"线程池存在"充当完成证据(SPEC G13 退出条件)。
+    subtasks: list[dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
