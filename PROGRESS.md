@@ -1645,3 +1645,54 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
 - **仍未证明/未做**:记忆块能否真的减少重复调查要靠真实批(G17);
   `task_memory_max_chars` 与骨架/规则抢窗口的联动标定属 G07;模型摘要(可选、有预算)未实现,
   确定性摘要就是默认路径;`state.py`/`prompts.py` 本卡未动。
+
+## 22. B2 / G07:模型能力 profile 与 repair_v2 上下文策略(2026-10-11)
+
+- 开工身份 `40fcdf0`(G06 文档收口)→ 代码卡分两张:`G07a` 能力档案与观测面、`G07b` 运行 profile
+  与容量判据。逐卡语义、范围扩张、限制清单见 `docs/work-notes/agent-upgrade-progress-2026-10-10.md`
+  的 G07 节。
+- **缺陷不是"窗口太小",是"没人回答这个数字从哪来"**。改动前配置里只有一个
+  `model_context_tokens=0`,而 `model_context_tokens` / `context_window_tokens` / `token_budget` /
+  `llm_max_tokens` 四个概念挤在两条命名带上;名字里带 128k 一旦被当成依据,平台就会宣称一个
+  从未验证的窗口,保护区超长时循环每轮压一次、每轮再撞一次,直到把额度耗光。
+  SPEC §5 针对的正写着"不得反复压缩直至耗尽预算"。
+- **能力只按声明走**:`capacity_source ∈ {operator_config, provider_docs, probed, unverified}`,
+  没来源就落保守档 16k,**申报比保守档大一律拒绝发起**;有来源却没数字也拒绝(那是一条看着
+  已验证的假声明)。能力清单只认 `tools=yes|reasoning=no|cached_usage=…`,拼错即拒绝 ——
+  坏字符串静默当成"没声明"就会把"不会调工具"读成"应该会"。
+- **观测与声明分家**:端点回报的 `served_model` 挂在逐次响应的 envelope 上,与请求名不同就标
+  `model_identity_drift` 并进轨迹;`provenance.model_identity()` 那个字段仍如实留 `None` ——
+  它是发起前的登记位,不可能知道返回名。
+- **两个 profile 显式在场,默认仍是 legacy_v1**:v1 四个数照搬 Settings 且不做容量比较;
+  v2 目标 64k / 尾部钉 12,实际采用 `min(目标, 声明容量 − 输出预留 − 容量余量)` 并把"被夹过"
+  写进 TaskSpec。SPEC 明写新默认切换要等 G16 收口,所以这条默认由行为用例钉住:
+  默认 profile 下同一道题仍然 `resolved`,读数写明 `capacity_checked=false`。
+- **保护区判据排在压缩之前**:`protected_region()` 给出压不动的那一段(头部约束 + 尾部钉住的
+  回合组,含未完成 tool-call 配对),用 `estimate_request` 量它(与账本同一把尺子),超了就来一次
+  `context_capacity_exceeded` 并落事件 —— 对照臂证明它不是新增的全局闸:同一份历史在足够容量下
+  压缩与收束行为逐字不变。localize/plan 的"份额用尽可降级继续"对这一条不适用。
+- **每任务冻结一份**:profile 在 `TaskNodes.__post_init__` 与 plain 引擎任务起点各建一次,
+  四个阶段与 one-shot 对照臂共用同一份读数;读数落轨迹 `runtime_profile` 事件、落
+  `TaskSpec.effective_policy.runtime_profile`。恢复侧 `LoopSnapshot` 多一个可空字段
+  `runtime_profile`,`binding_mismatch` 认得它 —— 沿用 G06 那条"没绑定不算 mismatch"。
+- **两张卡之外的三个文件已先登记**:`app/llm/usage.py`(served_model 只能挂在响应事实上)、
+  `app/llm/openai_client.py`(采集点与 G02 留下的 `TransportRetryPolicy` 生产装配点,
+  新键 `llm_platform_retries` 默认 0 = 与今日逐字相同)、`app/evals/single_shot.py`
+  (两臂必须收到同一组上下文参数,否则 profile 只对默认臂生效)。
+- **新增 ADR-0014**:反方节明写"64k/12 是拍的起点不是结论"、"保守档 16k 这个数是我拍的"、
+  "未验证端点上开 v2 大概率第一次请求就被拒,这是不宣称支持的代价"、"恢复时 profile 取自当前
+  Settings 而非 spec 那份(拒绝面兜在快照绑定这一侧,按受理重建登记给 G16)"、
+  "G05 要的三项联动标定没做:抬窗口只改了软阈值,单条回执仍由 `refine_*` 决定行数"。
+- **收口**:`ruff check` 全绿、`ruff format --check` 256 files;G07a 定向 328 passed/1 failed
+  (唯一红是 14 条既有锚点漂移),G07b 定向 406 passed/1 failed,全量一轮
+  **1101 passed / 4 skipped / 4 warnings,EXIT=0**(= G06 的 1061 + 本卡 40,skip 同一组 4 条);
+  36 处 ADR 锚点重钉 + ADR-0014 新增 13 条(共 113 条),`test_docs_anchors` 里 nodes.py 行索引
+  848→869。
+- **本轮抓到并修掉的自身缺陷(三条)**:① G07a 的窗口算术我先写错成"64k 容量装得下 64k 目标",
+  用例逼出来的正确答案是要扣输出预留与余量(128k 才装得下)—— 判据按 SPEC 的字面重写;
+  ② 锚点重钉脚本第一次跑把 9 篇 ADR 的 CRLF 全改成 LF(1:1 行 churn 14 条真改动混进 800 条噪声),
+  回滚后用 `newline=''` 重做并逐篇核对 numstat;③ 我新写的 `binding_mismatch` 用例把
+  "没有不一致"误读成"没有读数",断言收窄到 `mismatched` 才绿。
+- **仍未证明/未做**:64k/12 对真实端点是否最优要靠 G17 探针;`refine_*`、`task_memory_max_chars`、
+  `repo_map_max_chars` 与新窗口的配比未标定;`served_model` 只有逐次观测没有批级汇总(G16);
+  REST 受理面没有 profile 字段(今天按臂 env 或显式传实例)。

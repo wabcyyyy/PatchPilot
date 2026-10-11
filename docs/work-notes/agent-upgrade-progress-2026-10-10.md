@@ -753,3 +753,128 @@ SPEC §7 G07 的文件清单里没有 `app/llm/openai_client.py` 与 `app/llm/us
 - `app/llm/openai_client.py`:`served_model` 的采集点(响应到手、业务解释之前)与
   `TransportRetryPolicy` 的生产装配点(G02 留下的"无调用方"开关)都在这个文件。
   两处都按"默认值 = 与今日逐字相同"实现:新键 `llm_platform_retries=0`,未声明能力走保守档。
+- `app/evals/single_shot.py`(one-shot 对照臂):profile 一旦经 `driver.run_task` 下发,
+  两臂必须收到同一组上下文参数,否则"换 profile"只对默认臂生效 —— 那是给对照实验掺进一个
+  未登记变量。这一卡的四个上下文参数在臂里显式接住并原样转给两段循环。
+
+### 改了什么语义
+
+1. **能力只按显式声明走**(`app/llm/profiles.py`)。`capacity_source ∈ {operator_config,
+   provider_docs, probed, unverified}`;没有来源就落保守档 16k,而**申报比保守档大一律拒绝发起**
+   (不"先按大窗口跑跑看",也不悄悄改成 16k —— 那等于替未验证端点背书);有来源却没给容量数字
+   也拒绝:那是一条看起来已验证的假声明。不从 `llm_model` 的名字里推断任何东西。
+2. **能力清单只认 `name=yes|no`**(`model_capabilities`)。没写的项留 `None` 并进 `assumed`
+   清单一起落盘;拼错项点名拒绝。`tools=no` 的端点在客户端构造处被拒 —— 没有工具调用,
+   这条流水线整条无从执行,不该让它开跑。
+3. **观测不进声明**。端点回报的 `served_model` 挂在 `ModelResponseEnvelope` 上,与请求名不一致
+   就标 `model_identity_drift` 并进轨迹;`provenance.model_identity()` 里那个字段仍如实留 `None`,
+   因为它是发起前的登记位(名字相同也不证明服务端版本相同,G04 那条原样保留)。
+4. **四类资源各有各的名字**:`ContextPolicy` 上 `soft_compaction_target_tokens` /
+   `cumulative_token_budget` / `completion_output_cap_tokens` / `capacity_margin_tokens`,
+   硬容量归 `ModelProfile`。Settings 键名一个没改 —— 改名就是改写历史实验身份。
+5. **两个 profile 显式在场**:默认 `legacy_v1` = 今日逐字(四个数照搬 Settings,且**不做**
+   容量比较);`repair_v2` = 目标 64k / 尾部钉 12 轮,实际采用 `min(目标, 声明容量 − 输出预留 −
+   容量余量)`,被夹过写进 `WindowResolution` 与 TaskSpec。v2 还要求显式输出上限(`llm_max_tokens=0`
+   在 v2 下被拒),并按端点声明的输出上界校验请求参数。
+6. **保护区判据排在压缩之前**(`protected_region()` + 循环里的 `context_capacity_exceeded`)。
+   压不动的那一段(头部约束 + 尾部钉住的回合组,含未完成配对)按 `estimate_request` 量
+   (与账本同一把尺子),超出可用余量就一次拒绝并落事件;localize/plan 的"份额用尽可降级继续"
+   对它**不适用** —— 换阶段还是同一个端点、同一份压不动的历史。
+7. **profile 是每任务冻结的实例**:`TaskNodes.__post_init__` 与 plain 引擎的任务起点各建一次,
+   四个阶段与两臂共用同一份读数;读数同时出现在轨迹事件 `runtime_profile` 与
+   `TaskSpec.effective_policy.runtime_profile` 里。
+8. **恢复认得 profile**:`LoopSnapshot` 加第五个可空字段 `runtime_profile`,`binding_mismatch()`
+   比它;两侧都有绑定且不一致 → 拒绝续跑转待审。旧快照不记(空串)⇒ 不参与比较,沿用 G06
+   那条"不许把没绑定判成不一致"的规矩。
+9. **G02 留下的开关接上生产**:`Settings.llm_platform_retries`(默认 0 = 与今日逐字相同)装配
+   `TransportRetryPolicy`;非 0 仍要求 `llm_max_retries=0`,否则构造处拒绝。
+10. **5 个新 Settings 键全部归类**(`test_driver.py` 的分类钉子随之加 5 项)。其中
+    `llm_platform_retries`、`model_capabilities` 另进 `protocol_identity`;`model_capacity_source`、
+    `model_declared_output_ceiling`、`agent_runtime_profile` **不进**控制身份 —— 它们是容量与
+    窗口旋钮,v1/v2 对照正需要按臂登记(与 `context_window_tokens` 同一处置)。
+
+### 最小行为证据(输入 → 实际请求/动作 → 结果)
+
+- `tests/test_context_wiring.py::test_repair_v2_profile_reaches_the_graph_and_the_task_spec`:
+  BUG-001 + `repair_v2` + 声明容量 6000(probed)→ 第一次请求前就 `BUDGET_EXCEEDED`,error 串带
+  `context_capacity_exceeded`;TaskSpec 里 `adopted_tokens=880`(= 6000−4096−1024)而
+  `target_tokens=64000`、`clamped_by_capacity=true`;轨迹里 `runtime_profile` 事件恰好一条。
+- 对照:`tests/test_context_wiring.py::test_legacy_v1_profile_does_not_start_doing_capacity_checks`
+  —— 同一道题、默认 profile、未声明容量 → 仍然 `resolved`,读数写明 `capacity_checked=false`、
+  `capacity_ceiling_tokens=0`。哪天有人偷切默认,这条立刻红。
+- 循环级两臂:同一份 10 轮只读历史,`capacity_ceiling_tokens=200` → 一次拒绝且**没有**任何
+  `context_compact` 事件(证明判据排在压缩之前,不是"压完再拒");`=100_000` → 压缩照常发生、
+  循环照常收束。
+- 声明层的拒绝各有用例:128k 无来源 / probed 无数字 / `toolz=yes` 拼错 / `tools=no` /
+  未验证档给 4000(收紧可以,但仍记为假设)。
+- `adopt_window` 的算术被钉住:16k − 4096 − 1024 = 10880;128k − 8192 − 1024 = 118784;
+  `target=0`(关闭软压缩)原样返回且不算被夹。
+- `served_model`:桩回报 `workhorse-2026-09` 而请求名是 `workhorse-128k` → envelope 两个名字
+  都在、`model_identity_drift=true`,并出现在 `as_report_dict()`;回报字段缺失或同名 → 不判漂移
+  (缺字段不等于漂移,不造事实)。
+- 显式重试:`llm_platform_retries=1` + `llm_max_retries=0` → 两次物理 attempt、attempt_id 不同、
+  失败那次 `unknown_attempts=1`;`llm_max_retries=2` 配平台重试 → 构造处 `TaskError`。
+- 快照绑定:`runtime_profile="repair_v2"` 被写进 `loop_state.json` 并被读回;
+  `binding_mismatch` 在"旧快照无 profile 绑定"时不判不一致,在两侧同名时不判,只有真的换了
+  profile 才报 `["runtime_profile"]`。
+
+### 检查读数(卡内定向 → 批内全量)
+
+- G07a 定向(profiles / llm / usage / pricing / provenance / manifest / summary):**328 passed /
+  1 failed** —— 唯一红的是 `test_docs_anchors`(我今天动过的四个文件让 14 条既有锚点行号漂移),
+  重钉后 `test_docs_anchors` 6 passed。
+- G07b 定向(31 个相关文件一轮):**406 passed / 1 failed** —— 唯一红的是我自己新写的
+  `test_binding_mismatch_catches_runtime_profile_drift`:它断言"旧快照 + 新代码 ⇒ `([], {})`",
+  而谓词在已绑定且一致时返回的是两侧对照读数(不是空 dict)。断言收窄到 `mismatched` 之后
+  `test_task_memory` 32 passed。这条不是实现缺陷,是我把"没有不一致"读成了"没有读数"。
+- 全量一轮:**1101 passed / 4 skipped / 4 warnings in 1662.16s(0:27:42),EXIT=0**
+  —— = G06 的 1061 + 本卡新增 40(`test_model_profiles` 30、`test_context_wiring` 5、
+  `test_token_window` 4、`test_task_memory` 1);skip 仍是同一组 4 条(符号链接权限 ×2、
+  Redis 不可用 ×2),warning 四组同类。
+- `ruff check .` All checks passed;`ruff format --check .` 256 files already formatted。
+- 锚点维护:G07a 重钉 14 条、G07b 重钉 22 条,ADR-0014 自带 13 条(现共 113 条),
+  `test_docs_anchors` 里 nodes.py 的行索引 848→869 并写进漂移历史;两轮重钉都只动锚点行的
+  数字,`git diff --numstat` 逐条核对过(换行符也保持 CRLF 原样)。
+
+### 需要点名的范围决定与判断(不同意就说,回退成本很低)
+
+- **保守档 16k 是我拍的数**。SPEC 只说"明确标为 unverified 的保守配置",没给数字。取 16k 的
+  理由是它等于 legacy_v1 已在用的软窗口 —— 引入声明层不替未验证端点多要一分容量。
+  取 8k 也合法,但它必须是写死的假设,而不是查表猜来的"能力"。
+- **`context_capacity_exceeded` 收敛为 `BUDGET_EXCEEDED` 终态**,不新增状态机终态。它同样由
+  请求前的资源判据产生,而独立终态要动路由与验收面;理由串留在 `error` 里可区分
+  "钱花光了"与"这一发本来就装不下"。与"平台没跑起来是否做独立终态"那条待裁决一起留给 G16/G09。
+- **恢复时 profile 取自当前 Settings,不取自 spec 里那份**。我用快照绑定把错配挡在"拒绝续跑"
+  这一侧,而不是让恢复按受理时冻结的 profile 重建 runtime —— 后者要改受理→构造链,登记给 G16。
+  旧任务(快照里没有 profile)不受影响,这是刻意的:不假装迁移过。
+- **localize/plan 的降级继续对容量拒绝不适用**(见上第 6 条)。这是对既有"份额用尽就带暂定结论
+  继续"语义的一处收窄,只在 `context_capacity_exceeded` 这个串上生效,任务级总额耗尽的处置一字未改。
+
+### 剩余限制(不许被读成"已证明效果")
+
+- **64k / keep=12 是工程起点,不是结论**。离线全绿只证明判据与接线形状;这个档位对这个端点
+  这批题是否更优,只有 G17 的真实探针能主张。32k/64k/128k 是后续可比较档位。
+- **G05 登记的联动标定没有做**:`refine_head/tail_lines`、`task_memory_max_chars`、
+  `repo_map_max_chars` 与 64k 的配比要真实端点读数才能定。现在抬窗口只改了软阈值,
+  单条回执仍由 `refine_*` 决定行数 —— 一屏能装更多条,但每条还是那么多行。
+- **未验证端点上开 `repair_v2` 大概率第一次请求就被拒**(64k 被夹到 10880,而 12 轮尾部往往就超它)。
+  这是"不宣称支持"的直接代价,处置只有两条:给出有来源的容量,或者别开 v2。
+- 保护区判据每 turn 多一次 `estimate_request`(O(消息数))。**未声明容量时短路**,
+  所以 legacy_v1 与今天的运行形状逐字相同、零额外开销。
+- **`served_model` 只有逐次观测,没有批级汇总**。报告面上能查轨迹事件,但"这批跑里端点实际换了
+  几次模型"的归并属 G16 的证据索引。
+- **per-task profile 没有 API 受理字段**。今天换 profile 走两条路:按臂 env(每臂一个冻结
+  Settings)或显式传 `TaskRuntime` 实例;让 REST 请求带 profile 字段要动受理面,没在本卡做。
+
+### 费用与外部动作
+
+零模型调用、零付费、零网络、零 push、零删除历史结果。
+
+### 下一卡
+
+G08(目标仓库规则与作用域装配):`app/context/repo_instructions.py`(新增)、`context/assembler.py`、
+`app/gitops/input_snapshot.py`、`app/task_spec.py`、`app/tools/base.py`、`registry.py`、`files.py`、
+`paths.py`(只保留或强化现有边界)+ 新增 `test_repo_instructions.py` 与快照/provenance 用例。
+G08 必须一并处理:优先级"平台硬规则 > 用户明确任务约束 > 已冻结仓库说明"要接进 G06 的装配器
+(与骨架、记忆块抢同一份 system 预算,现在又多一个 `context_window_tokens` 之外的字符档);
+T13 —— 仓库说明不得扩大工具能力、不得改验收契约。
