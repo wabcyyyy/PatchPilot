@@ -6,21 +6,21 @@ docs 顶层保留长期规范、设计与当前升级规格。当前交接、审
 
 | 要做什么 | 文档 | 使用边界 |
 |---|---|---|
-| 升级为专注代码修复的精简 coding agent | [修复 Agent 升级 SPEC](PatchPilot修复Agent升级SPEC-2026-10-10.md) | 任务规格，尚未实施；按批次执行 |
-| 让新对话开始第一批升级 | [升级交接提示](work-notes/PatchPilot升级交接Prompt-2026-10-10.md) | 默认 B0：核验基线、PLAN 协议、工具权限 |
+| 升级为专注代码修复的精简 coding agent | [修复 Agent 升级 SPEC](PatchPilot修复Agent升级SPEC-2026-10-10.md) | 分批实施中；状态与收据见执行进度 |
+| 让新对话接续升级 | [升级交接提示](work-notes/PatchPilot升级交接Prompt-2026-10-10.md) | 从当前进度继续；B0 模板仅供初始启动 |
 | 理解本次升级的依据 | [2026-10-10 Agent 评审](work-notes/agent-readiness-review-2026-10-10.md) | 对应审查时的源码和历史运行，不能代替后续验证 |
 
-## 长期维护文档
+## 规范与历史设计参考
 
 | 文档 | 回答的问题 |
 |---|---|
 | [项目企划书](PatchPilot项目企划书.md) | 项目范围、架构、状态机、门禁和评测定义 |
-| [设计说明](design.md) | 设计取舍、接线现状和已知边界 |
+| [历史设计说明](archive/design.md) | 当时设计取舍、接线现状和已知边界；当前行为按源码与 SPEC 核对 |
 | [威胁模型](threat-model.md) | 信任边界、已防护及未覆盖的风险 |
 | [学习计划](PatchPilot学习计划.md) | 学习路线与自查标准 |
-| [Docker 后端说明](docker-backend-notes.md) | 执行后端接线和环境要求 |
-| [Docker 隔离记录](docker-isolation-notes.md) | 容器隔离实验及其边界 |
-| [实验预登记 v2](experiment-preregistration-v2-2026-10-08.md) | 修订后的实验设计；文档存在不构成付费授权 |
+| [历史 Docker 后端说明](archive/docker-backend-notes.md) | 当时执行后端接线和环境要求 |
+| [历史 Docker 隔离记录](archive/docker-isolation-notes.md) | 当时容器隔离实验及其边界 |
+| [历史实验预登记 v2](archive/experiment-preregistration-v2-2026-10-08.md) | 当时实验设计；文档存在不构成付费授权 |
 
 当前产品行为以源码、对应版本的规范/ADR 和可复核证据共同确认。新升级 SPEC 描述目标行为；旧审查和计划中的“待修/完成”都是当时状态，不能直接作为当前结论。
 
@@ -30,7 +30,7 @@ docs 顶层保留长期规范、设计与当前升级规格。当前交接、审
 docs/
 ├── README.md                       文档入口
 ├── PatchPilot修复Agent升级SPEC-…    当前升级规格
-├── 项目企划/学习计划、design 等    长期维护文档
+├── 项目企划/学习计划等            长期维护文档
 ├── adr/                            架构决策及验证锚点
 ├── postmortems/                    单个失败案例的复盘
 ├── evidence/                       原始测量、日志和验收产物

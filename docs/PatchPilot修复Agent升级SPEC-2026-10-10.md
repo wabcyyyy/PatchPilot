@@ -1,6 +1,8 @@
 # PatchPilot 修复 Agent 升级 SPEC
 
-日期：2026-10-10。状态：设计与任务拆解，尚未实施。审查基线：`d1bf0aae1a40c04308c8bb6d027a864fcf286838`。
+初版日期：2026-10-10。执行与验证约定修订：2026-10-11。状态：分批实施中；卡状态、源码身份与测试收据以 [执行进度](work-notes/agent-upgrade-progress-2026-10-10.md) 为准。原审查基线：`d1bf0aae1a40c04308c8bb6d027a864fcf286838`，仅用于解释历史发现。
+
+2026-10-11 文档复核时，进度已记录 B0–B2（G00–G08）的实施及离线收据，下一批为 B3（G09–G10）。这不是所有契约均已收口的声明；跨卡差距见 [SPEC 复核记录](work-notes/agent-upgrade-spec-review-2026-10-11.md)，最终验收仍由 G16 收口。
 
 ## 1. 产品目标、范围与依据
 
@@ -35,13 +37,13 @@
 
 ## 2. 当前基线与历史兼容
 
-实际执行目录：`D:/wcy/project/PatchPilot`。文档同步时 HEAD：`876ff6fedd0a2e04b04bb489e05e2073ab5ea485`，分支：`master`。原审查基线来自另一工作树的 `d1bf0aae`，不是当前项目版本；G00 必须重新核验差异、缺陷与已实现能力。新对话先复查 git status、HEAD 和分支，并保留已有改动。
+实际执行目录：`D:/wcy/project/PatchPilot`。初始文档同步时 HEAD：`876ff6fedd0a2e04b04bb489e05e2073ab5ea485`，分支：`master`；这是历史身份。原审查基线来自另一工作树的 `d1bf0aae`，G00 已登记实际项目核验。新对话先复查 git status、HEAD 和分支，并保留已有改动；从当前进度继续，不重新执行 G00。
 
 原审查基线具备（实际项目由 G00 复核）：受控工具、Python AST 检索、块补丁、失败/回归测试、范围门禁、资源账本、输入冻结、完整测试身份、候选 hash、恢复再验证、loop 快照、轨迹/报告、SQLite 服务、Docker 测试后端。
 
 原审查基线的有限分支（实际接线由 G00 复核）：`app/graph/nodes.py` 的 Best-of-N，默认两个候选、每任务最多一次；CLI graph 入口接了 `branch_model_factory`，`app/api/service.py` 未接，故 API 任务不会触发它。任务线程池并发不等于子 Agent 协作。
 
-原审查发现见 [2026-10-10 评审](work-notes/agent-readiness-review-2026-10-10.md) ，须在实际项目重新确认：
+原审查发现见 [2026-10-10 评审](work-notes/agent-readiness-review-2026-10-10.md)。以下是历史问题清单；是否已修及剩余限制按对应卡进度判断，不默认全部仍存在：
 
 1. PLAN 提示要求不用工具，但通用循环要 finish 才退出；FakeLLM 特判掩盖真实协议问题。
 2. 可见工具 schema 与阶段权限不一致；阶段间只传薄摘要，代码与失败证据丢失。
@@ -50,7 +52,7 @@
 5. 比较器把 verdict 等结果当控制变量，遗漏配置，且丢失重复运行。
 6. 缺少受控复现命令、issue-only 诊断、项目规则、用户交互和通用角色委派。
 
-旧 S00–S11 文档是历史实现来源，不能按其“待实现”字样重新做一遍；G00 必须核验现状。旧评测、Q0 原始数据、失败现场和旧预登记保留。
+旧 S00–S11 文档是历史实现来源，不能按其“待实现”字样重新做一遍；G00 核验收据与当前进度共同说明现状。旧评测、Q0 原始数据、失败现场和旧预登记保留。
 
 产品策略和实验策略分开版本化：
 
@@ -76,13 +78,13 @@
 
 上述变更只在对应任务卡范围内实施。禁止改变既有测试的期望行为来适配实现，禁止弱化修改范围、测试身份和终局验收。已有测试若断言旧协议，必须保留其 legacy_v1 覆盖，并另外增加 v2 契约测试；不能直接删除旧断言。
 
-模型可提交新的 repro/回归建议为 run_dir 外置工件；MVP 不把测试改动加入最终仓库补丁。既有测试和 pytest 控制文件仍受现有门禁保护。
+模型可提交新的 repro/回归建议为 run_dir 中的独立工件（用户源仓库外）；MVP 不把测试改动加入最终仓库补丁。既有测试和 pytest 控制文件仍受现有门禁保护。
 
 仓库代码与说明是低信任输入。AGENTS.md、issue、工具输出、子 Agent 返回不能授予额外权限，不能把自己的文字当用户批准。Docker 提供执行隔离；argv 白名单本身不是 OS 沙箱。现有 JUnit 验收仍有不可信仓库伪造证据的边界，不能宣称绝对安全。
 
 ### 3.3 运行及实现权限
 
-- 本轮只生成 SPEC/交接，不实施业务代码。
+- 初版 SPEC 编写会话只生成规格与交接；后续实施权限来自用户指定批次的执行指令，文档中的历史交付说明不阻止已授权实施。
 - 新对话收到执行某批的用户指令后，可按该批直接实现，不因处于 AGENTS 的必须掌握区反复请求同一语义的确认。
 - 测试离线，使用 FakeLLM 或 mock SDK；真实模型、端点探针和在线评测均另需明确额度授权。
 - 禁止默认 push、改写历史、外部发布、删除旧证据或执行用户源仓库中的补丁。
@@ -90,7 +92,7 @@
 
 ## 4. 实现结构与数据契约
 
-采用增量实现。已有模块保持职责，新模块名称可在 G00 中依据现状调整一次并写入映射；不能以“架构优化”为由扩大所有卡的修改范围。
+采用增量实现。已有模块保持职责；模块映射以 G00 核验与各卡已登记范围为依据，必要接线扩张按 §7 先记录理由与路径。不能以“架构优化”为由扩大所有卡的修改范围。
 
 | 模块 | 职责与主要数据 |
 |---|---|
@@ -147,7 +149,7 @@ CLI/API 共用 `app/agent/runtime.py` 的任务装配；交互 CLI 放在 `app/a
 
 ## 6. 任务依赖、批次与退出条件
 
-所有 G 卡目前为 TODO。每完成一张卡更新 `docs/work-notes/agent-upgrade-progress-2026-10-10.md`，记录 commit、改变的语义、测试、环境限制、未运行项与下一卡，不以勾选代替证据。
+卡状态唯一来源为 `docs/work-notes/agent-upgrade-progress-2026-10-10.md`，本节定义批次和目标，不另维护一份 TODO 清单。每完成一张卡更新进度，记录 commit、改变的语义、测试、环境限制、未运行项与下一卡，不以勾选代替证据。已记录的离线通过不代表跨卡接线、Docker 或真实端点已经验证。
 
 | 批次 | 卡 | 交付物与退出条件 |
 |---|---|---|
@@ -163,11 +165,15 @@ CLI/API 共用 `app/agent/runtime.py` 的任务装配；交互 CLI 放在 `app/a
 
 依赖：G01→G02→G03；G02→G04；G03+G04→G05→G06→G07→G08；G03+G05+G08→G09→G10；G06+G10→G11→G12；G03+G06+G08+G09+G12→G13→G14；G00–G14→G16；G16→G17。G15 不阻塞 MVP。
 
-默认新对话只执行用户指定的一批；附带交接提示默认 B0。每批通过后再交接，避免一次修改循环、执行、验收和评测后无法定位退化。
+默认新对话只执行用户指定的一批；用户仅说“继续 SPEC/当前批次”时，从进度定位未完成卡或下一批，不默认回到 B0。附带 B0 提示仅供初始启动参考。批次中途可交接，登记定向结果与全量待运行状态；完成声明须满足批次退出条件。
+
+开发验证频率按 `AGENTS.md` 的“开发验证节奏(2026-10-11 起生效)”执行：卡内定向验证后可提交，
+批次退出时完成一次全量；失败修复后按影响补验并完成必要的最终全量。新开对话继续原批次，
+不自动重跑基线、已完成卡或全量。各批次均须有最终适用输入上的全量通过收据才能声明完成。
 
 ## 7. 详细任务卡
 
-每卡均须完成：实现、行为测试、适用的回归测试、文档/进度更新、检查后提交。以下路径是允许修改范围；新增模块必须在对应目录下，越界前先更新当前卡的范围说明。
+每卡均须完成：实现、行为测试、直接受影响的回归测试、文档/进度更新、快速检查后提交；全量由批次退出统一执行，卡内登记“定向通过，批次全量待运行”。以下路径是允许修改范围；新增模块必须在对应目录下，越界前先更新当前卡的范围说明。
 
 ### G00 / P0：核验基线，建立执行收据
 
@@ -235,7 +241,7 @@ CLI/API 共用 `app/agent/runtime.py` 的任务装配；交互 CLI 放在 `app/a
 - 原始输出保存为 EvidenceRef；模型收到有界 excerpt 和 total/returned/omitted、行范围、hash、next_cursor 等元数据。原始证据不因模型可见上限而丢失。
 - 增加 `read_evidence(evidence_id, cursor, limit)`；限定任务内引用、单次字节上限和分页范围，不能读取别的任务或宿主任意文件。
 - 引用区分原始输入快照和当前候选 workspace_revision；文件修改后旧引用标 stale，可取回旧证据但不能当当前内容使用。
-- command/repro 的 stdout/stderr 同样走此协议；终端日志和测试 XML 仍独立保存。
+- command/repro 的 stdout/stderr 同样走此协议；终端日志和测试 XML 仍独立保存。G05 建立证据协议，G09 接入执行层原始 stdout/stderr 落盘；只保存 tail 的路径不能声明全文可恢复，端到端完整性在 G09/G16 验收。
 - 复用现有 ToolResult，不把每个工具各做一套截断器；嵌套大字段也要裁剪。
 - 测试：超过 8k 的源码、Unicode/转义换行、长错误、嵌套列表、非法游标、跨任务引用、修改后 stale、原始与 excerpt hash、磁盘上限。
 - 退出：窗口变大前，单条回执的信息损失已经可见、可解释、可恢复。
@@ -272,8 +278,8 @@ CLI/API 共用 `app/agent/runtime.py` 的任务装配；交互 CLI 放在 `app/a
 - 平台硬规则 > 用户明确任务约束 > 已冻结仓库说明；目录更近的说明只影响其作用域。根说明开局加载，目标路径确定后按需补充目录说明。
 - 每份说明记录相对路径/hash/作用域/裁剪；默认单文件 16KiB、总量 64KiB，可配置并冻结。超限明确提示，不能静默丢掉约束。
 - 拒绝符号链接越界、`.git`/密钥/宿主路径读取；说明中要求外传、关闭门禁、修改验收测试等不能改变执行权限。
-- 子任务继承适用规则的已冻结引用，内容变动必须使运行身份变化；不是自动长期记忆。
-- 测试：根/子目录冲突、相关与无关目录、无说明、超限、越界链接、恶意权限指令、恢复 hash 漂移、子任务装配。
+- 子任务继承适用规则的已冻结引用，内容变动必须使运行身份变化；不是自动长期记忆。G08 提供引用与身份，实际子任务继承由 G13 接线验收。
+- 测试：根/子目录冲突、相关与无关目录、无说明、超限、越界链接、恶意权限指令、恢复 hash 漂移；子任务装配在 G13 运行面实现后验收。
 - 退出：Agent 实际请求包含适用规则；规则能指导修复，但不能扩大工具能力或修改验收契约。
 
 ### G09 / P1：受控命令、复现工件与容器生命周期
@@ -286,14 +292,14 @@ CLI/API 共用 `app/agent/runtime.py` 的任务装配；交互 CLI 放在 `app/a
 - repair_v2 的诊断、基线和最终验证采用同一冻结执行环境；接入未信任仓库要求 docker。legacy 的 local 后端只保留为用户明确接受的宿主执行方式，不能把容器诊断结果与宿主验收混称同环境证据。
 - 使用镜像预装依赖；安装/下载/拉取新镜像不是模型动作，缺依赖返回 environment_not_ready 和需要的镜像说明。禁止悄悄 pip install 或联网拉取。
 - 参数采用 argv 构造与语义校验；拒绝越界路径、危险选项、插件/配置注入、可执行名替换；命令模板不仅检查前缀。冻结的源快照不得以可写 mount 暴露。
-- 命令输出进入 EvidenceStore；记录 container/process ID、profile/argv hash、exit/signal/timeout/cancel、资源与副作用。辅助命令不能替代平台最终 verify。
+- 命令输出进入 EvidenceStore；执行层在截取模型可见 tail 前保存受磁盘额度约束的原始 stdout/stderr，并明确磁盘上限造成的缺失；验证超过旧 tail 上限的输出可分页取回。记录 container/process ID、profile/argv hash、exit/signal/timeout/cancel、资源与副作用。辅助命令不能替代平台最终 verify。
 - timeout/取消能终止该任务的容器/进程树；禁全局 kill/docker prune。诊断复制区中的改动不进入候选，修改候选的命令 profile MVP 不开放。
 - 测试：profile 参数、路径/配置注入、env 清理、网络标志、输出分页、timeout/cancel、缺 Docker、缺依赖、命令 exit=0 不触发 resolved、修改诊断副本不污染候选。
 - 退出：离线 mock 覆盖策略；另有 Docker 集成脚本验证真实隔离/子进程终止。环境不可用时明确未验证，不能把 mock 测试叫容器验证。
 
 ### G10 / P1：issue-only 诊断、验收清单提议与冻结
 
-- 范围：`app/task_spec.py`、`app/diagnosis/`（新增）、`app/agent/cli.py`（新增）、`runtime.py`、`app/api/schemas.py`、`routes.py`、`service.py`、`app/storage/db.py`、`repository.py`、`app/graph/runner.py`、`nodes.py`；新增 `test_diagnosis_intake.py`、`test_acceptance_manifest.py`，API/TaskSpec/基线测试。
+- 范围：`app/task_spec.py`、`app/diagnosis/`（新增）、`app/agent/cli.py`（新增）、`app/agent/runtime.py`、`app/agent/control.py`（最小批准/等待契约，与 G11 共用）、`app/api/schemas.py`、`routes.py`、`service.py`、`app/storage/db.py`、`repository.py`、`app/graph/runner.py`、`nodes.py`、`app/graph/state.py`、`app/graph/resume.py`（验收等待与恢复接线）；新增 `test_diagnosis_intake.py`、`test_acceptance_manifest.py`，API/TaskSpec/基线测试。
 - TaskSpec v2 增加 mode=`repair|diagnose_then_repair`。repair 保留已有非空失败/回归集要求；diagnose_then_repair 可仅 repo+issue，但只能先诊断。
 - intake source/issue/权限/profile hash 冻结不变；之后追加 AcceptanceManifest，不覆盖原始 TaskSpec。运行身份绑定 intake hash、manifest hash 和 session policy hash。
 - Agent 通过现有检索与 G09 命令提出失败测试、回归范围、复现依据、环境问题；平台在未修改的快照上重新校验精确测试身份与红/绿基线。
@@ -375,6 +381,9 @@ CLI/API 共用 `app/agent/runtime.py` 的任务装配；交互 CLI 放在 `app/a
 - 范围：`demo/`、`tests/`、`scripts/`（离线验收）、README、design/ADR、`docs/evidence/agent-upgrade/`、进度文件；业务接线修复仅限 G00–G14 已声明模块。
 - 增加真实可演示的 FakeLLM 流程：issue-only→诊断→用户确认验收清单→调查→计划→补丁→反馈重试→独立验收→报告；另演示用户纠偏/子任务/取消恢复，不把所有情况挤进一个成功脚本。
 - CLI/API 使用同一运行工厂、profile 和工具裁决；禁止 CLI 有而 API 静默失效。engine/profile/role/model/预算真实有效值可查询。
+- 收口 G07 冻结运行契约的已登记差距：受理与恢复均从已冻结 TaskSpec 重建有效策略，不能仅比较 profile 名称；测试同名 profile 下窗口/输出上限/价格/权限发生环境漂移仍沿用原契约或明确待审，旧身份不完整时按兼容约定处理。
+- 收口 G06/G08 的引擎差异：repair_v2 的 graph/plain 按 §4、G06/G08 接入共用会话与规则装配；未接线组合在受理时明确拒绝并登记未完成，不能静默忽略后声明交付。one_shot 原有禁反馈/禁委派约束保留，能力支持表与实际请求一致。
+- 收口上下文各部分的共同容量约束：骨架、记忆、规则、输出与回合历史在已声明容量下整体可装配；用离线边界样本验证。最优字符配比与真实效果属于 G17，不以缺付费标定为由推迟容量正确性检查。
 - 新产品入口显式使用 repair_v2；旧 API 契约/回放和旧持久任务继续 legacy_v1。通过请求契约版本或显式 profile 区分，不能按有无某环境变量猜测旧/新客户端。
 - MVP CLI 的新任务默认 repair_v2；旧 demo 和旧回放可显式 legacy_v1。在线 cost/hybrid 仍必须配置价格和金额，无配置时应明确拒绝，不能静默变成无限预算。
 - 离线集包含单文件、跨文件、长输出、错误假设、无补丁、身份错配、门禁拒绝、环境失败、预算停止、输入等待、取消、恢复、落选分支等场景。
@@ -401,6 +410,10 @@ CLI/API 共用 `app/agent/runtime.py` 的任务装配；交互 CLI 放在 `app/a
 
 测试主要检验行为和边界，避免只镜像实现细节。FakeLLM 严格脚本/mock 必须看到最终实际请求和动作，不能仅检查中间字段。
 
+本矩阵定义最终覆盖责任，不要求每卡重新执行全部场景。卡内根据修改点选择受影响用例并复用适用收据；
+跨卡能力在实际接线的负责卡验收，G16 汇总已覆盖与缺项，批次全量按 AGENTS 执行。
+T23 每卡检视是否影响原失败/回归身份与门禁，仅运行受影响的保护用例；批次全量保留完整保护集。
+
 | ID | 场景 | 必须观察到的行为 | 负责卡 |
 |---|---|---|---|
 | T01 | 遵守提示返回普通计划文本 | 一次请求正常计划完成，非 phase_share 降级 | G01 |
@@ -411,9 +424,9 @@ CLI/API 共用 `app/agent/runtime.py` 的任务装配；交互 CLI 放在 `app/a
 | T06 | finish 超支、unknown 后恢复 | 不得 resolved，不重授额度 | G03 |
 | T07 | 结果不同、配置相同 | 比较器接受结果差异，保留各重复 | G04 |
 | T08 | 结果相同、配置不同 | 未登记漂移拒绝 | G04 |
-| T09 | 长源码/长 stdout 超可见上限 | 合法结构、明确截断、原文可分页取回 | G05 |
+| T09 | 长源码/长 stdout 超可见上限 | 合法结构、明确截断、原文可分页取回 | G05（协议）/G09（执行输出） |
 | T10 | 定位找到反例后进入计划/行动 | 实际请求仍有证据，假设状态可追踪 | G06 |
-| T11 | 修改文件与恢复会话 | 旧引用标 stale，候选/预算/消息一致 | G06–G07 |
+| T11 | 修改文件与恢复会话 | 旧引用标 stale，候选/预算/消息一致；同名 profile 参数漂移不能替换冻结契约 | G06–G07/G16（差距收口） |
 | T12 | 模型容量小于配置窗口 | 请求前处理/拒绝，不宣称大窗口已支持 | G07 |
 | T13 | 项目说明要求关闭门禁或读宿主文件 | 约束不变，越权拒绝 | G08 |
 | T14 | 恶意 profile 参数、缺 Docker | 拒绝或能力不可用，无宿主 fallback | G09 |
@@ -432,7 +445,7 @@ CLI/API 共用 `app/agent/runtime.py` 的任务装配；交互 CLI 放在 `app/a
 
 ## 9. 具体离线执行与交付规范
 
-当前可用解释器已检查为 Python 3.14.2：`D:/wcy/project/PatchPilot/.venv/Scripts/python.exe`。它是实际项目目录内的 venv；cwd、源码、报告和测试数据都使用 `D:/wcy/project/PatchPilot`。新对话必须先复查路径/依赖，不把它当锁定环境。
+2026-10-11 文档复核时，实际项目 venv 为 Python 3.14.2：`D:/wcy/project/PatchPilot/.venv/Scripts/python.exe`，其中没有 pip 模块。cwd、源码、报告和测试数据都使用实际项目目录。新对话先复查路径/依赖；此本地读数不替代 CI/Docker 的 Python 3.11 兼容证据。
 
 推荐 PowerShell 检查，命令逐条执行并检查退出码，不把失败后的后续输出当通过：
 
@@ -443,29 +456,43 @@ git rev-parse HEAD
 git branch --show-current
 $taskPython = 'D:/wcy/project/PatchPilot/.venv/Scripts/python.exe'
 & $taskPython --version
-& $taskPython -m pip show pytest ruff pydantic langgraph
+& $taskPython -c "import importlib.metadata as m; print({name: m.version(name) for name in ('pytest', 'ruff', 'pydantic', 'langgraph')})"
 ```
 
 本会话可写且位于仓库外的 basetemp 示例；新会话若权限不同，换成它实际可写的外部路径，记录落点。`D:/tmp/pt` 是 AGENTS 的常规落点，只有实际可写时才使用。
+
+先完成每卡快速检查。改过被锚定的源码/文档时，先维护锚点并运行对应测试，避免在全量中才发现行号漂移。
+以下命令逐条运行；失败即先修复该检查，不继续启动更大的验证范围。
 
 ```powershell
 $taskBaseTemp = 'D:/tmp/pt-upgrade-b0'
 & $taskPython -m ruff check .
 & $taskPython -m ruff format --check .
-& $taskPython -m pytest -q --basetemp=$taskBaseTemp
+& $taskPython -m pytest -q tests/test_docs_anchors.py --basetemp=$taskBaseTemp
 ```
 
-B0 调试时可先运行相关测试，最终仍要全量：
+B0 卡内定向测试示例；其他卡根据修改点与调用链选择相关集合，避免默认复制整个历史回归列表：
 
 ```powershell
 & $taskPython -m pytest -q tests/test_plan_stage.py tests/test_plan_invariants.py tests/test_plain_loop.py tests/test_graph.py --basetemp=$taskBaseTemp
 ```
 
+批次全部实现、文档与定向检查通过后，执行一次最终全量并保存日志及退出码：
+
+```powershell
+& $taskPython -m pytest -q --durations=30 --basetemp=$taskBaseTemp
+```
+
+全量期间保持被测文件不变，不另起 pytest。重复或扩大检查前说明代码变化、失败或未解决风险；
+已通过且输入仍适用的检查复用收据。纯文档任务按 AGENTS 的文档例外执行。
+本节只规定开发验证安排，不改变 §3、G10/G14 中产品内部的独立验收与候选重新验证要求。
+
 每张卡的进度记录至少包括：
 
 - 卡号、commit、开始/结束源码身份、修改文件、允许范围是否扩张。
 - 最小行为证据：输入、实际请求/动作、预期、结果、工件路径/hash。
-- ruff/format/目标测试/全量测试的命令和结果；产品失败、环境失败和未运行分开。
+- ruff/format/锚点/目标测试的命令和结果；全量待运行时明确登记，批尾补入全量收据；产品失败、环境失败和未运行分开。
+- 测试收据注明被测 HEAD/dirty 文件、解释器/依赖身份、basetemp、退出码、耗时、日志路径及通过/失败/skip；新对话先核对适用性，不重复启动同一验证。
 - profile/协议/迁移变更，旧任务/回放兼容方式和剩余限制。
 - 本卡模型费用/外部动作（离线应为零）、未授权在线工作、下一张卡。
 
@@ -478,4 +505,4 @@ B0 调试时可先运行相关测试，最终仍要全量：
 - G17 有合格证据：按固定模型/端点/任务集/额度描述结果；不泛化成达到 Claude Code 水平。
 - G15 未做：如实说明联网文档/内部扩展未启用；不阻塞专注修复的 MVP。
 
-本轮交付为本 SPEC 与 [新对话交接提示](work-notes/PatchPilot升级交接Prompt-2026-10-10.md)，没有实施 G 卡、没有运行新全量测试、没有付费调用。上一轮审查的测试结果属于历史收据。
+初版编写会话仅交付本 SPEC 与 [新对话交接提示](work-notes/PatchPilot升级交接Prompt-2026-10-10.md)，当时没有实施 G 卡或运行新全量测试。后续实施及收据见执行进度；2026-10-11 文档复核未实施业务代码、未运行全量或付费调用，不能将文档修订当作实现差距已解决。

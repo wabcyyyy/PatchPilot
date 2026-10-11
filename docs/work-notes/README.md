@@ -6,12 +6,14 @@
 
 | 文件 | 用途 |
 |---|---|
-| [新对话升级交接](PatchPilot升级交接Prompt-2026-10-10.md) | 在 D 盘实际项目启动 B0，后续按批次交接 |
+| [新对话升级交接](PatchPilot升级交接Prompt-2026-10-10.md) | 在 D 盘实际项目从当前卡/批次接续 |
+| [升级执行进度](agent-upgrade-progress-2026-10-10.md) | 卡状态、提交、测试收据与剩余限制的唯一进度源 |
+| [SPEC 复核记录](agent-upgrade-spec-review-2026-10-11.md) | 2026-10-11 规格自检、文档修正与跨卡差距 |
 | [Agent 落地评审](agent-readiness-review-2026-10-10.md) | 本轮审查依据；历史源码基线须重新核验 |
 | [离线探针脚本](audit_agent_review_20261010.py) | Mock 请求与历史运行汇总 |
 | [探针结果](2026-10-10-agent-review-probes.json) | 原始审查结果，未重算 |
 
-当前待执行任务见 [升级 SPEC](../PatchPilot修复Agent升级SPEC-2026-10-10.md)。后续进度写入本目录的 `agent-upgrade-progress-2026-10-10.md`；目前尚未生成，不表示已开始实施。
+任务定义见 [升级 SPEC](../PatchPilot修复Agent升级SPEC-2026-10-10.md)，当前状态与下一批见执行进度。文档中的初始审查、B0 背景和历史测试结果不替代当前执行收据。
 
 ## 审查与参考材料
 
