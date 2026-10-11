@@ -177,8 +177,22 @@ def _effective_policy(settings: Any) -> dict[str, Any]:
         "repo_map_enabled",
         "search_engine",
         "execution_backend",
+        # G07 能力声明与运行 profile:受理时就冻结"这一发请求被允许多大、按哪套口径压历史"。
+        # 只记声明与来源,不记观测:返回模型名(served_model)是逐次响应的观测事实,
+        # 落在轨迹的 llm 事件里,不在这份契约里 —— 发起前不可能知道,写了就是假事实。
+        "agent_runtime_profile",
+        "model_capacity_source",
+        "model_capabilities",
+        "model_declared_output_ceiling",
+        "llm_platform_retries",
     )
-    return {k: getattr(settings, k, None) for k in keys}
+    policy = {k: getattr(settings, k, None) for k in keys}
+    # 有效值而不是配置值:repair_v2 的目标窗口会被声明容量夹小,报告里必须写出**实际采用**
+    # 的那个数(以及它被夹过这件事),否则"配置写着 64k"会被读成"跑了 64k"。
+    from app.agent.runtime import TaskRuntime
+
+    policy["runtime_profile"] = TaskRuntime.build(settings).as_dict()
+    return policy
 
 
 @dataclass(frozen=True)

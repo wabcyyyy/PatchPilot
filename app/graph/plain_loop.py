@@ -13,10 +13,11 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.agent.runtime import CONTEXT_CAPACITY_EXCEEDED
 from app.agent.session import SessionState
 from app.config import get_settings
 from app.context.task_memory import save_memory_state
-from app.context.token_window import compact_messages
+from app.context.token_window import compact_messages, protected_region
 from app.errors import BudgetError, TaskCancelled
 from app.gitops.differ import working_tree_diff
 from app.graph.loop_state import LoopSnapshot, delete_loop_snapshot, save_loop_snapshot
@@ -261,6 +262,8 @@ def run_plain_loop(
     cancel_event: threading.Event | None = None,
     context_window_tokens: int | None = None,
     context_keep_recent_turns: int | None = None,
+    capacity_ceiling_tokens: int = 0,
+    runtime_profile: str = "",
     token_estimate_factor: float | None = None,
     resume_snapshot: LoopSnapshot | None = None,
     ledger: ResourceLedger | None = None,
@@ -286,6 +289,12 @@ def run_plain_loop(
     显式传 0 = 关闭,行为与此前逐字一致):超过它
     就在 turn 边界压缩历史(见 app/context/token_window.py),然后再走既有预算门禁。
     压缩只让"发出去的内容"变小,不放宽任何额度——压完仍超预算照样 BudgetError。
+    capacity_ceiling_tokens 是**单请求硬容量减去输出预留与余量**后剩下的可用额度
+    (由 app/agent/runtime.py 按端点声明算好;0 = 无可比较容量,本循环不做容量判断)。
+    非 0 时每次发送前先量"压不动的那一段"(头部 + 尾部钉住的回合组):它自己就超容量时
+    直接以 `context_capacity_exceeded` 收场,不再反复压缩空转(SPEC §5)。
+    runtime_profile 是本轮所用运行 profile 的名字,只写进快照做绑定用:恢复方比的是
+    "崩溃前那套窗口/轮数/输出预留口径还在不在",而不是拿今天的配置续昨天的历史。
     resume_snapshot(M6 A 级恢复):崩溃前某个 turn 边界的 LoopSnapshot。阶段与轮次
     匹配时用它作种子——messages、三个 token 计数、last_content 全部续接,循环从
     `turn_no + 1` 起跑。**轮次上限不重授**:仍按同一个 max_turns 判定,恢复只是
@@ -310,6 +319,9 @@ def run_plain_loop(
     est_factor = (
         settings.token_estimate_factor if token_estimate_factor is None else token_estimate_factor
     )
+    # 单请求可用容量:0 = 端点容量没声明(或跑的是 legacy_v1),此时不做容量判断,
+    # 与引入这个参数之前逐字一致。非 0 一律来自"声明容量 − 输出预留 − 容量余量"。
+    capacity_ceiling = max(int(capacity_ceiling_tokens or 0), 0)
     system = SYSTEM_PROMPT + (f"\n\n{extra_system}" if extra_system else "")
     messages: list[dict[str, object]] = [
         {"role": "system", "content": system},
@@ -385,6 +397,7 @@ def run_plain_loop(
                 session_hash=session.identity_hash() if session is not None else "",
                 memory_version=memory.version if memory is not None else 0,
                 memory_hash=memory.state_hash() if memory is not None else "",
+                runtime_profile=runtime_profile,
             ),
         )
         if memory is not None:
@@ -415,6 +428,41 @@ def run_plain_loop(
                 output_summary={"placeholder_replies": repaired, "messages": len(messages)},
             )
         context_tokens = messages_tokens(messages)
+        if capacity_ceiling > 0:
+            # 先量"压不动的那一段"(头部约束 + 尾部钉住的回合组)。它本身就超出声明容量的
+            # 可用余量时,压缩只会把额度耗光再发一发照样装不下的请求 —— SPEC §5 明令这种
+            # 情形给 context_capacity_exceeded,不得反复压缩。软窗口关掉(=0)也要过这一关:
+            # "关闭软压缩"从来不等于"宣称端点装得下"。
+            protected_tokens = estimate_request(
+                protected_region(messages, keep_recent_turns=keep_recent), schemas
+            ).total_tokens
+            if protected_tokens > capacity_ceiling:
+                ctx.tracker.record(
+                    tool=CONTEXT_CAPACITY_EXCEEDED,
+                    round_no=round_no,
+                    state=state_label,
+                    input_payload={
+                        "turn": turn_no,
+                        "capacity_ceiling_tokens": capacity_ceiling,
+                        "runtime_profile": runtime_profile,
+                    },
+                    output_summary={
+                        "protected_tokens": protected_tokens,
+                        "keep_recent_turns": keep_recent,
+                        "messages": len(messages),
+                    },
+                    error="protected region larger than declared per-request capacity",
+                )
+                raise _budget_error(
+                    f"{CONTEXT_CAPACITY_EXCEEDED}: 不可压保护区 {protected_tokens} tokens 已超过"
+                    f"声明容量的可用余量 {capacity_ceiling}(尾部钉 {keep_recent} 个回合组;"
+                    "压缩不会把它变小,请缩小任务输入或按端点声明放宽容量)",
+                    tokens_spent,
+                    tokens_prompt,
+                    tokens_completion,
+                    turns=turn_no,
+                    last_content=last_content,
+                )
         if window > 0 and context_tokens > window:
             # 压缩必须排在预算检查**之前**:先给工作记忆一个公平的机会变小,
             # 再用同一条门禁判定(见下),否则"能压下来也照旧死"

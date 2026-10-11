@@ -80,6 +80,10 @@ def one_shot_agent(
     deadline_epoch: float | None = None,
     cancel_event: threading.Event | None = None,
     ledger: ResourceLedger | None = None,
+    context_window_tokens: int | None = None,
+    context_keep_recent_turns: int | None = None,
+    capacity_ceiling_tokens: int = 0,
+    runtime_profile: str = "",
 ) -> LoopOutcome:
     """定位 → 提交补丁;无执行反馈,无第二轮。
 
@@ -88,6 +92,8 @@ def one_shot_agent(
     轮次差会把结论变成实验参数的函数。补丁阶段内仍可因协议/门禁拒绝而自纠多次,
     但模型看到的东西只有 Bug 描述 + 定位阶段自己写下的结论,永远看不到测试结果。
     ledger(S02/F1)与默认臂同源:两臂共用任务级账本,对照才可比。
+    上下文四个参数(G07)同样原样转给两次循环:两臂必须跑在同一份冻结的运行 profile 上,
+    这一臂少接一边就等于给对照臂偷偷换了软窗口与容量判据。
     """
     localize = run_plain_loop(
         ctx,
@@ -103,6 +109,10 @@ def one_shot_agent(
         token_budget=_budget_for(0),
         cancel_event=cancel_event,
         ledger=ledger,
+        context_window_tokens=context_window_tokens,
+        context_keep_recent_turns=context_keep_recent_turns,
+        capacity_ceiling_tokens=capacity_ceiling_tokens,
+        runtime_profile=runtime_profile,
     )
 
     prompt = ONE_SHOT_PROPOSE_PROMPT.format(
@@ -121,6 +131,10 @@ def one_shot_agent(
             token_budget=_budget_for(localize.tokens_used),
             cancel_event=cancel_event,
             ledger=ledger,
+            context_window_tokens=context_window_tokens,
+            context_keep_recent_turns=context_keep_recent_turns,
+            capacity_ceiling_tokens=capacity_ceiling_tokens,
+            runtime_profile=runtime_profile,
         )
     except BudgetError as exc:
         # N-11 同源:补丁阶段超预算时,定位阶段已烧的用量必须记回任务级账本,

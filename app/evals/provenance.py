@@ -211,6 +211,10 @@ SNAPSHOT_KEYS: tuple[str, ...] = (
     "model_capabilities",
     "model_declared_output_ceiling",
     "llm_platform_retries",
+    # G07 运行 profile 名:它是"这一批用的是哪一套窗口/轮数/预留口径"的总开关,换 profile
+    # 就是换运行条件。它**不进** protocol_identity —— v1/v2 对照正是要把它作为登记变量差出来
+    # (与 context_window_tokens 同一处置:额度/窗口类旋钮在快照里,协议形状才进控制身份)。
+    "agent_runtime_profile",
 )
 SECRET_KEYS: frozenset[str] = frozenset({"llm_api_key", "api_token"})
 EXEMPT_KEYS: frozenset[str] = frozenset(
@@ -386,12 +390,11 @@ def protocol_identity(arm: str, policy: Any | None = None) -> dict[str, Any]:
         "budget_mode": settings.budget_mode,
         "llm_max_tokens": settings.llm_max_tokens,
         "llm_max_retries": settings.llm_max_retries,
-        # G07:平台显式重试与能力声明。两臂之间"重试归属"或"容量有没有来源"不同,
-        # 就是在比两种运行条件(一轮多发一次请求、一个窗口被夹小都会改变终态)。
+        # G07:平台显式重试与能力声明属于**请求协议形状**(重试归属、tools/reasoning 字段
+        # 是否出现在请求里)。容量的来源与输出上界不在这张表里 —— 它们与
+        # `model_context_tokens` 同族(额度/容量旋钮,只在快照里),v1/v2 对照正要按臂登记它们。
         "llm_platform_retries": settings.llm_platform_retries,
-        "model_capacity_source": settings.model_capacity_source,
         "model_capabilities": settings.model_capabilities,
-        "model_declared_output_ceiling": settings.model_declared_output_ceiling,
         "llm_thinking": settings.llm_thinking,
         "refine_head_lines": settings.refine_head_lines,
         "refine_tail_lines": settings.refine_tail_lines,

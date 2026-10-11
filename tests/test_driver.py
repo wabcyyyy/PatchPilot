@@ -219,6 +219,7 @@ def test_provenance_carries_new_traceability_fields() -> None:
         "model_capabilities",
         "model_declared_output_ceiling",
         "llm_platform_retries",
+        "agent_runtime_profile",
     } == set(SNAPSHOT_KEYS)
     started = datetime.fromisoformat(prov["started_at"])
     assert started.tzinfo is not None

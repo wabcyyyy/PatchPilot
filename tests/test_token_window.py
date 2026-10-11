@@ -10,7 +10,12 @@ import copy
 import json
 
 from app.config import Settings
-from app.context.token_window import REASONING_STUB, STUB_PREFIX, compact_messages
+from app.context.token_window import (
+    REASONING_STUB,
+    STUB_PREFIX,
+    compact_messages,
+    protected_region,
+)
 from app.llm.base import messages_tokens
 
 SYSTEM_TEXT = "s" * 400
@@ -280,3 +285,53 @@ def test_production_default_threshold_bites_on_realistic_shape() -> None:
         msg.get("role") != "tool" or not str(msg["content"]).startswith(STUB_PREFIX)
         for msg in result.messages[-tail:]
     )
+
+
+# ---------- G07 保护区读数:压不动的那一段到底是哪些消息 ----------
+
+
+def test_protected_region_covers_head_and_pinned_tail_in_order() -> None:
+    messages = _history(5, big=400)
+    region = protected_region(messages, keep_recent_turns=2)
+    assert region[:2] == HEAD, "头部(system + 首条 issue)永远不参与压缩,也就永远算进保护区"
+    assert region[2:] == messages[-4:], "尾部钉住的是**最近**两组,并且保持原顺序"
+    assert len(region) == 6
+
+
+def test_protected_region_does_not_mutate_the_input() -> None:
+    messages = _history(3, big=400)
+    snapshot = copy.deepcopy(messages)
+    protected_region(messages, keep_recent_turns=1)
+    assert messages == snapshot, "容量读数是只读的:它把消息改了就等于替循环做了决定"
+
+
+def test_protected_region_with_few_groups_covers_everything() -> None:
+    """组数不超过钉住数 ⇒ 整段都是保护区(与 compact_messages 的"压不动"同一条边界)。
+
+    两边口径必须一致,否则会出现"压缩说压不动、容量检查说还能压"的空转。
+    """
+    messages = _history(2, big=400)
+    assert protected_region(messages, keep_recent_turns=6) == messages
+
+
+def test_protected_region_keeps_an_unanswered_tool_call() -> None:
+    """assistant 声明了 tool_call 但还没有回执:这一组必须在保护区里(G06 的未完成配对)。
+
+    把它算成"可压"就等于允许容量检查放过后重发一条孤儿消息 —— 严格端点直接 400。
+    """
+    messages = _history(3, big=400)
+    pending = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "type": "function",
+                "id": "call_pending",
+                "function": {"name": "read_file", "arguments": "{}"},
+            }
+        ],
+    }
+    messages.append(pending)
+    region = protected_region(messages, keep_recent_turns=1)
+    assert region[-1] is pending
+    assert len(region) < len(messages), "更早的回合组本该是可压区,不该整段进保护区"

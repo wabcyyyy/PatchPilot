@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -681,3 +682,33 @@ def test_binding_mismatch_predicate_only_fires_when_both_bound() -> None:
     # 旧快照(没有绑定)与未接记忆的运行都走既有语义:冷启动该阶段,而不是凭空判待审
     assert binding_mismatch(LoopSnapshot(stage="LOOP"), session, memory) == ([], {})
     assert binding_mismatch(None, session, memory) == ([], {})
+
+
+def test_binding_mismatch_catches_runtime_profile_drift() -> None:
+    """G07:崩溃前那套窗口/轮数/输出预留口径不在了,就不能把它的历史接进新口径里续跑。
+
+    同一条"两边都有绑定才算不一致"的规矩:旧快照不记 profile(空串)⇒ 不参与比较,
+    否则升级前留下的每一份快照都会一律待审。
+    """
+    from app.config import Settings
+    from app.graph.loop_state import LoopSnapshot
+    from app.graph.resume import binding_mismatch
+
+    session = SessionState(TASK, "s-1")
+    memory = TaskMemory(TASK, "s-1")
+    legacy = SimpleNamespace(profile_name="legacy_v1")
+    repair = SimpleNamespace(profile_name="repair_v2")
+    bound = LoopSnapshot(stage="LOOP", session_id="s-1", memory_hash=memory.state_hash())
+
+    # 旧快照 + 新代码:没有 profile 绑定这一说,照旧续跑(读数是两侧对照,不为空)
+    assert binding_mismatch(bound, session, memory, repair)[0] == []
+
+    profiled = LoopSnapshot(stage="LOOP", session_id="s-1", runtime_profile="legacy_v1")
+    mismatched, readings = binding_mismatch(profiled, session, memory, repair)
+    assert mismatched == ["runtime_profile"]
+    assert readings["snapshot"]["runtime_profile"] == "legacy_v1"
+    assert readings["current"]["runtime_profile"] == "repair_v2"
+    # 同一个 profile 名下两侧一致 ⇒ 不报不一致(默认 legacy_v1 与今天的恢复逐字相同)
+    assert binding_mismatch(profiled, session, memory, legacy)[0] == []
+    # 今天的默认值就是 legacy_v1:恢复路径不因为引入了 profile 而多判一次待审
+    assert legacy.profile_name == Settings().agent_runtime_profile == "legacy_v1"

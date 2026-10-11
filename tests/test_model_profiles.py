@@ -13,6 +13,11 @@ from typing import Any
 
 import pytest
 
+from app.agent.runtime import (
+    REPAIR_V2_KEEP_RECENT_TURNS,
+    REPAIR_V2_SOFT_TARGET_TOKENS,
+    TaskRuntime,
+)
 from app.config import Settings
 from app.errors import TaskError
 from app.llm.openai_client import OpenAICompatModel, build_model
@@ -262,3 +267,137 @@ def test_layered_retries_are_refused_at_construction() -> None:
         OpenAICompatModel(
             _settings(llm_model="workhorse-128k", llm_max_retries=2, llm_platform_retries=1)
         )
+
+
+# ---------- G07b 运行 profile:四个概念分开命名,任务开工就冻结 ----------
+
+
+def test_legacy_v1_is_verbatim_todays_settings() -> None:
+    """legacy_v1 = 今日逐字:数字全部照搬 Settings,而且**不做**容量比较。
+
+    这条是回归钉子:profile 层如果悄悄给旧运行加了一道容量闸,历史批次的可比性就没了。
+    """
+    settings = Settings()
+    runtime = TaskRuntime.build(settings)
+    assert runtime.profile_name == "legacy_v1" == settings.agent_runtime_profile
+    assert runtime.loop_settings() == {
+        "context_window_tokens": settings.context_window_tokens,
+        "context_keep_recent_turns": settings.context_keep_recent_turns,
+        "capacity_ceiling_tokens": 0,
+        "runtime_profile": "legacy_v1",
+    }
+    context = runtime.context
+    assert context.soft_compaction_target_tokens == settings.context_window_tokens
+    assert context.cumulative_token_budget == settings.token_budget
+    assert context.completion_output_cap_tokens == settings.llm_max_tokens
+    assert context.capacity_margin_tokens == settings.capacity_margin_tokens
+    assert runtime.window.clamped_by_capacity is False
+    assert runtime.window.capacity_checked is False
+
+
+def test_repair_v2_adopts_the_target_window_only_when_capacity_allows_it() -> None:
+    runtime = TaskRuntime.build(
+        Settings(
+            agent_runtime_profile="repair_v2",
+            model_context_tokens=128_000,
+            model_capacity_source=SOURCE_PROBED,
+            llm_max_tokens=8_192,
+        )
+    )
+    assert runtime.context.soft_compaction_target_tokens == REPAIR_V2_SOFT_TARGET_TOKENS == 64_000
+    assert runtime.context.keep_recent_turns == REPAIR_V2_KEEP_RECENT_TURNS == 12
+    assert runtime.window.clamped_by_capacity is False
+    # 保护区判据用的是"容量 − 输出预留 − 余量",与账本同一口径的两端
+    assert runtime.window.capacity_ceiling_tokens == 128_000 - 8_192 - 1_024
+    assert runtime.loop_settings()["capacity_ceiling_tokens"] == 118_784
+
+
+def test_repair_v2_on_an_unverified_endpoint_is_clamped_and_says_so() -> None:
+    """没有来源的端点跑 v2:64k 目标被夹到保守档的可用余量,并且把"被夹过"留在读数里。
+
+    SPEC §5 的"只在能力声明允许时采用目标窗口"在这里是可核对的:配置里写着 64k,
+    实际送进循环的是 10,880 —— 报告必须说真话,不能把愿望写成能力。
+    """
+    window = TaskRuntime.build(Settings(agent_runtime_profile="repair_v2")).window.as_dict()
+    assert window == {
+        "target_tokens": 64_000,
+        "adopted_tokens": 10_880,
+        "clamped_by_capacity": True,
+        "capacity_tokens": UNVERIFIED_CAPACITY_TOKENS,
+        "capacity_checked": True,
+        "capacity_ceiling_tokens": 10_880,
+    }
+
+
+def test_repair_v2_refuses_an_open_ended_output_cap() -> None:
+    """v2 不许"输出不限制":没有输出预留就无法判断保护区装不装得下,固定假设 4096 也不行。"""
+    with pytest.raises(TaskError, match="explicit llm_max_tokens"):
+        TaskRuntime.build(Settings(agent_runtime_profile="repair_v2", llm_max_tokens=0))
+
+
+def test_repair_v2_refuses_output_above_the_declared_ceiling() -> None:
+    with pytest.raises(TaskError, match="declared output ceiling"):
+        TaskRuntime.build(
+            Settings(
+                agent_runtime_profile="repair_v2",
+                model_declared_output_ceiling=2_048,
+                llm_max_tokens=8_192,
+            )
+        )
+
+
+def test_repair_v2_refuses_a_capacity_that_cannot_hold_the_request() -> None:
+    """声明容量减掉输出预留与余量后什么都不剩:直接拒绝,不进循环反复压缩。"""
+    with pytest.raises(TaskError, match="cannot run"):
+        TaskRuntime.build(
+            Settings(
+                agent_runtime_profile="repair_v2",
+                model_context_tokens=4_000,
+                llm_max_tokens=4_096,
+                capacity_margin_tokens=1_024,
+            )
+        )
+
+
+def test_unknown_profile_name_is_refused() -> None:
+    with pytest.raises(TaskError, match="agent_runtime_profile"):
+        TaskRuntime.build(Settings(), profile_name="repair_v3")
+    with pytest.raises(ValueError, match="agent_runtime_profile"):
+        Settings(agent_runtime_profile="repair_v3")
+
+
+def test_profile_is_frozen_at_build_and_two_profiles_coexist() -> None:
+    """受理后改环境变量不改在跑的那一份;两个 profile 同时在场也不互相覆盖。
+
+    这条测的是 G07 的"runtime 把冻结的策略实例传入引擎":如果 profile 是每次回读全局
+    Settings 得来的,第二个断言就会红 —— 那正是"用改全局配置来模拟不同任务 profile"的缺陷。
+    """
+    legacy = TaskRuntime.build(Settings())
+    repair = TaskRuntime.build(
+        Settings(
+            agent_runtime_profile="repair_v2",
+            model_context_tokens=128_000,
+            model_capacity_source=SOURCE_PROBED,
+            llm_max_tokens=8_192,
+        )
+    )
+    assert legacy.context.soft_compaction_target_tokens == 16_000
+    assert repair.context.soft_compaction_target_tokens == 64_000
+
+    monkeypatched = Settings(
+        agent_runtime_profile="repair_v2",
+        model_context_tokens=128_000,
+        model_capacity_source=SOURCE_PROBED,
+        llm_max_tokens=8_192,
+        context_window_tokens=1_000,  # 受理后才发现运维把 legacy 的键改了
+    )
+    assert TaskRuntime.build(monkeypatched).profile_name == "repair_v2"
+    assert legacy.context.soft_compaction_target_tokens == 16_000, "已冻结的读数不许被后来者改写"
+    assert repair.context.soft_compaction_target_tokens == 64_000
+
+
+def test_runtime_readings_carry_no_credentials() -> None:
+    runtime = TaskRuntime.build(_settings(llm_enabled=True))
+    blob = str(runtime.as_dict())
+    assert API_KEY not in blob and "token=abc" not in blob
+    assert runtime.as_dict()["model"]["capacity_source"] == SOURCE_UNVERIFIED

@@ -107,26 +107,37 @@ def _read_final_report(run_dir: Path) -> dict[str, Any] | None:
 
 
 def binding_mismatch(
-    loop_snapshot: Any, session: Any, memory: Any
+    loop_snapshot: Any, session: Any, memory: Any, runtime: Any = None
 ) -> tuple[list[str], dict[str, Any]]:
-    """快照绑定 vs 当前会话/记忆 → (不一致的字段名, 两侧读数)。
+    """快照绑定 vs 当前会话/记忆/运行 profile → (不一致的字段名, 两侧读数)。
 
     只有**两侧都有绑定**才可能不一致:旧快照(没有 session_id)与未接记忆的运行都返回空,
     走既有语义。把"没绑定"也判成 mismatch 会让升级前留下的每一份快照一律待审,
     那是伪造迁移成功,不是严格。
+
+    `runtime_profile`(G07)同一条规矩:旧快照不记 profile,回来就是空串 ⇒ 不参与比较。
+    两边都有值且不同 ⇒ 待审 —— 崩溃前那套软窗口/尾部钉住/输出预留口径已经不在场了,
+    把 legacy_v1 的历史接进 repair_v2 的运行里,PROPOSE 看到的工作记忆形状与写快照时
+    根本不是同一个,继续跑出来的结论没法解释。
     """
-    if loop_snapshot is None or not getattr(loop_snapshot, "session_id", ""):
+    if loop_snapshot is None:
+        return [], {}
+    snapshot_profile = getattr(loop_snapshot, "runtime_profile", "")
+    if not getattr(loop_snapshot, "session_id", "") and not snapshot_profile:
         return [], {}
     current_session_id = getattr(session, "session_id", "") if session else ""
     current_memory_hash = memory.state_hash() if memory is not None else ""
+    current_profile = getattr(runtime, "profile_name", "") if runtime is not None else ""
     readings = {
         "snapshot": {
             "session_id": loop_snapshot.session_id,
             "memory_version": loop_snapshot.memory_version,
+            "runtime_profile": snapshot_profile,
         },
         "current": {
             "session_id": current_session_id,
             "memory_version": memory.version if memory is not None else 0,
+            "runtime_profile": current_profile,
         },
     }
     mismatched = [
@@ -134,6 +145,7 @@ def binding_mismatch(
         for name, (expected, actual) in {
             "session_id": (loop_snapshot.session_id, current_session_id),
             "memory_hash": (loop_snapshot.memory_hash, current_memory_hash),
+            "runtime_profile": (snapshot_profile, current_profile),
         }.items()
         if expected and expected != actual
     ]
@@ -256,7 +268,9 @@ def prepare_resume(
     # 对不上就是待审(NEEDS_REVIEW),绝不"默默冷启动一次"——那等于用一份没人核验过的
     # 工作记忆继续收费运行。旧快照没有绑定(字段为空)仍走既有语义,不算 mismatch。
     if loop_snapshot is not None and loop_snapshot.session_id:
-        mismatched, readings = binding_mismatch(loop_snapshot, nodes.session, nodes.memory)
+        mismatched, readings = binding_mismatch(
+            loop_snapshot, nodes.session, nodes.memory, nodes.runtime
+        )
         if mismatched:
             nodes.tracker.record(
                 tool="resume_binding_mismatch",

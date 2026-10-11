@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from app.adapters.pytest_adapter import run_pytest
+from app.agent.runtime import CONTEXT_CAPACITY_EXCEEDED, TaskRuntime
 from app.config import get_settings
 from app.context.repo_map import repo_map_for_workspace
 from app.errors import BudgetError, TaskCancelled, TaskError
@@ -169,6 +170,10 @@ class TaskNodes:
     session: SessionState | None = None
     memory: TaskMemory | None = None
     assembler: ContextAssembler | None = None
+    # G07:任务开工时冻结的运行 profile。引擎读它的数字(软窗口/尾部钉住/容量余量),
+    # 不再每个阶段回读全局 Settings —— 那才是"并发两个 profile 互不影响"与"受理后改环境
+    # 变量不改在跑的任务"的落点。None ⇒ 按 Settings 建 legacy_v1(与今日逐字相同)。
+    runtime: TaskRuntime | None = None
 
     def __post_init__(self) -> None:
         if self.policy is None:
@@ -176,6 +181,10 @@ class TaskNodes:
 
             self.policy = agent_policy()
         settings = get_settings()
+        if self.runtime is None:
+            # G07:profile 在节点构造时就冻结(与账本"恢复优先读回"同一思路)。此后改环境
+            # 变量、或并发跑另一份 profile 的任务,都不改写已经在跑的这一份。
+            self.runtime = TaskRuntime.build(settings)
         if self.ledger is None:
             # getattr 兜底:测试替身(部分字段的 SimpleNamespace settings)落在"无预算"一侧,
             # 与本文件 _persistent_context 的既有惯例一致。
@@ -355,6 +364,15 @@ class TaskNodes:
                 state="BASELINE",
                 input_payload={"baseline": self.baseline_commit[:12]},
             )
+            # 运行 profile 落轨迹(G07):这一跑用的是哪套软窗口/尾部钉住/输出预留,
+            # 目标窗口有没有被端点声明的容量夹小,都要在报告里查得到而不是靠回忆配置。
+            # 只登记事实,不参与任何判定;每个任务一次(prepare 不在恢复路径上重跑)。
+            self.tracker.record(
+                tool="runtime_profile",
+                state="BASELINE",
+                input_payload={"profile_name": self.runtime.profile_name},
+                output_summary=self.runtime.as_dict(),
+            )
             # M6:基线 sha 进 state(SqliteSaver 可序列化),恢复方据此复位工作区
             return {
                 "status": "BASELINE",
@@ -472,8 +490,7 @@ class TaskNodes:
                 token_budget=self._token_budget_for(
                     state, share=get_settings().localize_budget_share
                 ),
-                context_window_tokens=get_settings().context_window_tokens,
-                context_keep_recent_turns=get_settings().context_keep_recent_turns,
+                **self.runtime.loop_settings(),
                 cancel_event=self.cancel_event,
                 resume_snapshot=self._take_resume_snapshot("LOCALIZE", state["round_no"]),
                 ledger=self.ledger,
@@ -493,7 +510,11 @@ class TaskNodes:
                 "tokens_completion": state.get("tokens_completion", 0) + exc.tokens_completion,
             }
             budget = get_settings().token_budget
-            if budget > 0 and usage["tokens_used"] >= budget:
+            # 第三种"耗尽"(G07):保护区超出端点声明容量。它不属于"份额用尽可以降级继续"——
+            # 换阶段还是同一个端点、同一份压不动的历史,继续只会再烧一次请求并同样被拒。
+            # 终止并把原因串留在 error 里,报告能区分"钱花光了"与"这一发本来就装不下"。
+            capacity_blocked = CONTEXT_CAPACITY_EXCEEDED in str(exc)
+            if capacity_blocked or (budget > 0 and usage["tokens_used"] >= budget):
                 return {
                     **usage,
                     "status": "BUDGET_EXCEEDED",
@@ -666,8 +687,7 @@ class TaskNodes:
                 token_budget=self._token_budget_for(
                     state, share=getattr(settings, "plan_budget_share", 0.15)
                 ),
-                context_window_tokens=settings.context_window_tokens,
-                context_keep_recent_turns=settings.context_keep_recent_turns,
+                **self.runtime.loop_settings(),
                 cancel_event=self.cancel_event,
                 resume_snapshot=self._take_resume_snapshot("PLAN", state["round_no"]),
                 ledger=self.ledger,
@@ -683,7 +703,9 @@ class TaskNodes:
                 "tokens_completion": state.get("tokens_completion", 0) + exc.tokens_completion,
             }
             budget = settings.token_budget
-            if budget > 0 and usage["tokens_used"] >= budget:
+            if CONTEXT_CAPACITY_EXCEEDED in str(exc) or (
+                budget > 0 and usage["tokens_used"] >= budget
+            ):
                 return {
                     **usage,
                     "status": "BUDGET_EXCEEDED",
@@ -800,8 +822,7 @@ class TaskNodes:
                 allowed_tools=list(self.policy.propose_tools),
                 deadline_epoch=self.deadline_epoch,
                 token_budget=self._token_budget_for(state),
-                context_window_tokens=get_settings().context_window_tokens,
-                context_keep_recent_turns=get_settings().context_keep_recent_turns,
+                **self.runtime.loop_settings(),
                 cancel_event=self.cancel_event,
                 resume_snapshot=self._take_resume_snapshot("PROPOSE_PATCH", state["round_no"]),
                 ledger=self.ledger,
@@ -1257,8 +1278,7 @@ class TaskNodes:
                 # 脚枪式语义(复盘 P2);至少给 1,让候选在首个 turn 边界即被预算拦下
                 token_budget=max(reserve // 2, 1) if reserve else reserve,
                 deadline_epoch=self.deadline_epoch,
-                context_window_tokens=settings.context_window_tokens,
-                context_keep_recent_turns=settings.context_keep_recent_turns,
+                **self.runtime.loop_settings(),
                 cancel_event=self.cancel_event,
                 ledger=self.ledger,
             )

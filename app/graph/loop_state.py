@@ -68,6 +68,10 @@ class LoopSnapshot:
     session_hash: str = ""
     memory_version: int = 0
     memory_hash: str = ""
+    # G07 运行 profile 绑定:第五个**可空**字段,同样的加字段理由(旧文件读回来落在
+    # "没绑定"上,语义与加字段前逐字相同)。它记的是"写这份快照时用的是哪一套窗口/轮数/
+    # 输出预留口径",恢复方据此拒绝把 legacy_v1 的历史接进 repair_v2 的运行里。
+    runtime_profile: str = ""
 
 
 def _now_iso() -> str:
@@ -194,6 +198,7 @@ def load_loop_snapshot(
             session_hash=str(raw.get("session_hash", "") or ""),
             memory_version=int(raw.get("memory_version", 0) or 0),
             memory_hash=str(raw.get("memory_hash", "") or ""),
+            runtime_profile=str(raw.get("runtime_profile", "") or ""),
         )
     except (TypeError, ValueError) as exc:
         log.warning("task %s: loop snapshot malformed (%s); ignoring", label, exc)

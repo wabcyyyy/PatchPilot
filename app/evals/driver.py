@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from app.adapters.pytest_adapter import run_pytest
+from app.agent.runtime import TaskRuntime
 from app.agent.session import SessionState
 from app.config import get_settings
 from app.context.task_memory import TaskMemory, load_memory_state
@@ -204,6 +205,10 @@ def run_task(
         price_model=model_name or str(getattr(settings, "llm_model", "") or ""),
         run_dir=run_dir,
     )
+    # G07:plain 引擎与 graph 共用同一份**冻结的**运行 profile。同一个 profile 名字在两条
+    # 路上必须给出同一组数字(软窗口/尾部钉住/容量判据),否则"换 profile"就成了看引擎才
+    # 生效的话;消融臂换 profile 也就是换这一份读数。
+    runtime = TaskRuntime.build(settings)
 
     def _time_overrun() -> str | None:
         if deadline_epoch is not None and time.time() > deadline_epoch:
@@ -249,6 +254,14 @@ def run_task(
             tool="create_workspace",
             state="BASELINE",
             input_payload={"baseline": baseline_commit[:12]},
+        )
+        # 与 graph 同一件事(见 nodes.prepare 的同名事件):plain/one-shot 臂也要在轨迹里
+        # 留下"这一跑用的是哪套窗口/轮数/容量口径",否则两臂对照少一边读数。
+        tracker.record(
+            tool="runtime_profile",
+            state="BASELINE",
+            input_payload={"profile_name": runtime.profile_name},
+            output_summary=runtime.as_dict(),
         )
 
         if deadline_epoch is not None and time.time() > deadline_epoch:
@@ -302,6 +315,7 @@ def run_task(
             deadline_epoch=deadline_epoch,
             cancel_event=cancel_event,
             ledger=ledger,
+            **runtime.loop_settings(),
         )
         result.turns = outcome.turns
         result.tokens_used = outcome.tokens_used

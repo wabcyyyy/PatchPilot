@@ -223,6 +223,9 @@ class Settings(BaseSettings):
             raise ValueError(f"localize_budget_share must be in (0, 1], got {value}")
         return value
 
+    # 四个概念互不替代(SPEC §5),键名与 app/agent/runtime.py 的 ContextPolicy 字段一一对应:
+    # `context_window_tokens` = 软压缩目标(工作记忆阈值),`model_context_tokens` = 端点声明的
+    # 单请求硬容量,`token_budget` = 任务累计额度,`llm_max_tokens` = 单次输出上限。
     # 工作记忆软阈值(M1 滑动窗口压缩):该段的 token 估算此前只增不减,
     # 真实多文件题光靠只读调查就把份额烧穿(runs/swe-hard-graph:16-19 轮、
     # 417,894 tok 撞 400k 顶、apply_patch 0 次)。超过此阈值时在 turn 边界压缩旧历史,
@@ -243,6 +246,22 @@ class Settings(BaseSettings):
         if value < 1:
             raise ValueError(f"context_keep_recent_turns must be >= 1, got {value}")
         return value
+
+    # G07 运行 profile:legacy_v1 = 今日逐字(软阈值/钉住轮数/额度/输出上限全部照搬本文件),
+    # repair_v2 = 目标软窗口 64k、尾部钉 12 轮,并且只在端点**声明**的容量允许时采用该目标
+    # (装不下就夹小并留痕)。新默认切换要等 G16 收口,所以默认仍是 legacy_v1:历史批次身份不许
+    # 被这次升级改写。
+    agent_runtime_profile: str = "legacy_v1"
+
+    @field_validator("agent_runtime_profile")
+    @classmethod
+    def _check_agent_runtime_profile(cls, value: str) -> str:
+        normalized = value.strip() or "legacy_v1"
+        if normalized not in {"legacy_v1", "repair_v2"}:
+            raise ValueError(
+                f"agent_runtime_profile must be 'legacy_v1' or 'repair_v2', got {value!r}"
+            )
+        return normalized
 
     # M6 崩溃恢复(A 级:循环工作记忆快照)。缺陷出处:`run_plain_loop` 的 messages/token
     # 计数是函数局部变量,一次 superstep 内跑到第 19 轮崩溃时 SqliteSaver 只有阶段边界的
