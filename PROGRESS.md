@@ -1778,3 +1778,10 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
   未动);定向 68 passed / 4:11(e2e 批准→resolved 在内);回归子集 88 passed / 6:05。
   **全量:未运行**(批尾统一执行)。新 clone 重建 .venv(3.14.1/pytest 9.1.1/ruff 0.17.0),
   basetemp 落 `C:\Users\Administrator\.cache\pt\patchpilot\...`(D:/tmp 沙箱写入不稳)。
+- **B3 批次退出(2026-10-11)**:ruff/format/锚点全绿;全量
+  **1157 passed, 9 skipped, 1 warning in 1386.12s(23:06)**(exit 0;收据身份 `d3cf0c3`,
+  日志 `.cache/pt/patchpilot/b3_exit.log`)。skip = 4×docker(本机守护进程不可用)+2×redis
+  +3×符号链接,无一为消红而加;收集差集 @`695f773`→本提交 = **+50 / -0**(G09 37 + G10 13),
+  当前 1166 = 1157 + 9 闭合。**跨会话恒定差 12 条**(旧会话 1105/1128 vs 今日同提交
+  1093/1116)机制未定位,按"不混用口径"登记,留 G16 复核。
+- **下一批**:B4(G11–G12;依赖见 SPEC §6,需用户授权后起)。

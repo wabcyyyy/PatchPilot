@@ -1198,3 +1198,41 @@ G08 第一次全量拿到的是 **2 failed / 1121 passed**,两条红都落在文
     覆盖到 `_resumable_row` 认提议 + resume 决策,留 G12/G16 复核。
 - **费用与外部动作**:零模型调用、零付费、零 push;测试全部离线(FakeLLM + 真实 pytest)。
 - **下一张卡**:B3 收口(批尾全量)→ 按 SPEC 下一批为 B4(G11–G12)。
+
+---
+
+## B3 批次退出(G09–G10)
+
+收据身份:`d3cf0c3`(工作树 clean;此后只改文档)。命令与读数:
+
+```
+ruff check .              → All checks passed!                 (exit 0)
+ruff format --check .     → 273 files already formatted        (exit 0)
+ADR 锚点全量审计           → 0 漂移
+全量:pytest -q --durations=30 --basetemp=C:/Users/Administrator/.cache/pt/patchpilot/b3-exit
+      → 1157 passed, 9 skipped, 1 warning in 1386.12s (0:23:06) (exit 0)
+日志:C:/Users/Administrator/.cache/pt/patchpilot/b3_exit.log
+```
+
+- skip 9 条全部是环境依赖:4×docker(本机 Docker 守护进程当前不可用)+ 2×redis +
+  3×符号链接;**没有一条是为消掉失败而加的**。docker 分支的覆盖仍然成立:M20 起
+  ubuntu CI 连续绿里真跑(本地本次不覆盖它);G09 的容器实测证据仍以
+  `probe-after-g09-docker.json`(上一会话真实容器 8 场景)为准,本机当前状态不改它的表述。
+- 数对账(用例数一条不吞):**本提交与前一批退出点(`695f773`)的收集差集 = +50 / -0**
+  (实测 diff,零删除):G09 两文件 37(test_command_profiles 27 + test_command_lifecycle 10)
+  + G10 两文件 13(test_diagnosis_intake 7 + test_acceptance_manifest 6);
+  当前收集 **1166 = 1157 passed + 9 skipped** ✓。
+- **跨会话口径不变量(照实记)**:上一会话在 G07/B2 的收集读数(1105 / 1128)比今日在
+  **同一提交**上的新鲜收集(1093 / 1116)恒多 12 条;今日两次收集彼此自洽,差额机制未
+  定位(旧 .venv 与本次新 clone 重建的 .venv 解释器/依赖身份不同,旧环境已不可复原)。
+  引用旧读数时不与今日口径混用;该差额不作为用例增删证据(G07→B2 的 +23 与
+  B2→今日的 +50 在两套口径下一致)。留 G16 复核。
+- 慢测试读数(`--durations=30` 前 8):`test_ten_custom_tasks_concurrent_smoke` 58.26s、
+  `test_ablation_invariants` 三条 27.4–37.2s、`test_plan_stage` 20.56s、
+  `test_driver::test_fake_batch_writes_manifest` 19.53s、`test_branching` e2e 18.72s。
+- 退出条件逐条对账(SPEC §6:B3 = 容器命令能力;issue-only 到冻结验收清单):
+  G09 容器命令能力——离线/容器验证已登记(见 G09 节);G10 issue-only 到冻结清单——
+  端到端已登记(见 G10 节);两卡的"定向通过,批次全量待运行"在本节全部转为已运行。
+- 剩余未证明(不因批尾全量通过而改变):G09 的 Docker 集成只在上一会话实测过一次
+  (本机当前 Docker 不可用,未复跑);G10 的"等待期进程被杀后由新进程批准"完整进程级
+  场景未测。两者都在各自卡节写明,留对应后续卡复核。
