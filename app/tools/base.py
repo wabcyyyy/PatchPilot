@@ -85,6 +85,10 @@ class ToolContext:
     # 任务级累计的用户等待时长(G11):循环在每次等待结束后累加,节点按增量把任务
     # deadline 顺延出去(恰好一次,见 TaskNodes._sync_wait_pause_deadline)。
     interaction_paused_seconds: float = 0.0
+    # G13:子任务编排句柄(SubtaskManager)。None = 未接线(默认关闭,与接入前逐字相同);
+    # registry 只在句柄存在且 enabled 时把 delegate 加入阶段工具表。delegate 工具本身
+    # 不在任何静态白名单里,由节点在装配时按开关追加。
+    subtasks: Any | None = None
 
 
 @dataclass

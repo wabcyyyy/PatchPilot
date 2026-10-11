@@ -21,6 +21,7 @@ from app.context.evidence import EvidenceNotStored, EvidenceRef, build_store
 from app.diagnosis.tool import propose_acceptance
 from app.tools.base import ToolContext, ToolResult
 from app.tools.commands import run_command, write_repro
+from app.tools.delegation import delegate
 from app.tools.execution import run_tests
 from app.tools.files import list_files, read_evidence, read_file, search_code
 from app.tools.interaction import ask_user
@@ -61,6 +62,7 @@ RECOVERY_POLICY: dict[str, str] = {
     "apply_patch": "state_check",
     "reset_workspace": "state_check",
     "run_command": "no_rerun",
+    "delegate": "no_rerun",  # G13:子任务可能已经执行/改过工作区,不许盲目重跑
     FINISH_TOOL: "safe_replay",
 }
 
@@ -383,6 +385,36 @@ def _build_registry() -> dict[str, ToolSpec]:
                 ["success", "summary"],
             ),
             handler=lambda ctx, **kw: ToolResult(ok=True, output=kw),
+        ),
+        # G13:委派子执行者。不进任何静态阶段白名单(READ_TOOLS/WRITE_TOOLS 都没有它),
+        # 由节点在 delegation_enabled 且非 one_shot 时按开关追加——one_shot 天然禁委派。
+        "delegate": ToolSpec(
+            name="delegate",
+            description=(
+                "把一项调查/评审/候选修复委派给子执行者(同步等待有界结论)。"
+                "role 决定能力:researcher 只读调查+受控诊断、reviewer 只读冻结候选+跑测试、"
+                "repair_candidate 在自己的隔离工作区修改并验证。task 给精简委派说明,"
+                "evidence_ids 引用父任务已登记的证据(可空),candidate_id 用于指认要评审的"
+                "候选(可空)。返回 {role, subtask_id, ok, conclusion, evidence_ids, risks, "
+                "candidate_id, candidate_hash, termination, error, ...};termination=refused/"
+                "unconfigured 表示名额/预算/配置不足,结论按需吸收,子任务测试通过不自动"
+                "成为最终修复依据。"
+            ),
+            parameters=_schema(
+                "delegate",
+                "委派子执行者",
+                {
+                    "role": {
+                        "type": "string",
+                        "enum": ["researcher", "reviewer", "repair_candidate"],
+                    },
+                    "task": {"type": "string"},
+                    "evidence_ids": {"type": "array", "items": {"type": "string"}},
+                    "candidate_id": {"type": "string"},
+                },
+                ["role", "task"],
+            ),
+            handler=delegate,
         ),
     }
 
