@@ -176,6 +176,12 @@ class ResourceLedger:
     anomalies: list[str] = field(default_factory=list)
     over_capacity_requests: int = 0  # 因"单请求超出声明容量"被请求前拒绝的次数
     state_path: Path | None = None
+    # ---------- G13:子任务额度记账 ----------
+    # share 冻结自配置(0 = 无子任务池);reserved = 父账本已预留、尚未结算的合计;
+    # settled = 子任务真实用量累计(不入 tokens_used,后者由 record_usage 按实际调用记)。
+    subtask_budget_share: float = 0.0
+    subtask_reserved_tokens: int = 0
+    subtask_settled_tokens: int = 0
 
     def __post_init__(self) -> None:
         self._lock = threading.Lock()
@@ -499,6 +505,63 @@ class ResourceLedger:
             )
         return (0, 0)
 
+    # ---------- G13:子任务额度预留与结算 ----------
+
+    def _subtask_ceiling_locked(self) -> int | None:
+        """子任务额度合计上限 = 任务有效限额 × share;无任务限额或 share=0 = 不限。"""
+        if self.token_limit <= 0 or self.subtask_budget_share <= 0:
+            return None
+        return int(self.token_limit * self.subtask_budget_share)
+
+    def subtask_ceiling(self) -> int | None:
+        """公开读子任务池上限(锁内取值,供 SubtaskManager 算单子任务预留)。"""
+        with self._lock:
+            return self._subtask_ceiling_locked()
+
+    def reserve_subtask(self, *, tokens: int, stage: str = "subtask") -> bool:
+        """原子预留子任务额度(父账本先预留,SPEC §G13)。
+
+        拒绝的两种情况都留痕并返回 False(调用方据此拒绝委派):
+        - 合计将超过任务有效限额 × share(子任务池的上限);
+        - 预留后越过任务总额(主线已把额度花掉,剩余不足)。
+        成功时把 `tokens` 记入 subtask_reserved_tokens,结算时再回收。
+        预留不是"提前花掉":子任务的实际用量仍经 record_usage 入 tokens_used,
+        这里登记的是"子任务池承诺给出去的额度",避免两个子任务各看一次余量、
+        合计超出份额(G03 同源:检查与登记在同一临界区)。
+        """
+        with self._lock:
+            ceiling = self._subtask_ceiling_locked()
+            if ceiling is not None and self.subtask_reserved_tokens + tokens > ceiling:
+                self.anomalies.append(f"subtask_reserve_denied_over_share:{stage}")
+                return False
+            if self.token_limit > 0:
+                committed = (
+                    self.tokens_used
+                    + self.unknown_held_tokens
+                    + self._reserved_tokens()
+                    + self.subtask_reserved_tokens
+                )
+                if committed + tokens > self.token_limit:
+                    self.anomalies.append(f"subtask_reserve_denied_no_room:{stage}")
+                    return False
+            self.subtask_reserved_tokens += max(int(tokens), 0)
+            self._persist_locked()
+            return True
+
+    def settle_subtask(self, *, reserved_tokens: int, tokens_used: int) -> None:
+        """结算一个子任务:回收其预留额度,真实用量记入 settled 计数。
+
+        子任务的实际模型用量已经由 record_usage 计入 tokens_used(与主线共用同一份
+        账本),这里不重复累计——settled 是"子任务真实花了多少"的报告读数,供
+        "全部落选消耗入账"这类判定核对。
+        """
+        with self._lock:
+            self.subtask_reserved_tokens = max(
+                self.subtask_reserved_tokens - max(int(reserved_tokens), 0), 0
+            )
+            self.subtask_settled_tokens += max(int(tokens_used), 0)
+            self._persist_locked()
+
     # ---------- 读取 ----------
 
     def _limits(self) -> dict[str, Any]:
@@ -510,6 +573,7 @@ class ResourceLedger:
             "model_capacity_tokens": self.model_capacity_tokens,
             "capacity_margin_tokens": self.capacity_margin_tokens,
             "output_reserve": self.output_reserve,
+            "subtask_budget_share": self.subtask_budget_share,
         }
 
     def recomputed(self) -> dict[str, Any]:
@@ -580,6 +644,9 @@ class ResourceLedger:
                 ),
                 "in_flight": [r.as_dict() for r in self._in_flight()],
                 "over_capacity_requests": self.over_capacity_requests,
+                # G13:子任务池预留/结算读数(与 reserved_tokens 并列,报告里不许混成一个数)
+                "subtask_reserved_tokens": self.subtask_reserved_tokens,
+                "subtask_settled_tokens": self.subtask_settled_tokens,
                 "anomalies": list(self.anomalies),
                 "recomputed": {
                     k: v
@@ -631,6 +698,9 @@ class ResourceLedger:
             "unknown_held_cost_micro_usd": self.unknown_held_cost_micro_usd,
             "over_capacity_requests": self.over_capacity_requests,
             "anomalies": list(self.anomalies),
+            "subtask_budget_share": self.subtask_budget_share,
+            "subtask_reserved_tokens": self.subtask_reserved_tokens,
+            "subtask_settled_tokens": self.subtask_settled_tokens,
             "calls": [asdict(c) for c in self.calls.values()],
             "reservations": [r.as_dict() for r in self.reservations.values()],
             "settled_reservations": list(self.settled_reservations),
@@ -682,6 +752,9 @@ class ResourceLedger:
         ledger.unknown_held_cost_micro_usd = int(saved.get("unknown_held_cost_micro_usd", 0) or 0)
         ledger.over_capacity_requests = int(saved.get("over_capacity_requests", 0) or 0)
         ledger.anomalies = list(saved.get("anomalies") or [])
+        ledger.subtask_budget_share = float(saved.get("subtask_budget_share", 0.0) or 0.0)
+        ledger.subtask_reserved_tokens = int(saved.get("subtask_reserved_tokens", 0) or 0)
+        ledger.subtask_settled_tokens = int(saved.get("subtask_settled_tokens", 0) or 0)
         ledger.calls = {
             str(c["call_id"]): CallRecord(
                 **{k: v for k, v in c.items() if k in CallRecord.__dataclass_fields__}
@@ -742,10 +815,14 @@ def report_summary(ledger: ResourceLedger | None) -> dict[str, Any]:
             "anomalies",
             "output_reserve_unavailable",
             "recomputed",
+            # G13:子任务池读数与主线预留并列,报告可核对"子任务合计没超过份额"
+            "subtask_reserved_tokens",
+            "subtask_settled_tokens",
         )
     }
     summary["calls_consistent"] = ledger.is_consistent()
     summary["budget_mode"] = snap["limits"]["budget_mode"]
+    summary["subtask_budget_share"] = snap["limits"]["subtask_budget_share"]
     return summary
 
 
@@ -782,6 +859,8 @@ def ledger_from_settings(
         capacity_margin_tokens=int(getattr(settings, "capacity_margin_tokens", 0) or 0),
         price_model=price_model,
         state_path=state_path,
+        # G13:子任务份额冻结进账本(受理时确定,恢复沿用旧值,不改运行中的任务)
+        subtask_budget_share=float(getattr(settings, "subtask_budget_share", 0.0) or 0.0),
     )
 
 

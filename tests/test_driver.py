@@ -236,6 +236,13 @@ def test_provenance_carries_new_traceability_fields() -> None:
         # 以及等待顺延能否越过绝对上限——同样改变终态与轨迹形状
         "user_wait_seconds",
         "task_absolute_lifetime_seconds",
+        # G13 角色委派:开关/并发/次数/轮次/份额/子模型决定轨迹形状与成本,同题不可比
+        "delegation_enabled",
+        "max_subagent_concurrency",
+        "max_delegations",
+        "subtask_budget_share",
+        "subtask_max_turns",
+        "subtask_model",
     } == set(SNAPSHOT_KEYS)
     started = datetime.fromisoformat(prov["started_at"])
     assert started.tzinfo is not None

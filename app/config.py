@@ -223,6 +223,36 @@ class Settings(BaseSettings):
             raise ValueError(f"localize_budget_share must be in (0, 1], got {value}")
         return value
 
+    # G13 轻量角色委派:子任务(researcher/reviewer/repair_candidate)的总开关与额度。
+    # 默认关闭 = 与引入前逐字一致的单 Agent 行为;graph 引擎 repair_v2 可显式开启。
+    # 这些键直接决定轨迹形状与成本(开不开委派、并发几个、能花多少、用哪个模型),
+    # 故进 SNAPSHOT_KEYS(见 app/evals/provenance.py)——同一题开/关委派不可比。
+    delegation_enabled: bool = False
+    # 最多同时运行几个子执行者(并发上限;legacy Best-of-N 候选并行也受它约束)
+    max_subagent_concurrency: int = 2
+    # 每任务最多委派次数(含 Best-of-N 候选各消耗的一个名额,不叠加两套额度)
+    max_delegations: int = 3
+    # 全部子任务额度合计占任务有效限额的比例(父账本先原子预留,冻结进有效策略)
+    subtask_budget_share: float = 0.25
+    # 单个子任务的轮次上限
+    subtask_max_turns: int = 10
+    # 子任务专用模型(空 = 沿用父模型;身份与价目随任务冻结)
+    subtask_model: str = ""
+
+    @field_validator("subtask_budget_share")
+    @classmethod
+    def _check_subtask_budget_share(cls, value: float) -> float:
+        if not 0.0 < value <= 1.0:
+            raise ValueError(f"subtask_budget_share must be in (0, 1], got {value}")
+        return value
+
+    @field_validator("max_subagent_concurrency", "max_delegations", "subtask_max_turns")
+    @classmethod
+    def _check_subtask_counts(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError(f"subtask counts must be >= 1, got {value}")
+        return value
+
     # 四个概念互不替代(SPEC §5),键名与 app/agent/runtime.py 的 ContextPolicy 字段一一对应:
     # `context_window_tokens` = 软压缩目标(工作记忆阈值),`model_context_tokens` = 端点声明的
     # 单请求硬容量,`token_budget` = 任务累计额度,`llm_max_tokens` = 单次输出上限。

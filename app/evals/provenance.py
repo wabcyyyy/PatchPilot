@@ -236,6 +236,15 @@ SNAPSHOT_KEYS: tuple[str, ...] = (
     # 同族,不进豁免。
     "user_wait_seconds",
     "task_absolute_lifetime_seconds",
+    # G13 轻量角色委派:总开关决定"这条轨迹里有没有子任务在跑",并发/次数/轮次上限决定
+    # 轨迹的形状与成本(子任务数、并行度、每子任务烧多少),份额决定"子任务合计能花多少
+    # 额度"、模型决定子任务的身份与价目——全部属于运行身份,同一题开/关不可比,故进快照
+    "delegation_enabled",
+    "max_subagent_concurrency",
+    "max_delegations",
+    "subtask_budget_share",
+    "subtask_max_turns",
+    "subtask_model",
 )
 SECRET_KEYS: frozenset[str] = frozenset({"llm_api_key", "api_token"})
 EXEMPT_KEYS: frozenset[str] = frozenset(
