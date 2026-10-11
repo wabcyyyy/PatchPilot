@@ -468,3 +468,134 @@ warnings 同为 4 条,类别与基线一致(starlette DeprecationWarning、`Test
 且终态数与预期精确闭合,没有可疑失败需要归因;但纪律就是纪律——**下一次批尾全量启动后,
 在任何结果落地之前不再起任何 pytest**,需要复核就等它跑完。
 
+---
+
+## B2 批次说明(G05–G08)
+
+用户 2026-10-11 点头起 B2。批次目标(SPEC §6):**输出可取回、证据跨阶段、容量 profile、仓库规则**。
+依赖链 G03+G04→G05→G06→G07→G08 决定了卡序不许打乱;每卡一个代码 commit + 一次进度登记。
+
+B2 全程零模型调用、零付费、零 push、零删除历史结果。
+
+---
+
+## G05 / P1:结构化输出、证据存储与分页取回
+
+- **开始身份** `72e169e` → **代码结束身份** `cdd7cdc`(本进度与 PROGRESS 在紧随其后的 docs commit)。
+- **允许的语义变更**:SPEC §3.2 明列的"能力对应 schema / 结构化输出";交接提示已授权在
+  `app/graph` 等必须掌握区按规格实现协议语义,不再就同一件事重复请示。
+- **声明范围内**:`app/tools/output_filter.py`、`app/tools/base.py`、`app/tools/files.py`、
+  `app/tools/registry.py`、`app/tools/tracker.py`(未改,去敏面 G02 已就位)、
+  `app/context/evidence.py`(新增)、输出/检索测试与新增 `tests/test_evidence_store.py`。
+- **范围扩张(动手前先登记,逐条给理由)**:
+  | 文件 | 为什么必须动 |
+    |---|---|
+  | `app/graph/nodes.py` | 新工具不进 `READ_TOOLS`/`WRITE_TOOLS` 就是"模型看不见、调了才被挡"——G01 立的正是"可见面==执行面";只加两行名单 |
+  | `app/evals/single_shot.py` | `ONE_SHOT_TOOLS` 同步加,两臂对称(私给一臂少一个能力=未登记 handicap,这条在 `swe-hard-oneshot` 批上用 777k token 买过教训) |
+  | `app/tools/patching.py` | 撤 `git_diff` 自带的 `[:20_000] + "(truncated)"`:SPEC 原文"不把每个工具各做一套截断器",而它切掉的 diff 尾巴既没落盘也不可取回 |
+  | `app/config.py` | 5 个新键必须走 Settings(AGENTS:禁止硬编码路径与上限) |
+  | `app/evals/provenance.py` + `tests/test_driver.py` | 新键的三选一归类是既有强制机制(`test_settings_keys_fully_classified_for_snapshot`),pinned 集按该用例 docstring 规定的维护动作补键,一个键也没删 |
+  | `README.md` + `tests/test_docs_anchors.py` | 工具清单条数与名单以注册表为准绳(`test_readme_tool_inventory_matches_registry`);nodes.py 的行索引 697→699 |
+  | `docs/adr/0003/0004/0005/0006/0007/0009/0011` | 7 篇 ADR 的验证锚点行号重钉(共 11 处,`plain_loop/nodes/registry/files/config` 行漂移) |
+  | `scripts/probe_g05_bounded_view.py` | SPEC §9 要求"最小行为证据…工件路径/hash"可本地重跑,收据必须由脚本再生而不是手抄 |
+
+### 改了什么语义
+
+| 文件 | 语义 |
+|---|---|
+| `app/context/evidence.py`(新) | `EvidenceRef`(任务内 id、来源、kind、`workspace_revision`、内容 sha256、字节/行、`retrievable`+原因)、`EvidenceStore`(原子落盘 + `index.jsonl`;单工件与总量两级上限,超了就**拒落并带着身份抛** `EvidenceNotStored`;`read()` 按字节偏移分页、预算内才对齐行尾、hash 不符即拒读、跨任务读成 `not registered in this task`)、游标 `"<偏移>:<hash 前 12 位>"`(把游标钉死在工件上) |
+| `app/tools/output_filter.py` | 新增 `bound_structure`/`fold_text`/`BoundReport`:**在数据结构上裁**——首轮按 `refine_head/tail_lines` 的形状折长字段,装不下才按字符预算退让,仍超限才开始丢列表尾巴;每处省略带计数,`line_ranges` 给出**保留的原始行号区间**。`fold_output`/`refine_traceback` 原样保留(历史回放与 traceback 提纯仍用) |
+| `app/tools/registry.py` | `execute()` 统一过 `_apply_visible_view`:裁剪 → 原文落盘 → 组装模型可见 payload → 补一条 `evidence_bounded` 取证事件(原文/excerpt 各自 sha256、字节数、可取回标志)。`MUTATING_TOOLS` 在 `apply_patch`/`reset_workspace` 成功时给 `ctx.workspace_revision` +1(写代数只在这一处定义,门禁拒绝不留代数);新注册 `read_evidence`;`model_payload()` 是"发给模型那一份"的唯一入口 |
+| `app/graph/plain_loop.py` | 工具消息组装改走 `model_payload(result)`,**不再** `json.dumps` 之后 `fold_output`(旧路径切在 JSON 中间);错误回执走同一条有界协议 |
+| `app/tools/files.py` | `read_evidence(evidence_id, cursor, limit_bytes)`:仓未建也照常查(答案统一是"本任务没登记这个 id",不给"你的任务是空的"这种存在性旁证);`stale=true` 时明说"不能当现状用" |
+| `app/config.py` | `tool_visible_max_chars=8000`(与旧 hard_cap 实际生效值一致,不收紧不放宽)、`evidence_enabled=True`、`evidence_max_item_bytes=2_000_000`、`evidence_max_total_bytes=64_000_000`、`evidence_page_bytes=4000` |
+
+### 最小行为证据(输入 → 实际请求/动作 → 结果)
+
+真实素材收据(零模型、零网络,`.venv/Scripts/python.exe scripts/probe_g05_bounded_view.py`),
+`docs/evidence/agent-upgrade/probe-after-g05.json` sha256 前 16 位 `bf63af592b2d64f6`:
+
+| 真实 `read_file` 回执(缓存的上游仓库) | 原文字符 | 旧路径 | 新路径 |
+|---|---|---|---|
+| sphinx-75900 `sphinx/util/cfamily.py` | 13,425 | 8,013 字符,`json.loads` **失败**,5,410 字符无痕迹消失 | 2,457 字符,合法,省略 345 行,原文逐字节可取回 |
+| astropy-87070 `astropy/io/fits/card.py` | 16,473 | 8,013 字符,非法,8,458 字符丢失 | 2,174 字符,合法,省略 344 行,可取回 |
+| pylint-69030 `pylint/lint/run.py` | 8,690 | 8,013 字符,非法,675 字符丢失 | 2,612 字符,合法,省略 177 行,可取回 |
+| requests-11420 `requests/adapters.py` | 7,331 | 未超限 ⇒ 原样 | 未超限 ⇒ **一字不变**(不加任何键) |
+
+3 份超上限回执:旧路径 **3/3 生成非法 JSON**;新路径 **3/3 合法且原文分页拼回逐字节相等**
+(`raw_reassembled_all=true`)。用例面 23 条(`tests/test_evidence_store.py`,含验收矩阵
+T09 端到端与一条**反向对照**:同一 payload 走旧 `fold_output` 必然 `JSONDecodeError`)。
+另含:未知/他任务/伪造路径 id 一律 `not registered`;游标格式错、偏移越界、A 游标用到 B 上
+各自单独报错;篡改工件 → `hash mismatch`;新进程只靠索引续读;单工件/总量两级上限拒落且
+**明说** `retrievable=false`;`evidence_enabled=false` → `raw_saved=false` + 原因;
+写后旧引用 `stale=true` 且内容仍是改前那份;嵌套 traceback 列表被逐字段折。
+
+### 检查读数
+
+```
+.venv/Scripts/ruff.exe check .            → All checks passed!
+.venv/Scripts/ruff.exe format --check .   → 245 files already formatted
+定向:tests/test_evidence_store.py + test_output_filter + test_docs_anchors → 44 passed
+大范围:32 个受影响测试文件(G05 语义面)→ 479 passed / 1 skipped / 1 failed(那 1 条是我自己
+      新写的 ADR-0012 锚点行号,重钉后转绿)
+全量:.venv/Scripts/pytest.exe -q --basetemp=D:/tmp/pt-upgrade-b2-full
+      → 1030 passed, 4 skipped, 4 warnings in 2314.57s (0:38:34),EXIT=0
+```
+
+数对账:B1 批次退出是 `1007 passed / 4 skipped`;G05 新增 23 条(`--collect-only` 实测 23 collected)
+⇒ `1007 + 23 = 1030`,逐条闭合。skip 是**同一组 4 条**(`test_input_snapshot.py:67`、
+`test_search_tools.py:746` 符号链接权限;`test_locks.py:49/68` Redis 不可用),新增 skip 为 0。
+warnings 同为 4 类,与 B1 一致。日志 `D:/tmp/pt-upgrade-b2-full.log`(本机 GBK 码页,
+读数按 gbk+replace 解码取——仓库已知限制)。耗时 38:34 对 B1 的 26:09 属本机负载差异,
+**不作为回归或改进的证据**。
+
+旧断言处理:一条没删、一条没放宽。`test_search_tools.py:764`(read_file 键集合)、
+`test_tools.py:113/116`(search 命中项键集合)、`test_trajectory_summary.py:59`(diff 摘要替换)、
+`test_resources`/`test_f1_budget`/`test_acceptance` 全数原样通过;`test_plan_invariants.py:186`、
+`test_repo_map.py:275`、`test_single_shot.py:146/149` 比的都是导入常量,名单变化自动跟随;
+`test_driver.py` 的 SNAPSHOT pinned 集与 `test_docs_anchors.py` 的行索引按各自 docstring
+规定的维护动作补/改(补 5 键、697→699,没有删任何东西)。
+
+### 需要点名的几处判断(不是顺手做的)
+
+1. **可见形状改由 `refine_head_lines/tail_lines` 决定,不再由 cap 的字符数决定**:一屏从 8,000 字符
+   降到 2,174–2,612 字符。旧路径那 8,000 字符是"读不懂的一行",新的是"55 行读得懂 + 原文可取回"
+   ——这是**形状变化,不是能力提升**。G07 抬软窗口时必须把这两个键一起标定,否则窗口变大而每条
+   回执仍是 55 行(已写进 ADR-0012 的反方节)。
+2. **只在真裁过时改形状**:装得下的回执一个键都不加。否则每条存量断言与两臂对照解析都要跟着动。
+3. **落点用 `report_dir.parent/evidence`**:与 `ledger_state.json` 同一个 run_dir 口径(nodes.py 现状),
+   不新增第二个"产物根"概念。副作用是分支候选(`report_dir=<run>/reports/cand{i}`)与主流程
+   **不共享索引**,读别人的 id 得到 not found——任务内作用域的直接后果,跨阶段共享域留给 G06 定。
+4. **主工具轨迹事件仍记未裁摘要**,另加一条 `evidence_bounded`。两处形状不同是有意的:取证要能
+   还原"原文形状",而"模型当时看到的那一屏"由 excerpt hash 与 id 钉住。
+5. **撤掉的只有 `git_diff` 那把私刀**,`local_runner._truncate`(取末 `max_output_chars=20_000`)
+   一行没动——那是执行层的既有口径,改它属 G09 `CommandProfile`(见下"剩余限制")。
+
+### 剩余限制(不许被读成"已证明效果")
+
+1. 五个上限取值(8000 / 2 MiB / 64 MiB / 4000)是工程起点,未标定;`evidence_max_total_bytes`
+   对超长任务够不够,只有真实批能回答;
+2. **命令 stdout/stderr 的全量落盘不在本卡**:`local_runner` 仍只保留末尾 20,000 字符(取尾不取头,
+   头部至今无处可取)。SPEC 把"命令输出进入 EvidenceStore"写在 G09,那里才有"一次执行的完整输出
+   是工件"的契约。本卡只保证**工具回执**这一层不再无痕丢失;
+3. `read_evidence` 取回的是**文本切片**,不重解析 JSON:单行超长(正是 JSON 回执的常态)会切在字符
+   中间并写 `line_aligned=false`。要精确重取某文件的另外几十行,`read_file(offset)` 更省;
+4. 证据仓没有 GC:满了只拒落新工件,不删旧工件(删证据等于丢取证);`index.jsonl` 的残行被跳过
+   而不修复(原始文件仍留盘);
+5. `scripts/context_replay.py` / `measure_context_counterfactual.py` 仍按 `fold_output` 重建**历史批**
+   的消息——那是那批运行当时的真实形状,不能改;但**G05 之后的新批**要用 `bound_structure` 才同形,
+   这条已登记、未动(属 G16 收口时的测量器同步);
+6. 离线全绿只证明协议与形状:**不证明修复率、不证明更少重查、不证明省 token** —— 都要真实批(G17)。
+
+### 费用与外部动作
+
+零模型调用、零付费、零网络、零 push、零删除历史结果。探针脚本只读本地缓存仓库并把证据写到
+系统临时目录(仓库外)。
+
+### 下一卡
+
+G06(连续会话与结构化任务记忆):`app/agent/session.py`、`app/context/task_memory.py`、
+`app/context/assembler.py` + `tests/test_task_memory.py`。G05 的 `EvidenceRef` 是它的引用单位;
+SPEC §5 的"先去重复/替换可取回的大输出,再整理 TaskMemory,再压缩旧回合"要求
+`compact_messages` 的存根带上 `evidence_id`(现在不带)——这条会在 G06 里做,不在本卡顺手改。
+

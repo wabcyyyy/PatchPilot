@@ -1548,3 +1548,57 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
 - **仍未证明/未做**:真实 tokenizer 下预留量的误差(G17)、`served_model` 采集与运行 profile
   装配(G07)、rep 落进运行产物(G07/G16)、真实端点的 cache 计费口径(G17);
   G05 以后一张没动。
+
+---
+
+## 20. B2 / G05:工具回执在数据结构上裁,原文落任务证据仓(2026-10-11)
+
+- 开工身份 `72e169e`(B1 批次退出)→ 代码卡 `cdd7cdc`。逐卡语义、**先登记的范围扩张**、
+  限制清单见 `docs/work-notes/agent-upgrade-progress-2026-10-10.md` 的「B2 批次说明」与 G05 节;
+  这里只记批次级读数。
+- **缺陷第一次被实物量出来**(不是推断):本地缓存的真实上游仓库里取 4 份 `read_file` 400 行回执,
+  **3 份超过 8,000 字符可见上限**,旧路径 `json.dumps → fold_output` 把单行 JSON 头尾折叠退化成
+  字符硬切 ⇒ **3/3 生成非法 JSON**,并让 675–8,458 字符**无痕迹消失**(不落盘、不可取回)。
+  收据 `docs/evidence/agent-upgrade/probe-after-g05.json`(`bf63af592b2d64f6`),
+  生成器 `scripts/probe_g05_bounded_view.py`,零模型零网络可重跑。
+- **新的单层协议**:裁在**序列化之前、数据结构之上**(先按行折长字段,仍超限才丢列表尾巴),
+  发出去的一定是合法 JSON,并带 `_bounded`(原字符数/省略行数/丢了几条/**保留的原始行号区间**);
+  原文一律落 `<run_dir>/evidence/<随机 id>.json`,新工具 `read_evidence(evidence_id, cursor,
+  limit_bytes)` 分页取回,逐字节拼回等于原文(实测 `raw_reassembled_all=true`)。
+- **两条边界是设计而不是遗漏**:① 未知 id 与别的任务的 id 得到**同一个** `not registered` 读数,
+  不给"存在但拒读"的旁证;② 落盘超体积/超配额、或证据仓被关闭时,回执里明说
+  `retrievable=false` / `raw_saved=false` —— 任何"裁了但没留"都不许伪装成"没裁"。
+- **引用跨写入会失效**:`ToolContext.workspace_revision` 由 registry 在 `apply_patch` /
+  `reset_workspace` 成功时 +1(写代数只在这一处定义,门禁拒绝不留代数),代数不符的旧回执标
+  `stale` —— 可以取回当时的样子,但不能被读成现在的代码。
+- **撤掉两处私自的裁剪器**:`git_diff` 的 `[:20_000] + "(truncated)"` 与循环层的 `fold_output`
+  调用点。`local_runner._truncate`(执行层取末 20,000 字符)**一行没动** —— 命令类完整输出
+  进证据仓是 G09 `CommandProfile` 的契约,不在本卡越界。
+- **形状只在真裁过时变**:装得下的回执一个键都不加,`test_search_tools.py:764`(read_file 键集合)、
+  `test_tools.py:113/116`(命中项键集合)、`test_trajectory_summary.py:59`(diff 摘要替换)等
+  存量断言全部原样通过。旧断言一条没删、一条没放宽。
+- **两臂对称**:新工具同时进 `READ_TOOLS`/`WRITE_TOOLS`/`ONE_SHOT_TOOLS`,消融变量仍只有
+  "有无执行反馈 / 有无重试"。把取回能力只给一臂就是私加 handicap,这条在 `swe-hard-oneshot`
+  批上花过 777k token 买教训。
+- **5 个新 Settings 键全部归 SNAPSHOT**,`protocol_identity` 补记其中三条(模型可见上限与
+  "能否取回"是复现口径,G04 已定过这条纪律);`test_driver.py` 的 pinned 集按该用例 docstring
+  规定的维护动作补键,一个键也没删。
+- **新增 ADR-0012**:工具回执的有界视图与原始证据仓;反方节明写"一屏从 8,000 字符降到
+  2,174–2,612 字符是**形状变化不是能力提升**",可见行数现在由 `refine_head/tail_lines` 决定,
+  G07 抬软窗口时必须与这两个键一起标定。
+- **收口**:ruff check / format --check 全绿(245 files);全量
+  **1030 passed / 4 skipped / 4 warnings in 38:34**,EXIT=0(读数取自自己重定向的
+  `D:/tmp/pt-upgrade-b2-full.log` 终态行)。数对账:1007 + 本卡新增 23
+  (`--collect-only` 实测 23 collected)= 1030 逐条闭合;skip 仍是**同一组 4 条**
+  (符号链接权限 ×2、Redis 不可用 ×2),无新增 skip、无新增告警类。耗时 38:34 对 B1 的 26:09
+  按本机负载记账,不作回归或改进结论。
+  本卡还纠正了一次自己的锚点自审:第一轮 32 文件大范围回归里唯一失败就是**我几分钟前刚写进
+  ADR-0012 的行号**(加 `line_ranges` 后 output_filter 又漂了 16 行)——机制按设计工作,
+  重钉 4 处(含 ADR-0004 的 `config.py:202→205`)后转绿。
+- **仍未证明/未做**:五个上限未标定(真实批才知道);命令 stdout/stderr 全量落盘属 G09;
+  `scripts/context_replay.py` 一族测量器仍按旧 `fold_output` 重建**历史批**消息(同形即正确),
+  G05 之后的新批要换 `bound_structure`(登记在 G16 收口);证据仓无 GC(满了只拒落新工件);
+  离线全绿不证明修复率、不证明更少重查、不证明省 token。
+- **下一卡**:G06(连续会话与结构化任务记忆)。G05 的 `EvidenceRef` 是它的引用单位;
+  SPEC §5 的"先去重复/替换可取回的大输出"要求 `compact_messages` 的存根带上 `evidence_id`
+  (现在不带),这条刻意留给 G06,不在本卡顺手改。
