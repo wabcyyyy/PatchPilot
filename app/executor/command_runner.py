@@ -33,6 +33,9 @@ log = logging.getLogger(__name__)
 
 # 单次 wait 轮询切片:cancel/timeout 的收敛粒度,也是避免 busy-loop 的下限
 _POLL_SECONDS = 0.2
+# G12 取消收敛报告门槛(毫秒):"cancel 请求后 5 秒内终止"是产品的验收目标;
+# 超过就在结果里如实报 cancellation_pending,不虚报"已及时终止"。
+CANCELLATION_PENDING_THRESHOLD_MS = 5000
 # docker run 的资源上限(企划书第 9 节同族;PID 上限防 fork 炸弹)
 _CONTAINER_MEMORY = "1g"
 _CONTAINER_CPUS = "1.0"
@@ -58,6 +61,10 @@ class CommandRunResult:
     stdout_dropped_bytes: int = 0
     stderr_dropped_bytes: int = 0
     env_keys: list[str] = field(default_factory=list)
+    # G12:从"检测到取消/超时"到进程树/容器**确认退出**的耗时;
+    # 超过阈值时 cancellation_pending=True(终止未在目标窗口内完成,如实上报)
+    kill_latency_ms: int = 0
+    cancellation_pending: bool = False
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -74,6 +81,8 @@ class CommandRunResult:
             "stdout_dropped_bytes": self.stdout_dropped_bytes,
             "stderr_dropped_bytes": self.stderr_dropped_bytes,
             "env_keys": self.env_keys,
+            "kill_latency_ms": self.kill_latency_ms,
+            "cancellation_pending": self.cancellation_pending,
         }
 
 
@@ -248,6 +257,8 @@ def run_controlled_command(
         reader.start()
     outcome = _wait_bounded(proc, float(timeout_seconds), cancel_event)
     timed_out = outcome == "timeout"
+    # G12:从"检测到取消/超时"到"确认退出"的耗时是产品质量读数,不是验收语义
+    kill_started = time.monotonic()
     if outcome in ("timeout", "cancelled"):
         if backend == "docker":
             _docker_kill(container_name)
@@ -266,6 +277,9 @@ def run_controlled_command(
                 proc.stdout.close()
             if proc.stderr:
                 proc.stderr.close()
+    kill_latency_ms = (
+        int((time.monotonic() - kill_started) * 1000) if outcome in ("timeout", "cancelled") else 0
+    )
     for reader in readers:
         reader.join(timeout=10)
     duration_ms = int((time.monotonic() - started) * 1000)
@@ -285,13 +299,18 @@ def run_controlled_command(
         stdout_dropped_bytes=stdout_meta.get("dropped", 0),
         stderr_dropped_bytes=stderr_meta.get("dropped", 0),
         env_keys=sorted(env) if env is not None else [],
+        kill_latency_ms=kill_latency_ms,
+        # 超过目标窗口仍在收敛 = 如实报 pending,不虚报"已 5 秒内终止"
+        cancellation_pending=kill_latency_ms > CANCELLATION_PENDING_THRESHOLD_MS,
     )
     log.info(
-        "run_command done rc=%s in %sms (timed_out=%s cancelled=%s backend=%s)",
+        "run_command done rc=%s in %sms (timed_out=%s cancelled=%s kill_ms=%s pending=%s backend=%s)",
         result.exit_code,
         duration_ms,
         timed_out,
         result.cancelled,
+        kill_latency_ms,
+        result.cancellation_pending,
         backend,
     )
     return result

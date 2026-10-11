@@ -38,6 +38,37 @@ FINISH_TOOL = "finish"
 #: 门禁拒绝/协议拒绝走的是 fail 分支,不留代数,也就不产生任何"看起来改过了"的旧引用。
 MUTATING_TOOLS = frozenset({"apply_patch", "reset_workspace"})
 
+#: 工具恢复语义(G12):崩溃/恢复时"这条 tool_call 还要不要重放、怎么判断"的声明面。
+#: 每条 tool_call 在恢复时的占位回执按这里选措辞(见 SessionState.repair_orphans),
+#: 而不是让模型自己猜"上次那条到底跑没跑过"。
+#: - safe_replay:只读/幂等,重放安全(检索、读文件、取证据、登记记忆、跑测试集);
+#: - state_check:有工作区副作用,先看状态再决定(apply_patch 看 git_diff/候选 hash,
+#:   reset_workspace 看 diff 是否已空);
+#: - no_rerun:结果不可知且可能有副作用,不许盲目重跑(受控命令的进程可能已经执行)。
+RECOVERY_POLICY: dict[str, str] = {
+    "list_files": "safe_replay",
+    "search_code": "safe_replay",
+    "find_symbol": "safe_replay",
+    "describe_file": "safe_replay",
+    "read_file": "safe_replay",
+    "read_evidence": "safe_replay",
+    "update_memory": "safe_replay",
+    "ask_user": "safe_replay",
+    "propose_acceptance": "safe_replay",
+    "git_diff": "safe_replay",
+    "run_tests": "safe_replay",
+    "write_repro": "safe_replay",
+    "apply_patch": "state_check",
+    "reset_workspace": "state_check",
+    "run_command": "no_rerun",
+    FINISH_TOOL: "safe_replay",
+}
+
+
+def recovery_policy(name: str) -> str:
+    """取一条工具调用的恢复策略;未登记的名字保守按 no_rerun(不认识就不许重跑)。"""
+    return RECOVERY_POLICY.get(name, "no_rerun")
+
 
 @dataclass
 class ToolSpec:
@@ -392,6 +423,15 @@ def execute(
     if spec is None:
         result = ToolResult.fail(f"unknown tool: {name}")
     else:
+        # G12:执行**之前**先说一声。SSE 的 tool_started 与轨迹共享这一条事实
+        # (没有第二条进度来源);崩溃在 handler 中途时,事件流上"已开始、无结果"
+        # 与孤儿 tool_call 的恢复语义(见 SessionState.repair_orphans)对得上。
+        ctx.tracker.record(
+            tool="tool_started",
+            round_no=round_no,
+            state=state,
+            input_payload={"tool": name, "call": _summarize_input(name, args)},
+        )
         try:
             # R2 整改:参数校验用签名绑定,只把"绑定失败"报成 bad arguments——
             # 此前 except TypeError 会把 handler 函数体内的业务 TypeError 也误报

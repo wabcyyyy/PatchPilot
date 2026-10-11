@@ -311,6 +311,23 @@ class Repository:
                 "SELECT * FROM trajectory_events WHERE task_id = ? ORDER BY id LIMIT ? OFFSET ?",
                 (task_id, limit, offset),
             ).fetchall()
+        return self._decode_event_rows(rows)
+
+    def events_since(self, task_id: str, after_id: int, limit: int = 200) -> list[dict[str, Any]]:
+        """自增 id > after_id 的事件行(G12 事件流的增量读方;与轨迹同一张表、同一组事实)。
+
+        行里带自增 `id`——SSE 的 `id:` 与 Last-Event-ID 续传就靠它;
+        `after_id=0` 从头读,与 get_trajectory(offset=0) 同源。
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM trajectory_events WHERE task_id = ? AND id > ? ORDER BY id LIMIT ?",
+                (task_id, max(int(after_id or 0), 0), limit),
+            ).fetchall()
+        return self._decode_event_rows(rows)
+
+    @staticmethod
+    def _decode_event_rows(rows: Sequence[sqlite3.Row]) -> list[dict[str, Any]]:
         out = []
         for r in rows:
             item = dict(r)

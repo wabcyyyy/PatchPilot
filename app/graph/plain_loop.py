@@ -38,7 +38,14 @@ from app.prompts import (
     USER_STEER_TEMPLATE,
 )
 from app.tools.base import ToolContext, ToolResult
-from app.tools.registry import FINISH_TOOL, _summarize_input, execute, model_payload, tool_schemas
+from app.tools.registry import (
+    FINISH_TOOL,
+    _summarize_input,
+    execute,
+    model_payload,
+    recovery_policy,
+    tool_schemas,
+)
 
 log = logging.getLogger(__name__)
 
@@ -379,6 +386,19 @@ def run_plain_loop(
                 deadline_epoch is None or resume_snapshot.deadline_epoch > deadline_epoch
             ):
                 deadline_epoch = resume_snapshot.deadline_epoch
+            # G12:把崩溃前那本工具调用账带回内存,并把卡在 planned/running 的调用标
+            # unknown("跑没跑过"已不可知);占位回执的措辞由 RECOVERY_POLICY 决定
+            session = getattr(ctx, "session", None)
+            if session is not None and resume_snapshot.tool_calls:
+                restored = session.restore_calls(resume_snapshot.tool_calls)
+                marked = session.mark_open_calls_unknown()
+                ctx.tracker.record(
+                    tool="tool_calls_restored",
+                    round_no=round_no,
+                    state=state_label,
+                    input_payload={"from_turn": start_turn, "restored": restored},
+                    output_summary={"unknown_calls": marked, "unknown_count": len(marked)},
+                )
             ctx.tracker.record(
                 tool="loop_resume",
                 round_no=round_no,
@@ -429,6 +449,8 @@ def run_plain_loop(
                 runtime_profile=runtime_profile,
                 # G11:等待顺延后的 deadline 随快照持久化(跨崩溃续跑时取较大者)
                 deadline_epoch=deadline_epoch or 0.0,
+                # G12:工具调用账尾部随快照持久化(恢复时按 planned/running ⇒ unknown 处理)
+                tool_calls=list(session.snapshot()["calls"]) if session is not None else [],
             ),
         )
         if memory is not None:
@@ -612,7 +634,8 @@ def run_plain_loop(
         # 配对不变量(G06):即将发出去的消息里若有"assistant 声明了 tool_call 但没有回执",
         # 严格端点直接 400(实测整题崩成 NEEDS_REVIEW)。这条检查放在**唯一**的发送前点,
         # 而不是指望四个回填分支各自记得配对;补上的回执是显式标注的占位串,不伪造成功。
-        messages, repaired = SessionState.repair_orphans(messages)
+        # G12:占位回执带上这条工具的恢复策略(读类可重放/写类先看状态/命令类不许盲重跑)。
+        messages, repaired = SessionState.repair_orphans(messages, recovery_policy)
         if repaired:
             ctx.tracker.record(
                 tool="message_pairing_repaired",
@@ -1002,6 +1025,10 @@ def run_plain_loop(
                     error=result.error,
                 )
             else:
+                if session is not None:
+                    # G12:执行前标 running——崩溃落在这条之后,恢复时它进 unknown 而不是
+                    # 被当成"没跑过"(见 SessionState.mark_open_calls_unknown)
+                    session.mark_running(call.id)
                 result = execute(
                     ctx, call.name, call.arguments, round_no=round_no, state=state_label
                 )

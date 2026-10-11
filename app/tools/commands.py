@@ -283,6 +283,9 @@ def run_command(
         "exit_code": result.exit_code,
         "timed_out": result.timed_out,
         "cancelled": result.cancelled,
+        # G12:取消/超时的终止耗时与"是否仍在收敛"如实上报(超过目标窗口 = pending)
+        "kill_latency_ms": result.kill_latency_ms,
+        "cancellation_pending": result.cancellation_pending,
         "duration_ms": result.duration_ms,
         "stdout": _stream(
             stdout_ref, stdout_note, stdout_text, result.stdout_bytes, result.stdout_dropped_bytes

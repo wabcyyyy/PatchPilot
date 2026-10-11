@@ -561,6 +561,10 @@ class TaskService:
     def trajectory(self, task_id: str, limit: int, offset: int) -> list[dict[str, Any]]:
         return self.repo.get_trajectory(task_id, limit, offset)
 
+    def events_since(self, task_id: str, after_id: int, limit: int = 200) -> list[dict[str, Any]]:
+        """G12 事件流的增量读方(与轨迹同一张表、同一组事实)。"""
+        return self.repo.events_since(task_id, after_id, limit)
+
     def cancel_task(self, task_id: str) -> dict[str, Any]:
         task = self.repo.get_task(task_id)
         if task is None:

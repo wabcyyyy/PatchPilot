@@ -7,9 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 from app.api.auth import require_token
+from app.api.events import stream_task_events
 from app.api.report import render_markdown
 from app.api.schemas import (
     AcceptanceApproveIn,
@@ -179,3 +180,29 @@ def get_question(task_id: str, request: Request):
         return _error(404, "invalid_task", str(exc), task_id=task_id)
     except PatchPilotError as exc:
         return _error(409, "conflict", str(exc), task_id=task_id)
+
+
+@router.get("/tasks/{task_id}/events")
+def task_events(task_id: str, request: Request, last_event_id: int = 0):
+    """G12:任务事件流(SSE)——阶段/tool_started·finished/候选/等待/usage/终态。
+
+    事实来源与 `GET /tasks/{id}/trajectory` 同一张表(不另记一份进度);续传锚点是
+    事件行自增 id:客户端可带 `?last_event_id=N` 或标准的 `Last-Event-ID` 头,
+    只收其后的事件。任务已终态且没有未读事件时立即以一条 terminal 状态帧结束。
+    """
+    service = _service(request)
+    if service.get_task(task_id) is None:
+        return _error(404, "invalid_task", f"task not found: {task_id}")
+    resume_id = max(int(last_event_id or 0), 0)
+    header = request.headers.get("last-event-id") or ""
+    if header.strip().isdigit():
+        resume_id = max(resume_id, int(header.strip()))
+    return StreamingResponse(
+        stream_task_events(service, task_id, after_id=resume_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )

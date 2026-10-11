@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -30,9 +31,46 @@ from uuid import uuid4
 SESSION_PROTOCOL = "repair_v2.session.1"
 ORPHAN_REPLY = "[unanswered] this tool call had no recorded result before the process stopped"
 
+# G12:工具调用状态机。planned(已声明)→ running(执行中)→ completed(有回执)。
+# 崩溃把 planned/running 卡在中间 ⇒ 恢复时标记 unknown:"跑没跑过"这件事已经不可知,
+# 恢复策略(registry.RECOVERY_POLICY)决定措辞:读类可安全重放、写类先核对状态、
+# 命令类不许盲目重跑——而不是让模型自己猜。
+CALL_PLANNED = "planned"
+CALL_RUNNING = "running"
+CALL_COMPLETED = "completed"
+CALL_UNKNOWN = "unknown"
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds")
+
+
+def _call_name(call: Any) -> str:
+    """从 OpenAI 线格式的 tool_call 里取函数名(取不到返回空串)。"""
+    if not isinstance(call, dict):
+        return ""
+    function = call.get("function")
+    if isinstance(function, dict):
+        return str(function.get("name") or "")
+    return ""
+
+
+def _recovery_hint(name: str, recovery: Callable[[str], str] | None) -> str:
+    """按恢复策略补一句"下一步怎么判断"(G12;recovery=None 或无名 = 不补)。"""
+    if recovery is None or not name:
+        return ""
+    policy = recovery(name)
+    if policy == "state_check":
+        return (
+            "; this call may have modified the workspace — check git_diff / the frozen"
+            " candidate state before resubmitting, and only resubmit if the change is absent"
+        )
+    if policy == "no_rerun":
+        return (
+            "; its side effects are unknown — do not blindly rerun it;"
+            " inspect the recorded evidence or choose a different, side-effect-free check"
+        )
+    return "; this call is safe to replay if you still need its result"
 
 
 @dataclass
@@ -58,6 +96,8 @@ class ToolCallRef:
     round_no: int
     turn_no: int
     answered: bool = False
+    # G12 状态机(见模块顶部常量);answered 保留给既有读方,两者同源更新
+    status: str = CALL_PLANNED
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -112,11 +152,52 @@ class SessionState:
             ToolCallRef(call_id=call_id, name=name, stage=stage, round_no=round_no, turn_no=turn_no)
         )
 
+    def mark_running(self, call_id: str) -> None:
+        """执行前把声明标成 running(G12):崩溃落在这之后 ⇒ 恢复标 unknown。"""
+        for call in self.calls:
+            if call.call_id == call_id and call.status == CALL_PLANNED:
+                call.status = CALL_RUNNING
+                return
+
     def answer_call(self, call_id: str) -> None:
         for call in self.calls:
             if call.call_id == call_id:
                 call.answered = True
+                call.status = CALL_COMPLETED
                 return
+
+    def mark_open_calls_unknown(self) -> list[str]:
+        """把 planned/running 的调用标成 unknown(恢复入口调用);返回被标的 call_id。
+
+        "没有回执"不等于"没执行过"——这条状态就是那个不可知区间的显式表达,
+        交给恢复策略(RECOVERY_POLICY)决定下一步措辞,而不是当成没跑过。
+        """
+        marked: list[str] = []
+        for call in self.calls:
+            if call.status in (CALL_PLANNED, CALL_RUNNING):
+                call.status = CALL_UNKNOWN
+                marked.append(call.call_id)
+        return marked
+
+    def restore_calls(self, rows: list[dict[str, Any]]) -> int:
+        """从快照恢复工具调用账(G12):崩溃前那本账带回内存,状态原样保留。"""
+        added = 0
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            self.calls.append(
+                ToolCallRef(
+                    call_id=str(row.get("call_id", "")),
+                    name=str(row.get("name", "")),
+                    stage=str(row.get("stage", "")),
+                    round_no=int(row.get("round_no", 0) or 0),
+                    turn_no=int(row.get("turn_no", 0) or 0),
+                    answered=bool(row.get("answered", False)),
+                    status=str(row.get("status") or CALL_PLANNED),
+                )
+            )
+            added += 1
+        return added
 
     def unanswered(self) -> list[ToolCallRef]:
         return [call for call in self.calls if not call.answered]
@@ -140,10 +221,16 @@ class SessionState:
         return [call_id for call_id in declared if call_id not in answered]
 
     @staticmethod
-    def repair_orphans(messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    def repair_orphans(
+        messages: list[dict[str, Any]],
+        recovery: Callable[[str], str] | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
         """给孤儿 tool_call 补一条显式标注的占位回执(顺序:补齐在该 assistant 之后)。
 
         绝不静默伪造成功结果——回执内容就是"这一次没有记录到结果",模型看得见这件事。
+        recovery(G12)给出这条工具的恢复策略:占位回执按策略补一句"接下来怎么判断"
+        (读类可安全重放 / 写类先看状态 / 命令类不许盲目重跑)。默认 None = 与接入前
+        逐字相同的占位文本(既有断言不受影响)。
         """
         repaired = [dict(message) for message in messages]
         added = 0
@@ -163,7 +250,11 @@ class SessionState:
                 call_id = str(call.get("id") or "") if isinstance(call, dict) else ""
                 if call_id and call_id not in answered:
                     inserts.append(
-                        {"role": "tool", "tool_call_id": call_id, "content": ORPHAN_REPLY}
+                        {
+                            "role": "tool",
+                            "tool_call_id": call_id,
+                            "content": ORPHAN_REPLY + _recovery_hint(_call_name(call), recovery),
+                        }
                     )
             if inserts:
                 repaired[index + 1 : index + 1] = inserts
@@ -235,6 +326,14 @@ class SessionState:
                         round_no=int(row.get("round_no", 0)),
                         turn_no=int(row.get("turn_no", 0)),
                         answered=bool(row.get("answered", False)),
+                        # G12 新增字段:旧快照缺 status ⇒ 按 answered 推导(有回执=completed,
+                        # 无回执=planned),语义与加字段前逐字相同
+                        status=str(
+                            row.get("status")
+                            or (
+                                CALL_COMPLETED if bool(row.get("answered", False)) else CALL_PLANNED
+                            )
+                        ),
                     )
                 )
         return session

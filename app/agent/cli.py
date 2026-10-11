@@ -14,6 +14,7 @@ POST /tasks/{id}/messages、POST /tasks/{id}/cancel),本 CLI 是它的一个薄�
         --revision <n> --text "回答内容" [--idem-key <k>]
     python -m app.agent.cli steer  --task-id <id> --text "补充线索" [--idem-key <k>]
     python -m app.agent.cli cancel --task-id <id>
+    python -m app.agent.cli events --task-id <id> [--last-event-id <n>] [--json]
     python -m app.agent.cli approve --task-id <id> --proposal-id <pid> \\
         --hash <content_hash> --revision <n> [--token <bearer>]
 
@@ -75,6 +76,13 @@ def build_request(
     cancel = sub.add_parser("cancel", parents=[common], help="取消任务(终态不可复活)")
     cancel.add_argument("--task-id", required=True)
 
+    events = sub.add_parser("events", parents=[common], help="跟踪任务事件流(SSE;终态帧后自动退出)")
+    events.add_argument("--task-id", required=True)
+    events.add_argument(
+        "--last-event-id", type=int, default=0, help="只收该事件行之后的事件(断连续传)"
+    )
+    events.add_argument("--json", action="store_true", help="逐帧打印原始 JSON data")
+
     approve = sub.add_parser(
         "approve", parents=[common], help="批准验收清单提议(冻结 manifest 并放行修复)"
     )
@@ -94,6 +102,13 @@ def build_request(
         return "GET", f"{base}/api/tasks/{args.task_id}/question", None, headers
     if args.command == "cancel":
         return "POST", f"{base}/api/tasks/{args.task_id}/cancel", None, headers
+    if args.command == "events":
+        return (
+            "GET",
+            f"{base}/api/tasks/{args.task_id}/events?last_event_id={max(int(args.last_event_id), 0)}",
+            None,
+            headers,
+        )
     if args.command == "answer":
         headers["Content-Type"] = "application/json"
         return (
@@ -147,6 +162,8 @@ def main(argv: list[str] | None = None) -> int:
         method, url, payload, headers = build_request(raw)
     except SystemExit as exc:  # argparse 的参数错误
         return int(exc.code or 2)
+    if raw and raw[0] == "events":
+        return _stream_events(url, headers, as_json="--json" in raw)
     try:
         status, body = _send(method, url, payload, headers)
     except (urllib.error.URLError, OSError) as exc:
@@ -157,6 +174,60 @@ def main(argv: list[str] | None = None) -> int:
         _print_waiting_hint(url, headers, body)
     print(json.dumps(body, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if 200 <= status < 300 else 3
+
+
+def _stream_events(url: str, headers: dict[str, str], *, as_json: bool = False) -> int:
+    """跟踪 SSE 事件流:逐帧打印,收到终态帧自动退出(G12 的 CLI 侧薄客户端)。
+
+    与 API 看到的是同一组事实(同一张轨迹表);`--last-event-id` 供断连重连续传。
+    读流本身失败(网络/旧服务)按退出码 3 处理,不假装"看完了"。
+    """
+    request = urllib.request.Request(
+        url, headers={**headers, "Accept": "text/event-stream"}, method="GET"
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=3600) as resp:
+            event_type = ""
+            for raw_line in resp:
+                line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+                if line.startswith("event: "):
+                    event_type = line[len("event: ") :]
+                    continue
+                if line.startswith("data: "):
+                    data = line[len("data: ") :]
+                    if as_json:
+                        print(data)
+                    else:
+                        _print_frame(event_type, data)
+                    if event_type == "task_status":
+                        try:
+                            payload = json.loads(data)
+                        except json.JSONDecodeError:
+                            payload = {}
+                        if payload.get("terminal"):
+                            return 0
+                    continue
+    except KeyboardInterrupt:
+        return 0
+    except (urllib.error.URLError, OSError) as exc:
+        print(f"event stream failed: {exc}", file=sys.stderr)
+        return 3
+    return 0
+
+
+def _print_frame(event_type: str, data: str) -> None:
+    try:
+        payload = json.loads(data)
+    except json.JSONDecodeError:
+        print(f"{event_type:14s} {data[:200]}")
+        return
+    stage = payload.get("stage") or "-"
+    tool = payload.get("tool") or "-"
+    error = f"  error={payload['error']}" if payload.get("error") else ""
+    status = payload.get("status") or ""
+    verdict = payload.get("verdict") or ""
+    tail = f"  {status}/{verdict}" if event_type == "task_status" else ""
+    print(f"{event_type:14s} {stage:12s} {tool}{tail}{error}")
 
 
 def _print_waiting_hint(url: str, headers: dict[str, str], task: dict[str, object]) -> None:

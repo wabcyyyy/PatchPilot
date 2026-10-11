@@ -76,6 +76,10 @@ class LoopSnapshot:
     # 里顺延出去,而这个顺延必须活过崩溃:恢复取"state 里的 deadline"与"快照里的"较大者。
     # 同样按加可空字段的规矩:旧快照读回来是 0.0 ⇒ 不参与比较,语义与加字段前逐字相同。
     deadline_epoch: float = 0.0
+    # G12 工具调用账(会话的 calls 尾部):恢复时把崩溃前那本账带回内存,
+    # planned/running 卡住的调用标 unknown 并按 RECOVERY_POLICY 措辞。
+    # 旧快照缺字段 ⇒ 空表 ⇒ 与加字段前逐字相同。
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _now_iso() -> str:
@@ -204,6 +208,9 @@ def load_loop_snapshot(
             memory_hash=str(raw.get("memory_hash", "") or ""),
             runtime_profile=str(raw.get("runtime_profile", "") or ""),
             deadline_epoch=float(raw.get("deadline_epoch", 0) or 0.0),
+            tool_calls=[
+                dict(row) for row in (raw.get("tool_calls") or []) if isinstance(row, dict)
+            ],
         )
     except (TypeError, ValueError) as exc:
         log.warning("task %s: loop snapshot malformed (%s); ignoring", label, exc)
