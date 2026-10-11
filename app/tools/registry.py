@@ -23,6 +23,7 @@ from app.tools.base import ToolContext, ToolResult
 from app.tools.commands import run_command, write_repro
 from app.tools.execution import run_tests
 from app.tools.files import list_files, read_evidence, read_file, search_code
+from app.tools.interaction import ask_user
 from app.tools.memory import SELF_RECORDING_TOOLS, describe_receipt, update_memory
 from app.tools.output_filter import bound_structure
 from app.tools.patching import apply_patch, git_diff, reset_to_baseline
@@ -320,6 +321,26 @@ def _build_registry() -> dict[str, ToolSpec]:
                 ["failed_tests", "regression_tests"],
             ),
             handler=propose_acceptance,
+        ),
+        "ask_user": ToolSpec(
+            name="ask_user",
+            description=(
+                "向可信用户提一个澄清问题(比如两种根因靠代码无从区分、需要用户补充"
+                "复现步骤或使用场景)。问题会保存并等待用户回答,等待期间不消耗模型请求;"
+                "一次只允许一个未回答问题,回答会作为线索进入会话但**不会**改变测试集、"
+                "权限与预算。能靠读代码确认的事不要问它。"
+            ),
+            parameters=_schema(
+                "ask_user",
+                "向用户提问",
+                {
+                    "question": {"type": "string"},
+                    "choices": {"type": "array", "items": {"type": "string"}},
+                    "reason": {"type": "string"},
+                },
+                ["question"],
+            ),
+            handler=ask_user,
         ),
         FINISH_TOOL: ToolSpec(
             name=FINISH_TOOL,

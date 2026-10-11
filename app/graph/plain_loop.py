@@ -13,6 +13,13 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.agent.control import (
+    QUESTION_OPEN,
+    WAIT_ANSWERED,
+    WAIT_CANCELLED,
+    InteractionIntegrityError,
+    InteractionStore,
+)
 from app.agent.runtime import CONTEXT_CAPACITY_EXCEEDED
 from app.agent.session import SessionState
 from app.config import get_settings
@@ -24,7 +31,12 @@ from app.graph.loop_state import LoopSnapshot, delete_loop_snapshot, save_loop_s
 from app.graph.resources import USAGE_ESTIMATED, ResourceLedger
 from app.llm.base import AssistantTurn, Model, messages_tokens
 from app.llm.usage import ModelResponseEnvelope, UsageEnvelope, estimate_request
-from app.prompts import SYSTEM_PROMPT, TEXT_COMPLETION_REPAIR
+from app.prompts import (
+    SYSTEM_PROMPT,
+    TEXT_COMPLETION_REPAIR,
+    USER_ANSWER_TEMPLATE,
+    USER_STEER_TEMPLATE,
+)
 from app.tools.base import ToolContext, ToolResult
 from app.tools.registry import FINISH_TOOL, _summarize_input, execute, model_payload, tool_schemas
 
@@ -45,9 +57,13 @@ class LoopOutcome:
     - "finish":走了 finish 伪工具(引入文本完成契约之前的唯一正常出口);
     - "text":文本完成契约下的正常收尾——非空、未被 max_tokens 截断、没要求任何工具;
     - "protocol_invalid":文本完成契约下用完全额修正仍不合协议(空回复/截断/要工具),
-      上层按它落降级事件,不能再拿 max_turns/phase_share 当它的出口。
+      上层按它落降级事件,不能再拿 max_turns/phase_share 当它的出口;
+    - "clarification_required"(G11):模型用 ask_user 提了问题但没人能回答它
+      (headless 无等待通道 / 等待窗内无回答)。问题保留在盘上,上层转 needs_review。
     success 在 "text" 一路是"阶段协议达成"的意思(计划段没有任何写工具,更没有补丁),
     平台的 resolved 判定与此无关,任何调用方都不许从这里读修复结论。
+    paused_seconds(G11)是本次循环里**等待用户回答**的墙钟时长:节点据此顺延任务
+    deadline(主动运行时长暂停累计),恢复与报告都以这个读数为准。
     """
 
     success: bool
@@ -60,6 +76,7 @@ class LoopOutcome:
     tokens_completion: int = 0
     completion: str = "finish"
     protocol_reason: str = ""
+    paused_seconds: float = 0.0
 
 
 def _has_patch(ctx: ToolContext) -> bool:
@@ -267,6 +284,7 @@ def run_plain_loop(
     token_estimate_factor: float | None = None,
     resume_snapshot: LoopSnapshot | None = None,
     ledger: ResourceLedger | None = None,
+    absolute_deadline_epoch: float | None = None,
 ) -> LoopOutcome:
     """工具循环:模型输出 → 解析工具调用 → 执行 → 结果回填 → 直到 finish。
 
@@ -300,6 +318,9 @@ def run_plain_loop(
     `turn_no + 1` 起跑。**轮次上限不重授**:仍按同一个 max_turns 判定,恢复只是
     接着跑完剩下的轮次,不是再给一次完整额度(否则一个任务能靠反复崩溃刷出 N 倍轮次)。
     不匹配(或为 None)即冷启动,与既有行为逐字一致。
+    absolute_deadline_epoch(G11):任务的绝对寿命上限(epoch 秒;None = 不设)。
+    等待用户回答的时长在等待结束后从 deadline 里**顺延出去**(主动运行时长暂停累计),
+    但顺延不得越过这条绝对上限;上限来自受理时持久化的 state,恢复不重授。
     快照写入受 Settings.loop_snapshot_enabled 控制,落在 run_dir/loop_state.json,
     每个 turn 边界写一次(工具结果全部回填后才是一致切点);阶段正常 finish 时删除。
     """
@@ -336,6 +357,7 @@ def run_plain_loop(
     repairs_used = 0  # 文本完成契约的协议修正次数(上限 MAX_PROTOCOL_REPAIRS)
     last_content = ""  # 最近一次有实质文本的模型输出,供上层在额度耗尽时降级取用
     start_turn = 1
+    paused_total = 0.0  # 本阶段等待用户回答的墙钟时长(G11;顺延 deadline 的依据)
 
     if resume_snapshot is not None:
         if (
@@ -350,6 +372,13 @@ def run_plain_loop(
             tokens_completion = resume_snapshot.tokens_completion
             last_content = resume_snapshot.last_content
             start_turn = resume_snapshot.turn_no + 1
+            # G11:快照里的 deadline 已含等待顺延(写快照时用的是循环本地的扩展值);
+            # 恢复取"持久化 state 值"与"快照值"的较大者——顺延不回退,绝对寿命
+            # 仍由 state 的 absolute_deadline_epoch 单独把关(见上参数说明)。
+            if resume_snapshot.deadline_epoch and (
+                deadline_epoch is None or resume_snapshot.deadline_epoch > deadline_epoch
+            ):
+                deadline_epoch = resume_snapshot.deadline_epoch
             ctx.tracker.record(
                 tool="loop_resume",
                 round_no=round_no,
@@ -398,10 +427,171 @@ def run_plain_loop(
                 memory_version=memory.version if memory is not None else 0,
                 memory_hash=memory.state_hash() if memory is not None else "",
                 runtime_profile=runtime_profile,
+                # G11:等待顺延后的 deadline 随快照持久化(跨崩溃续跑时取较大者)
+                deadline_epoch=deadline_epoch or 0.0,
             ),
         )
         if memory is not None:
             save_memory_state(Path(ctx.report_dir).parent, memory)
+
+    def _account_wait(delta: float) -> None:
+        """记账一次用户等待:本阶段读数(供测试/取证)+ ctx 累计(供节点顺延 deadline)。
+
+        ctx 上的累计是**任务级**的,节点按"自上次同步以来的增量"恰好消费一次
+        (见 TaskNodes._sync_wait_pause_deadline);两条路径不会把同一段等待算两遍。
+        """
+        nonlocal paused_total, deadline_epoch
+        if delta <= 0:
+            return
+        paused_total += delta
+        ctx.interaction_paused_seconds += delta
+        if deadline_epoch is not None:
+            # 等待时长从本循环的 deadline 里顺延出去;顺延钳在绝对寿命之内
+            extended = deadline_epoch + delta
+            if absolute_deadline_epoch is not None:
+                extended = min(extended, max(absolute_deadline_epoch, deadline_epoch))
+            deadline_epoch = extended
+
+    def _clarification_outcome(question_text: str, reason: str, turn_no: int) -> LoopOutcome:
+        """结构化收场:问题保留在盘上,任务转 needs_review,不伪造回答、不继续烧请求。"""
+        ctx.tracker.record(
+            tool="clarification_required",
+            round_no=round_no,
+            state=state_label,
+            input_payload={"reason": reason, "turn": turn_no},
+            output_summary={
+                "question_chars": len(question_text),
+                "paused_seconds": round(paused_total, 3),
+            },
+            error=f"clarification_required: {reason}",
+        )
+        return LoopOutcome(
+            success=False,
+            summary=question_text,
+            turns=turn_no,
+            tokens_used=tokens_spent,
+            patch_applied=False,
+            finish_declared=False,
+            tokens_prompt=tokens_prompt,
+            tokens_completion=tokens_completion,
+            completion="clarification_required",
+            protocol_reason=reason,
+            paused_seconds=paused_total,
+        )
+
+    def _interaction_gate(turn_no: int) -> LoopOutcome | None:
+        """turn 边界上的用户交互闸门:消费纠偏/回答,必要时等待(G11)。
+
+        放在 turn 边界而不是工具执行路径里,因为等待必须是**可续切点**:快照在边界上
+        落盘,崩溃/重启后从同一处重新进入本闸门,而"问题、回答、消费过没有"全在盘上
+        (InteractionStore),恰好一次由它保证。
+
+        五种收场:
+        - 无交互工件 → 不做任何事(绝大多数任务的每轮零开销只有一次文件存在性检查);
+        - 状态文件损坏 → 落一条取证事件后按"无交互"继续(不猜内容、不静默覆盖);
+        - 有未读纠偏 → 追加进会话(输入版本 +1),继续;
+        - 有已写入的回答 → 消费一次后追加,继续;
+        - 有未回答的问题 → headless(无通道)直接 clarification_required;有通道则等待,
+          取消 → TaskCancelled;超时/唤醒却消费不到答案 → clarification_required。
+        """
+        store = InteractionStore(ctx.report_dir.parent)
+        if not store.path.is_file():
+            return None
+        try:
+            steers = store.consume_steers()
+            consumed = store.consume_answer()
+            state = store.read()
+        except InteractionIntegrityError as exc:
+            ctx.tracker.record(
+                tool="interaction_state_invalid",
+                round_no=round_no,
+                state=state_label,
+                input_payload={"turn": turn_no, "path": store.path.name},
+                error=str(exc),
+            )
+            return None
+        revision = int(state.get("revision", 0))
+        if steers:
+            for text in steers:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": USER_STEER_TEMPLATE.format(revision=revision, steer=text),
+                    }
+                )
+            ctx.tracker.record(
+                tool="user_steer_consumed",
+                round_no=round_no,
+                state=state_label,
+                input_payload={"turn": turn_no},
+                output_summary={"count": len(steers), "revision": revision},
+            )
+        if consumed is not None:
+            question_id, answer = consumed
+            messages.append(
+                {
+                    "role": "user",
+                    "content": USER_ANSWER_TEMPLATE.format(
+                        question_id=question_id, revision=revision, answer=answer
+                    ),
+                }
+            )
+            ctx.tracker.record(
+                tool="user_answer_consumed",
+                round_no=round_no,
+                state=state_label,
+                input_payload={"turn": turn_no, "question_id": question_id},
+                output_summary={"revision": revision, "answer_chars": len(answer)},
+            )
+        open_question = next(
+            (q for q in state.get("questions", []) if q.get("status") == QUESTION_OPEN), None
+        )
+        if open_question is None:
+            return None
+        question_id = str(open_question.get("question_id") or "")
+        question_text = str(open_question.get("question") or "")
+        channel = getattr(ctx, "interaction", None)
+        if channel is None:
+            return _clarification_outcome(question_text, "headless_no_waiting_channel", turn_no)
+        started = time.monotonic()
+        verdict = channel.wait_for_answer(question_id, ctx.cancel_event)
+        _account_wait(time.monotonic() - started)
+        if verdict == WAIT_CANCELLED:
+            raise TaskCancelled("cancelled while waiting for user answer")
+        if verdict != WAIT_ANSWERED:
+            return _clarification_outcome(question_text, "wait_timeout", turn_no)
+        try:
+            consumed = store.consume_answer(question_id)
+        except InteractionIntegrityError as exc:
+            ctx.tracker.record(
+                tool="interaction_state_invalid",
+                round_no=round_no,
+                state=state_label,
+                input_payload={"turn": turn_no, "phase": "after_wake"},
+                error=str(exc),
+            )
+            return _clarification_outcome(question_text, "answer_unreadable_after_wake", turn_no)
+        if consumed is None:
+            # 唤醒却消费不到答案(答案被撤销/已消费):保守收场,不继续烧请求
+            return _clarification_outcome(question_text, "wake_without_answer", turn_no)
+        qid, answer = consumed
+        revision_after = int(store.read().get("revision", 0))
+        messages.append(
+            {
+                "role": "user",
+                "content": USER_ANSWER_TEMPLATE.format(
+                    question_id=qid, revision=revision_after, answer=answer
+                ),
+            }
+        )
+        ctx.tracker.record(
+            tool="user_answer_consumed",
+            round_no=round_no,
+            state=state_label,
+            input_payload={"turn": turn_no, "question_id": qid},
+            output_summary={"revision": revision_after, "answer_chars": len(answer)},
+        )
+        return None
 
     for turn_no in range(start_turn, max_turns + 1):
         if cancel_event is not None and cancel_event.is_set():
@@ -415,6 +605,10 @@ def run_plain_loop(
                 turns=turn_no,
                 last_content=last_content,
             )
+        # G11:用户交互闸门(纠偏 / 回答 / 等待)——恢复后从同一处重新进入,恰好一次
+        parked = _interaction_gate(turn_no)
+        if parked is not None:
+            return parked
         # 配对不变量(G06):即将发出去的消息里若有"assistant 声明了 tool_call 但没有回执",
         # 严格端点直接 400(实测整题崩成 NEEDS_REVIEW)。这条检查放在**唯一**的发送前点,
         # 而不是指望四个回填分支各自记得配对;补上的回执是显式标注的占位串,不伪造成功。
@@ -676,6 +870,7 @@ def run_plain_loop(
                     tokens_prompt=tokens_prompt,
                     tokens_completion=tokens_completion,
                     completion="text",
+                    paused_seconds=paused_total,
                 )
             if violation != "legacy_finish":
                 messages.append(_assistant_payload(response))
@@ -711,6 +906,7 @@ def run_plain_loop(
                         tokens_completion=tokens_completion,
                         completion="protocol_invalid",
                         protocol_reason=violation,
+                        paused_seconds=paused_total,
                     )
                 repairs_used += 1
                 ctx.tracker.record(
@@ -768,6 +964,7 @@ def run_plain_loop(
                     finish_declared=True,
                     tokens_prompt=tokens_prompt,
                     tokens_completion=tokens_completion,
+                    paused_seconds=paused_total,
                 )
                 ctx.tracker.record(
                     tool=FINISH_TOOL,
@@ -820,6 +1017,11 @@ def run_plain_loop(
 
         # turn 边界:本轮所有工具结果都已回填,这是唯一可安全续跑的切点
         _write_snapshot(turn_no)
+        # G11:ask_user 在本轮登记的暂停点**当场**进入等待——末轮提问不会再撞 max_turns,
+        # 且等待发生在快照落盘之后(崩溃从同一闸门重入)
+        parked = _interaction_gate(turn_no)
+        if parked is not None:
+            return parked
 
     raise _budget_error(
         f"agent loop exceeded max_turns={max_turns}",

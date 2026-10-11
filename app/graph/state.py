@@ -29,6 +29,10 @@ class TaskState(TypedDict, total=False):
     # S02b:任务级墙钟截止时刻(epoch 秒)。执行启动时建立、随 superstep 进 checkpoint,
     # 恢复沿用原值的剩余时间(不重授);None = 不限时(旧约定 0=无限的同义)。必须可序列化。
     deadline_epoch: float | None
+    # G11:任务**绝对寿命**上限(epoch 秒;None = 不设)。用户等待时长从 deadline 里顺延,
+    # 但顺延不得越过这条上限;上限在受理时建立并随 checkpoint 持久化,恢复不重授。
+    # 旧检查点缺字段 ⇒ None ⇒ 不做绝对钳制,与加字段前逐字相同。
+    absolute_deadline_epoch: float | None
 
     # 运行时进度
     status: str

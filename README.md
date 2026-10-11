@@ -14,7 +14,7 @@
 
 - **LangGraph 状态机**:CREATED → BASELINE → LOCALIZE → PLAN → PROPOSE_PATCH → APPLY_PATCH → VERIFY → FINISHED,
   外加 INVALID_TASK / PATCH_REJECTED / VERIFY_FAILED / BUDGET_EXCEEDED / NEEDS_REVIEW 异常分支;
-- **14 个受控 Agent 工具**:list_files / search_code / find_symbol / describe_file / read_file / read_evidence / apply_patch / run_tests / write_repro / run_command / git_diff / reset_workspace / update_memory / propose_acceptance,
+- **15 个受控 Agent 工具**:list_files / search_code / find_symbol / describe_file / read_file / read_evidence / apply_patch / run_tests / write_repro / run_command / git_diff / reset_workspace / update_memory / propose_acceptance / ask_user,
   每次调用记录完整轨迹(JSONL + SQLite);
 - **七项质量门禁**:格式 / 禁改测试文件 / 路径越界 / 修改范围 / 影子模块 / 命令白名单 / 资源预算,
   附 10 个攻击样例(`bugs/attacks/`)验证拦截;

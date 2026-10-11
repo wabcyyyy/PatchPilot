@@ -64,6 +64,8 @@ READ_TOOLS = [
     "read_file",
     "read_evidence",
     "update_memory",
+    # G11:调查阶段就可以向可信用户澄清(等待发生在循环的安全边界)
+    "ask_user",
     "git_diff",
     FINISH_TOOL,
 ]
@@ -75,6 +77,7 @@ WRITE_TOOLS = [
     "read_file",
     "read_evidence",
     "update_memory",
+    "ask_user",
     "git_diff",
     "apply_patch",
     "run_tests",
@@ -201,6 +204,14 @@ class TaskNodes:
     # 节点按冻结 Settings 读 acceptance_wait_seconds;0 = 不等待(headless)。
     approval_event: threading.Event | None = None
     on_waiting: Callable[[], None] | None = None
+    # G11:ask_user 的等待通道(InteractionChannel;服务层构造,None = headless 不等待)。
+    # 它随 `_build_ctx` 进 ToolContext,由 run_plain_loop 在安全边界消费。
+    interaction: Any | None = None
+    # G11:任务绝对寿命上限(epoch 秒;None = 不设)。用户等待时长顺延 deadline 时的钳制点,
+    # 由 runner 在受理时建立、随 state 持久化,恢复不重授(旧检查点缺省 = None)。
+    absolute_deadline_epoch: float | None = None
+    # G11:已从 ctx 同步进 self.deadline_epoch 的等待时长(增量口径,恰好一次)
+    _paused_synced: float = 0.0
     # "manifest 是否已冻结"的幂等派生缓存(避免每次 _build_ctx 都读盘)
     _acceptance_checked: bool = False
 
@@ -415,6 +426,8 @@ class TaskNodes:
             acceptance_frozen=self._manifest_frozen(),
             source_snapshot_hash=self.source_snapshot_hash,
             task_spec_hash=self.task_spec_hash,
+            # G11:ask_user 的等待通道(None = headless,问题落盘但不等回答)
+            interaction=self.interaction,
         )
 
     def _manifest_frozen(self) -> bool:
@@ -445,6 +458,13 @@ class TaskNodes:
         时由调用方回退工作区 HEAD。
         """
         self.baseline_commit = baseline_commit
+        # G11:绝对寿命上限随 state 带回(旧检查点缺字段 = None = 不做钳制);
+        # self.deadline_epoch 已由 prepare_resume 从 state 恢复(剩余时间不重授)。
+        raw_absolute = state.get("absolute_deadline_epoch")
+        try:
+            self.absolute_deadline_epoch = float(raw_absolute) if raw_absolute is not None else None
+        except (TypeError, ValueError):
+            self.absolute_deadline_epoch = None
         if self.mode == "diagnose_then_repair":
             # G10:冻结清单先于 ctx 重建——恢复进 diagnose 节点时它直接沿用盘上
             # manifest;恢复落在修复段中段时,prompt/verify 读的失败集也必须是冻结集。
@@ -589,6 +609,8 @@ class TaskNodes:
         # 装配本阶段的可见上下文(骨架 + 此前的工作记忆);LOCALIZE 是第一个阶段,
         # 此时记忆里还没有观测 ⇒ 与接入前逐字节相同
         self._begin_assembly("LOCALIZE", state["round_no"], localize_tools)
+        # G11:先把任务累计的用户等待时长顺延进 deadline(恰好一次),再进入循环
+        self._sync_wait_pause_deadline()
         try:
             outcome = run_plain_loop(
                 self.ctx,
@@ -604,6 +626,7 @@ class TaskNodes:
                 extra_system=self._persistent_context(self.workspace),
                 allowed_tools=localize_tools,
                 deadline_epoch=self.deadline_epoch,
+                absolute_deadline_epoch=self.absolute_deadline_epoch,
                 token_budget=self._token_budget_for(
                     state, share=get_settings().localize_budget_share
                 ),
@@ -661,6 +684,19 @@ class TaskNodes:
                 "status": "NEEDS_REVIEW",
                 "outcome": "needs_review",
                 "error": f"localize: {exc}",
+            }
+
+        if outcome.completion == "clarification_required":
+            # G11:模型提问但没人能回答(headless/等待超时)——问题保留在盘上,
+            # 转 needs_review;绝不把"没回答的问题"当成调查结论继续。
+            return {
+                "status": "NEEDS_REVIEW",
+                "outcome": "needs_review",
+                "error": f"clarification_required: {outcome.protocol_reason}",
+                "turns": state.get("turns", 0) + outcome.turns,
+                "tokens_used": state.get("tokens_used", 0) + outcome.tokens_used,
+                "tokens_prompt": state.get("tokens_prompt", 0) + outcome.tokens_prompt,
+                "tokens_completion": state.get("tokens_completion", 0) + outcome.tokens_completion,
             }
 
         if outcome.finish_declared and outcome.success:
@@ -959,6 +995,28 @@ class TaskNodes:
             return remaining
         return max(int(remaining * share), 1)
 
+    def _sync_wait_pause_deadline(self) -> None:
+        """把任务累计的**用户等待时长**从 deadline 里顺延出去(G11,恰好一次)。
+
+        语义(SPEC G11):用户等待有独立超时,主动运行时长暂停累计——等待结束后
+        deadline 按等待时长顺延,但顺延不得越过任务**绝对寿命**上限(受理时建立、
+        恢复不重授)。增量口径:ctx 累计的是整任务,`_paused_synced` 记已顺延部分,
+        本方法只消费"自上次同步以来的新增等待",所以同一段等待不会被算两遍。
+        在**每个读取 deadline 之前**调用(见 `_deadline_overrun` 与三个循环调用点)。
+        """
+        if self.deadline_epoch is None or self.ctx is None:
+            return
+        total = float(getattr(self.ctx, "interaction_paused_seconds", 0.0) or 0.0)
+        delta = total - self._paused_synced
+        if delta <= 0:
+            return
+        self._paused_synced = total
+        extended = self.deadline_epoch + delta
+        if self.absolute_deadline_epoch is not None:
+            # 不越过绝对寿命;同时绝不把 deadline 缩短(上限早于当前 deadline 时保持原值)
+            extended = min(extended, max(self.absolute_deadline_epoch, self.deadline_epoch))
+        self.deadline_epoch = extended
+
     # ---------- PLAN ----------
 
     def plan(self, state: TaskState) -> dict[str, Any]:
@@ -999,6 +1057,8 @@ class TaskNodes:
         # 计划阶段的能力集合只有 finish(不给检索/写入面),但**证据照样带过去**:
         # 记忆块里是定位阶段真实读过的文件与行范围,不是模型自述的一句结论(T10 的观察点)
         self._begin_assembly("PLAN", state["round_no"], [FINISH_TOOL])
+        # G11:等待顺延在进入循环前先落进 deadline(同 localize)
+        self._sync_wait_pause_deadline()
         try:
             outcome = run_plain_loop(
                 self.ctx,
@@ -1016,6 +1076,7 @@ class TaskNodes:
                 # phase_share 才"退出"(真实 Q0:PLAN 132 次请求、20/21 题走降级出口)。
                 complete_on_text=True,
                 deadline_epoch=self.deadline_epoch,
+                absolute_deadline_epoch=self.absolute_deadline_epoch,
                 token_budget=self._token_budget_for(
                     state, share=getattr(settings, "plan_budget_share", 0.15)
                 ),
@@ -1064,6 +1125,18 @@ class TaskNodes:
                 "status": "NEEDS_REVIEW",
                 "outcome": "needs_review",
                 "error": f"plan: {exc}",
+            }
+
+        if outcome.completion == "clarification_required":
+            # G11:同 localize——提问没被回答时转 needs_review,计划不落成工件
+            return {
+                "status": "NEEDS_REVIEW",
+                "outcome": "needs_review",
+                "error": f"clarification_required: {outcome.protocol_reason}",
+                "turns": state.get("turns", 0) + outcome.turns,
+                "tokens_used": state.get("tokens_used", 0) + outcome.tokens_used,
+                "tokens_prompt": state.get("tokens_prompt", 0) + outcome.tokens_prompt,
+                "tokens_completion": state.get("tokens_completion", 0) + outcome.tokens_completion,
             }
 
         if outcome.completion == "protocol_invalid":
@@ -1142,6 +1215,8 @@ class TaskNodes:
         prompt = self._propose_prompt(state, state["round_no"])
         # 补丁阶段带着定位/计划两个阶段的真实观测进入(而不是只带一段自述结论)
         self._begin_assembly("PROPOSE_PATCH", state["round_no"], list(self.policy.propose_tools))
+        # G11:用户等待时长在进入本阶段循环前先顺延进 deadline(与 localize 同一口径)
+        self._sync_wait_pause_deadline()
         try:
             outcome = run_plain_loop(
                 self.ctx,
@@ -1153,6 +1228,7 @@ class TaskNodes:
                 extra_system=self._persistent_context(self.workspace),
                 allowed_tools=list(self.policy.propose_tools),
                 deadline_epoch=self.deadline_epoch,
+                absolute_deadline_epoch=self.absolute_deadline_epoch,
                 token_budget=self._token_budget_for(state),
                 **self.runtime.loop_settings(),
                 cancel_event=self.cancel_event,
@@ -1183,6 +1259,14 @@ class TaskNodes:
             "tokens_prompt": state.get("tokens_prompt", 0) + outcome.tokens_prompt,
             "tokens_completion": state.get("tokens_completion", 0) + outcome.tokens_completion,
         }
+        if outcome.completion == "clarification_required":
+            # G11:补丁阶段提问没被回答 → 转 needs_review,不生产任何候选
+            update.update(
+                status="NEEDS_REVIEW",
+                outcome="needs_review",
+                error=f"clarification_required: {outcome.protocol_reason}",
+            )
+            return update
         if outcome.finish_declared and not outcome.success and not outcome.patch_applied:
             # 模型声明放弃且没有任何补丁 → VERIFY_FAILED 终态
             update.update(
@@ -1304,7 +1388,9 @@ class TaskNodes:
         verify 双跑最多 4 次 pytest,单次各有 test_timeout,但都不查任务级
         截止时刻——不复查则可整体越界。deadline_epoch 未接线(直连 TaskNodes
         的测试场景)不查,与 R2 同口径;verify 无模型调用不耗 token,
-        任务级 token 预算由 propose/apply 段守卫。"""
+        任务级 token 预算由 propose/apply 段守卫。
+        G11:先顺延用户等待时长(恰好一次),再比对——等待不算主动运行时间。"""
+        self._sync_wait_pause_deadline()
         if self.deadline_epoch is None:
             return None
         if time.time() > self.deadline_epoch:

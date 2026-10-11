@@ -264,6 +264,17 @@ def prepare_resume(
         loop_snapshot = load_loop_snapshot(run_dir, stage=stage, round_no=round_no, task_id=task_id)
         nodes.resume_snapshot = loop_snapshot
 
+    # G11:快照里的 deadline 已含用户等待顺延(循环写快照时用的是本地的扩展值)。
+    # 恢复取"state 值"与"快照值"的较大者:等待顺延必须活过崩溃,否则一次 40 分钟的
+    # 用户等待会在恢复后把 900s 的任务预算直接判死;绝对寿命上限不受影响
+    # (它单独由 state 的 absolute_deadline_epoch 把关,见 TaskNodes._sync_wait_pause_deadline)。
+    if (
+        loop_snapshot is not None
+        and loop_snapshot.deadline_epoch
+        and (nodes.deadline_epoch is None or loop_snapshot.deadline_epoch > nodes.deadline_epoch)
+    ):
+        nodes.deadline_epoch = loop_snapshot.deadline_epoch
+
     # G06 绑定校验:快照写明"我属于哪条会话、哪一版记忆"时,恢复方必须能对上。
     # 对不上就是待审(NEEDS_REVIEW),绝不"默默冷启动一次"——那等于用一份没人核验过的
     # 工作记忆继续收费运行。旧快照没有绑定(字段为空)仍走既有语义,不算 mismatch。

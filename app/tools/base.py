@@ -77,6 +77,14 @@ class ToolContext:
     # 受理身份引用:proposal/manifest 与冻结 TaskSpec 绑定用(空 = 未接线,旧行为不变)
     source_snapshot_hash: str = ""
     task_spec_hash: str = ""
+    # ---------- G11:用户交互通道 ----------
+    # ask_user 的等待通道(InteractionChannel)。None = 未接线(headless):问题照落盘,
+    # 但不等回答——run_plain_loop 以 clarification_required 结构化收场。
+    # 问题与回答的持久语义在 run_dir/interaction_state.json(InteractionStore),不在这里。
+    interaction: Any | None = None
+    # 任务级累计的用户等待时长(G11):循环在每次等待结束后累加,节点按增量把任务
+    # deadline 顺延出去(恰好一次,见 TaskNodes._sync_wait_pause_deadline)。
+    interaction_paused_seconds: float = 0.0
 
 
 @dataclass

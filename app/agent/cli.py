@@ -1,15 +1,24 @@
-"""最小交互入口(G10):issue-only 任务的验收状态查询与批准。
+"""最小交互入口(G10 批准;G11 澄清/纠偏/取消)。
 
-定位:本地单用户、离线优先。真正的产品面是 API(POST /tasks/{id}/acceptance),
-本 CLI 是它的一个薄客户端(stdlib urllib,不新增依赖),给"手边没有 curl/脚本"的
-使用者一条可复制的批准命令。冻结语义只有一份:CLI 与 HTTP 路由都调用
-TaskService.approve_acceptance,不存在第二条写入路径。
+定位:本地单用户、离线优先。真正的产品面是 API(POST /tasks/{id}/acceptance、
+POST /tasks/{id}/messages、POST /tasks/{id}/cancel),本 CLI 是它的一个薄客户端
+(stdlib urllib,不新增依赖),给"手边没有 curl/脚本"的使用者一条可复制的命令。
+冻结/输入语义只有一份:CLI 与 HTTP 路由都调用 TaskService 的方法,不存在第二条
+写入路径。
 
 用法(默认连本机 127.0.0.1:8001;服务启动见 demo/README.md §3):
 
     python -m app.agent.cli status  --task-id <id>
+    python -m app.agent.cli question --task-id <id>
+    python -m app.agent.cli answer --task-id <id> --question-id <qid> \\
+        --revision <n> --text "回答内容" [--idem-key <k>]
+    python -m app.agent.cli steer  --task-id <id> --text "补充线索" [--idem-key <k>]
+    python -m app.agent.cli cancel --task-id <id>
     python -m app.agent.cli approve --task-id <id> --proposal-id <pid> \\
         --hash <content_hash> --revision <n> [--token <bearer>]
+
+status 在任务处于等待时额外拉取 /question,把问题与选项一起打印,并给出回答/取消
+的命令提示;不改变原有 JSON 输出形状。
 
 退出码:0 成功;2 参数错误;3 请求失败或非 2xx 响应。
 """
@@ -42,6 +51,30 @@ def build_request(
     )
     status.add_argument("--task-id", required=True)
 
+    question = sub.add_parser(
+        "question", parents=[common], help="查看当前未回答的澄清问题与输入版本"
+    )
+    question.add_argument("--task-id", required=True)
+
+    answer = sub.add_parser(
+        "answer", parents=[common], help="回答 Agent 的澄清问题(冻结输入版本,防过期)"
+    )
+    answer.add_argument("--task-id", required=True)
+    answer.add_argument("--question-id", required=True)
+    answer.add_argument("--revision", type=int, required=True, help="question 输出的输入版本")
+    answer.add_argument("--text", required=True)
+    answer.add_argument("--idem-key", default="", help="重复提交的幂等键(可选)")
+
+    steer = sub.add_parser(
+        "steer", parents=[common], help="追加途中纠偏(只作为线索,不改测试/权限/预算)"
+    )
+    steer.add_argument("--task-id", required=True)
+    steer.add_argument("--text", required=True)
+    steer.add_argument("--idem-key", default="")
+
+    cancel = sub.add_parser("cancel", parents=[common], help="取消任务(终态不可复活)")
+    cancel.add_argument("--task-id", required=True)
+
     approve = sub.add_parser(
         "approve", parents=[common], help="批准验收清单提议(冻结 manifest 并放行修复)"
     )
@@ -57,6 +90,32 @@ def build_request(
     base = str(args.api).rstrip("/")
     if args.command == "status":
         return "GET", f"{base}/api/tasks/{args.task_id}", None, headers
+    if args.command == "question":
+        return "GET", f"{base}/api/tasks/{args.task_id}/question", None, headers
+    if args.command == "cancel":
+        return "POST", f"{base}/api/tasks/{args.task_id}/cancel", None, headers
+    if args.command == "answer":
+        headers["Content-Type"] = "application/json"
+        return (
+            "POST",
+            f"{base}/api/tasks/{args.task_id}/messages",
+            {
+                "kind": "answer",
+                "text": args.text,
+                "question_id": args.question_id,
+                "expected_revision": args.revision,
+                "idem_key": args.idem_key,
+            },
+            headers,
+        )
+    if args.command == "steer":
+        headers["Content-Type"] = "application/json"
+        return (
+            "POST",
+            f"{base}/api/tasks/{args.task_id}/messages",
+            {"kind": "steer", "text": args.text, "idem_key": args.idem_key},
+            headers,
+        )
     payload: dict[str, object] = {
         "proposal_id": args.proposal_id,
         "content_hash": args.hash,
@@ -83,10 +142,9 @@ def _send(
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw = list(argv if argv is not None else sys.argv[1:])
     try:
-        method, url, payload, headers = build_request(
-            list(argv if argv is not None else sys.argv[1:])
-        )
+        method, url, payload, headers = build_request(raw)
     except SystemExit as exc:  # argparse 的参数错误
         return int(exc.code or 2)
     try:
@@ -94,8 +152,38 @@ def main(argv: list[str] | None = None) -> int:
     except (urllib.error.URLError, OSError) as exc:
         print(f"request failed: {exc}", file=sys.stderr)
         return 3
+    # G11:status 在等待时补一屏"问题/选项/怎么回答/怎么取消"(原地打印,不改 JSON 形状)
+    if raw and raw[0] == "status" and 200 <= status < 300 and isinstance(body, dict):
+        _print_waiting_hint(url, headers, body)
     print(json.dumps(body, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if 200 <= status < 300 else 3
+
+
+def _print_waiting_hint(url: str, headers: dict[str, str], task: dict[str, object]) -> None:
+    """任务在等待输入时打印问题、选项与回答/取消命令;非等待态什么都不做。
+
+    问题拉取失败(旧服务/瞬态错误)静默跳过:提示是附加物,不得让 status 本身失败。
+    """
+    if task.get("status") != "WAITING_INPUT":
+        return
+    try:
+        code, question = _send("GET", url + "/question", None, headers)
+    except (urllib.error.URLError, OSError):
+        return
+    if not (200 <= code < 300) or not isinstance(question, dict):
+        return
+    item = question.get("question")
+    if isinstance(item, dict):
+        print(f"== 等待用户回答 ==\n问题: {item.get('question')}")
+        choices = item.get("choices") or []
+        if choices:
+            print("选项: " + " / ".join(str(c) for c in choices))
+        print(
+            "回答: python -m app.agent.cli answer"
+            f" --task-id {task.get('task_id')} --question-id {item.get('question_id')}"
+            f' --revision {item.get("revision")} --text "..."'
+        )
+    print(f"取消: python -m app.agent.cli cancel --task-id {task.get('task_id')}")
 
 
 if __name__ == "__main__":

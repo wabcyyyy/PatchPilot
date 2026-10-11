@@ -46,6 +46,7 @@ def run_task_graph(
     mode: str = "repair",
     approval_event: threading.Event | None = None,
     on_waiting: Callable[[], None] | None = None,
+    interaction: Any | None = None,
 ) -> Any:
     """执行一个任务(状态机引擎);返回与 plain 引擎一致的 TaskResult。
 
@@ -112,6 +113,10 @@ def run_task_graph(
         if get_settings().task_timeout_seconds > 0
         else None
     )
+    # G11:绝对寿命上限同样在受理时建立并进 state——用户等待可以顺延 deadline,
+    # 但不能把任务寿命拖过这条线;恢复从 state 读回原值,不重授。
+    lifetime = get_settings().task_absolute_lifetime_seconds
+    absolute_deadline_epoch = time.time() + lifetime if lifetime > 0 else None
     checkpointer = None
     preserved_diff: str | None = None
     nodes: TaskNodes | None = None  # 异常路径也要能读到账本(S02:资源状态不写 0)
@@ -126,6 +131,7 @@ def run_task_graph(
             max_rounds=max_rounds if max_rounds is not None else bug.max_rounds,
             max_turns=max_turns,
             deadline_epoch=deadline_epoch,
+            absolute_deadline_epoch=absolute_deadline_epoch,
             cancel_event=cancel_event,
             branch_model_factory=branch_model_factory,
             policy=policy,
@@ -134,6 +140,8 @@ def run_task_graph(
             # diagnose 模式到点不等待、如实 needs_review
             approval_event=approval_event,
             on_waiting=on_waiting,
+            # G11:ask_user 的等待通道(同 G10 的口径:不传 = headless 不等待)
+            interaction=interaction,
         )
         checkpointer = (
             make_sqlite_checkpointer(run_dir / "checkpoints.sqlite") if use_checkpoint else None
@@ -200,6 +208,8 @@ def run_task_graph(
             "turns": 0,
             "tokens_used": 0,
             "deadline_epoch": deadline_epoch,
+            # G11:绝对寿命上限进 state(恢复不重授;旧检查点缺省 = None = 不钳制)
+            "absolute_deadline_epoch": absolute_deadline_epoch,
         }
         # recursion_limit 随 max_rounds 推导(R2 整改;M5 起 5N+8)。斜率不靠推算:满轮数
         # 重试路径实测每轮 5 个 superstep、固定段 3 个(N=2/3/6 → 13/18/33,三点共线,

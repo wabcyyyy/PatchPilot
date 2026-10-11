@@ -14,6 +14,9 @@ from app.api.report import render_markdown
 from app.api.schemas import (
     AcceptanceApproveIn,
     AcceptanceOut,
+    MessageIn,
+    MessageOut,
+    QuestionOut,
     TaskCreateIn,
     TaskListOut,
     TaskOut,
@@ -139,3 +142,40 @@ def approve_acceptance(task_id: str, payload: AcceptanceApproveIn, request: Requ
 @router.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@router.post("/tasks/{task_id}/messages", response_model=MessageOut)
+def submit_message(task_id: str, payload: MessageIn, request: Request):
+    """G11:回答澄清问题(answer)或追加途中纠偏(steer)。
+
+    与 acceptance 批准同一条纪律:输入只经已配置鉴权的 HTTP 面写入(router 级
+    require_token),模型文字与仓库文件都不是输入来源。
+    """
+    try:
+        result = _service(request).submit_message(
+            task_id,
+            kind=payload.kind,
+            text=payload.text,
+            question_id=payload.question_id,
+            expected_revision=payload.expected_revision,
+            idem_key=payload.idem_key,
+        )
+        return MessageOut(**result)
+    except TaskError as exc:
+        return _error(404, "invalid_task", str(exc), task_id=task_id)
+    except InvalidRequestError as exc:
+        return _error(422, "invalid_request", str(exc), task_id=task_id)
+    except PatchPilotError as exc:
+        return _error(409, "conflict", str(exc), task_id=task_id)
+
+
+@router.get("/tasks/{task_id}/question", response_model=QuestionOut)
+def get_question(task_id: str, request: Request):
+    """G11:当前未回答问题与输入版本(CLI 展示问题/选项;无问题时 question=null)。"""
+    try:
+        result = _service(request).pending_question(task_id)
+        return QuestionOut(**result)
+    except TaskError as exc:
+        return _error(404, "invalid_task", str(exc), task_id=task_id)
+    except PatchPilotError as exc:
+        return _error(409, "conflict", str(exc), task_id=task_id)

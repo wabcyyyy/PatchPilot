@@ -111,7 +111,7 @@ G05 明确登记"抬软窗口到 64k 时必须把 `refine_head/tail_lines`、`ta
 - `app/llm/usage.py:1` — `模型响应与计量协议(G02)`
 - `app/llm/openai_client.py:1` — `OpenAI 兼容端点的模型封装`
 - `app/context/token_window.py:1` — `工作记忆的滑动窗口压缩`
-- `app/graph/plain_loop.py:431` — `if capacity_ceiling > 0:`
+- `app/graph/plain_loop.py:625` — `if capacity_ceiling > 0:`
 - `app/graph/nodes.py:1` — `LangGraph 节点实现`
 - `app/graph/loop_state.py:74` — `runtime_profile: str = ""`
 - `tests/test_model_profiles.py:1` — `G07a 模型能力档案与服务端身份采集`

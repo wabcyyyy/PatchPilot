@@ -232,6 +232,10 @@ def test_provenance_carries_new_traceability_fields() -> None:
         "command_scratch_max_bytes",
         # G10 验收等待窗:决定 diagnose 模式"等批准"还是"立即 needs_review"
         "acceptance_wait_seconds",
+        # G11 用户等待窗与绝对寿命:决定等待中的任务"继续等/结构化 needs_review",
+        # 以及等待顺延能否越过绝对上限——同样改变终态与轨迹形状
+        "user_wait_seconds",
+        "task_absolute_lifetime_seconds",
     } == set(SNAPSHOT_KEYS)
     started = datetime.fromisoformat(prov["started_at"])
     assert started.tzinfo is not None

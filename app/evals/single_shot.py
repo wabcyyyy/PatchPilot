@@ -48,6 +48,9 @@ from app.tools.registry import FINISH_TOOL
 # G09 登记的不对称:write_repro/run_command **不进**本臂——pytest_selected 会把测试
 # 结果带给对照臂,与"one_shot 禁执行反馈"直接冲突(run_tests 的排除是同一先例)。
 # 做"受控命令"的单变量对照时必须按臂登记,不能当作默认对称能力。
+# G11 登记的不对称评估:ask_user 进两臂(它是"向用户要信息",不是执行反馈,
+# 与 run_tests 的排除不同罪)。但本臂/agent 臂在批处理里都是 headless:模型真提问时
+# 两臂都以 clarification_required 收场——语义对称,不构成新的消融变量。
 ONE_SHOT_TOOLS = [
     "list_files",
     "search_code",
@@ -56,6 +59,7 @@ ONE_SHOT_TOOLS = [
     "read_file",
     "read_evidence",
     "update_memory",
+    "ask_user",
     "git_diff",
     "apply_patch",
     FINISH_TOOL,

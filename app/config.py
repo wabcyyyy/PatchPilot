@@ -415,6 +415,22 @@ class Settings(BaseSettings):
             raise ValueError(f"acceptance_wait_seconds must be >= 0, got {value}")
         return value
 
+    # ---------- G11:用户澄清与途中纠偏 ----------
+    # ask_user 的等待窗(秒):0 = headless,不等待、立即以 clarification_required
+    # 收敛(needs_review),问题保留供人工复查。与 acceptance_wait_seconds 同族口径。
+    user_wait_seconds: int = 3600
+    # 任务的**绝对寿命**上限(秒):用户等待不算进执行 deadline(等待结束后按等待时长
+    # 顺延),但顺延不得越过这条绝对上限;0 = 不设绝对上限(等待顺延无界)。
+    # 绝对上限在受理时建立、随 checkpoint 持久化,恢复不重授(与既有 deadline 同一条纪律)。
+    task_absolute_lifetime_seconds: int = 86_400
+
+    @field_validator("user_wait_seconds", "task_absolute_lifetime_seconds")
+    @classmethod
+    def _check_wait_seconds(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"wait/lifetime seconds must be >= 0 (0 = disabled), got {value}")
+        return value
+
     @field_validator("command_output_max_bytes", "command_scratch_max_bytes")
     @classmethod
     def _check_command_sizes(cls, value: int) -> int:

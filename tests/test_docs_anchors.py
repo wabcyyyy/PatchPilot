@@ -137,8 +137,12 @@ def test_p3_7_corrected_claims_are_pinned() -> None:
     # →1201(G10:diagnose 节点与 _apply_manifest 插在 LOCALIZE 与 PLAN 之间,
     #         tools.registry 加 propose_acceptance 入口;diagnose 的 premise_error
     #         分支再 +1,apply 的 docstring 下移)
+    # →1286(G11:READ/WRITE_TOOLS 各加 ask_user 一行,TaskNodes 加 interaction/
+    #         absolute_deadline_epoch/_paused_synced 三字段与 _sync_wait_pause_deadline,
+    #         _deadline_overrun 前补顺延,三个循环调用点各加同步与容量参数,
+    #         localize/plan/propose 各加 clarification_required 分支)
     assert "七项门禁" in _read("app/graph/gates.py")[0]
-    assert "七项门禁" in _read("app/graph/nodes.py")[1201]
+    assert "七项门禁" in _read("app/graph/nodes.py")[1285]
     # ADR-0002:compose 冒烟如实表述
     adr2 = _read("docs/adr/0002-execution-backend-local-默认.md")
     assert any("无留档的实测运行" in line for line in adr2[28:34]), adr2[28:34]

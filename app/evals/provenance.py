@@ -231,6 +231,11 @@ SNAPSHOT_KEYS: tuple[str, ...] = (
     # G10 验收等待窗:决定 diagnose_then_repair 是"等待批准"还是"立即 needs_review",
     # 两种口径的终态与产物形状不同(与 task_timeout_seconds 同族,不进豁免)。
     "acceptance_wait_seconds",
+    # G11 用户等待窗与绝对寿命:两者决定"等待中的任务是继续等还是结构化 needs_review"、
+    # 以及等待顺延能不能越过绝对上限——同样改变终态与轨迹形状,与 acceptance_wait_seconds
+    # 同族,不进豁免。
+    "user_wait_seconds",
+    "task_absolute_lifetime_seconds",
 )
 SECRET_KEYS: frozenset[str] = frozenset({"llm_api_key", "api_token"})
 EXEMPT_KEYS: frozenset[str] = frozenset(

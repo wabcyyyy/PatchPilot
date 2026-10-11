@@ -105,6 +105,43 @@ class AcceptanceOut(BaseModel):
     status: str
 
 
+class MessageIn(BaseModel):
+    """POST /tasks/{id}/messages(G11):回答澄清问题或追加途中纠偏。
+
+    answer 必须带 question_id 与 expected_revision(防过期回答);idem_key 供重复
+    提交幂等。文本永远只作为**会话线索**进入任务,不改变测试、权限与预算契约。
+    """
+
+    kind: Literal["answer", "steer"]
+    text: str = Field(..., min_length=1, max_length=4000)
+    question_id: str = Field("", max_length=64, description="answer 必填(run_dir 工件里的 id)")
+    expected_revision: int = Field(0, ge=0, description="answer 必填:提问时的输入版本")
+    idem_key: str = Field("", max_length=100, description="重复提交的幂等键(可选)")
+
+
+class MessageOut(BaseModel):
+    """输入受理结果:是否写入、是否幂等命中、唤醒/重排队与任务现状。"""
+
+    task_id: str
+    kind: str
+    accepted: bool
+    already: bool = False
+    woke_waiter: bool = False
+    resumed: bool = False
+    question_id: str = ""
+    status: str
+
+
+class QuestionOut(BaseModel):
+    """当前未回答问题与输入版本(CLI/API 展示;无问题时 question 为 null)。"""
+
+    task_id: str
+    status: str
+    revision: int
+    question: dict[str, Any] | None = None
+    pending_steers: int = 0
+
+
 class TrajectoryPage(BaseModel):
     task_id: str
     total_returned: int

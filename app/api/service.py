@@ -23,7 +23,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from app.agent.control import ApprovalRegistry
+from app.agent.control import (
+    KIND_ANSWER,
+    KIND_STEER,
+    ApprovalRegistry,
+    InteractionChannel,
+    InteractionIntegrityError,
+    InteractionStore,
+    QuestionRegistry,
+)
 from app.api.cancellation import CancelRegistry
 from app.api.preflight import run_preflight
 from app.api.recycle import recycle_run_dir
@@ -103,6 +111,8 @@ class TaskService:
         # G10:验收批准的等待登记(同进程内唯一唤醒通道;CLI/HTTP 批准经服务方法
         # 冻结 manifest 后唤醒对应任务的等待线程)
         self._approvals = ApprovalRegistry()
+        # G11:ask_user 的回答等待登记(与批准登记同构;回答落盘后经它唤醒等待线程)
+        self._questions = QuestionRegistry()
         # E4:并发上限配置化——显式传参优先(既有调用方行为不变),
         # 未传时读 Settings.task_max_workers(默认 2,行为向后兼容)
         resolved_workers = (
@@ -419,6 +429,17 @@ class TaskService:
                 # G10:诊断等待接线——批准事件登记 + 等待前把生命周期置 WAITING_INPUT
                 # (非终态条件写;批准后服务写回 RUNNING,超时/取消由终态收敛)
                 approval_event = self._approvals.register(task_id)
+                # G11:ask_user 的等待通道——回答端点经同一服务实例的 QuestionRegistry
+                # 唤醒等待线程;等待窗由 Settings 在**执行启动时**冻结(受理后改环境变量
+                # 不改变这一次运行)。status 先例与批准等待一致:on_waiting 置 WAITING_INPUT。
+                interaction = InteractionChannel(
+                    registry=self._questions,
+                    task_id=task_id,
+                    wait_seconds=get_settings().user_wait_seconds,
+                    on_waiting=lambda: self.repo.set_status_unless_terminal(
+                        task_id, "WAITING_INPUT"
+                    ),
+                )
                 try:
                     result = run_task_graph(
                         bug,
@@ -435,6 +456,7 @@ class TaskService:
                         on_waiting=lambda: self.repo.set_status_unless_terminal(
                             task_id, "WAITING_INPUT"
                         ),
+                        interaction=interaction,
                     )
                 finally:
                     self._approvals.release(task_id)
@@ -623,6 +645,124 @@ class TaskService:
             "already_frozen": already_frozen,
             "resumed": resumed,
             "status": str((self.repo.get_task(task_id) or {}).get("status") or ""),
+        }
+
+    def submit_message(
+        self,
+        task_id: str,
+        *,
+        kind: str,
+        text: str,
+        question_id: str = "",
+        expected_revision: int = 0,
+        idem_key: str = "",
+    ) -> dict[str, Any]:
+        """G11:回答澄清问题(answer)或追加途中纠偏(steer)。
+
+        语义要点(SPEC G11):
+        - 回答只作为**问题工件**的写入(POST /messages),trusted_user 来源由平台赋;
+          模型文字、仓库文件里的"用户已批准"永远不构成输入;
+        - 回答落盘先于唤醒:`resume 通过问题 ID、expected_revision、幂等键消费一次`;
+          无 waiter 且行仍是 WAITING_INPUT(进程曾重启)时按检查点重新入队,
+          循环会在恢复后的同一闸门里消费答案(见 run_plain_loop 的 _interaction_gate);
+        - 终态任务的输入一律拒绝(终态不可复活);纠偏只追加线索,
+          不改变测试、权限与预算(消费端是文本消息,不参与任何判定)。
+        """
+        row = self.repo.get_task(task_id)
+        if row is None:
+            raise TaskError(f"task not found: {task_id}")
+        status = str(row.get("status") or "")
+        if status in TERMINAL_STATUSES:
+            raise ConflictError(
+                f"task {task_id} already finished ({status}); input is refused on terminal tasks"
+            )
+        run_dir = Path(str(row.get("run_dir") or ""))
+        if not run_dir.is_dir():
+            raise TaskError(f"task {task_id}: run_dir missing, input cannot be recorded")
+        store = InteractionStore(run_dir)
+        if kind == KIND_ANSWER:
+            try:
+                question, already = store.submit_answer(
+                    question_id=question_id,
+                    expected_revision=expected_revision,
+                    text=text,
+                    idem_key=idem_key,
+                )
+            except InteractionIntegrityError as exc:
+                raise ConflictError(
+                    f"interaction state on file failed integrity check: {exc}"
+                ) from exc
+            woke = False
+            resumed = False
+            if not already:
+                if self._questions.has_waiter(task_id):
+                    woke = self._questions.answer(task_id, question_id)
+                    if woke:
+                        # 等待线程在同一进程内:批准先落盘(上面),此处只唤醒并回写状态
+                        self.repo.set_status_unless_terminal(task_id, "RUNNING")
+                elif status == "WAITING_INPUT":
+                    # 无 waiter 但行仍是等待态(进程曾崩溃/重启):重新入队按检查点恢复,
+                    # 循环在恢复后的闸门里消费这条答案(与 G10 批准的重启路径同一处置)
+                    resumed = self._requeue_for_resume(row)
+            log.info(
+                "task %s: answer recorded for question %s (already=%s woke=%s resumed=%s)",
+                task_id,
+                question_id[:12],
+                already,
+                woke,
+                resumed,
+            )
+            return {
+                "task_id": task_id,
+                "kind": kind,
+                "accepted": True,
+                "already": already,
+                "woke_waiter": woke,
+                "resumed": resumed,
+                "question_id": str(question.get("question_id") or question_id),
+                "status": str((self.repo.get_task(task_id) or {}).get("status") or ""),
+            }
+        if kind == KIND_STEER:
+            try:
+                already = store.submit_steer(text=text, idem_key=idem_key)
+            except InteractionIntegrityError as exc:
+                raise ConflictError(
+                    f"interaction state on file failed integrity check: {exc}"
+                ) from exc
+            log.info("task %s: steer recorded (already=%s)", task_id, already)
+            return {
+                "task_id": task_id,
+                "kind": kind,
+                "accepted": True,
+                "already": already,
+                "woke_waiter": False,
+                "resumed": False,
+                "question_id": "",
+                "status": status,
+            }
+        raise InvalidRequestError(f"unsupported message kind: {kind!r} (answer | steer)")
+
+    def pending_question(self, task_id: str) -> dict[str, Any]:
+        """G11:当前未回答问题与输入版本(CLI/API 展示用);损坏的工件如实报冲突。"""
+        row = self.repo.get_task(task_id)
+        if row is None:
+            raise TaskError(f"task not found: {task_id}")
+        run_dir = Path(str(row.get("run_dir") or ""))
+        store = InteractionStore(run_dir)
+        try:
+            state = store.read()
+        except InteractionIntegrityError as exc:
+            raise ConflictError(f"interaction state on file failed integrity check: {exc}") from exc
+        open_question = next(
+            (q for q in state.get("questions", []) if q.get("status") == "open"), None
+        )
+        pending_steers = sum(1 for s in state.get("steers", []) if not s.get("consumed_at"))
+        return {
+            "task_id": task_id,
+            "status": str(row.get("status") or ""),
+            "revision": int(state.get("revision", 0)),
+            "question": open_question,
+            "pending_steers": pending_steers,
         }
 
     @staticmethod
