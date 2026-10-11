@@ -40,6 +40,7 @@ def run_task_graph(
     model_name: str = "",
     cancel_event: threading.Event | None = None,
     branch_model_factory: Callable[[int], Model] | None = None,
+    subtask_model_factory: Callable[[str], Model] | None = None,
     resume: bool = False,
     tracker_sink: Callable[[dict[str, Any]], None] | None = None,
     arm: str = "agent",
@@ -134,6 +135,8 @@ def run_task_graph(
             absolute_deadline_epoch=absolute_deadline_epoch,
             cancel_event=cancel_event,
             branch_model_factory=branch_model_factory,
+            # G13:子任务模型工厂(角色 → 模型)。由调用方注入;None = 委派未配置
+            subtask_model_factory=subtask_model_factory,
             policy=policy,
             price_model=model_name,
             # G10:验收等待接线由调用方(服务层)注入;直接调用方不传 = headless,

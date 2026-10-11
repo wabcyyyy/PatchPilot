@@ -18,6 +18,7 @@ delegate 明确返回 termination="unconfigured",绝不沿用父脚本游标或�
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import threading
 from collections.abc import Callable
@@ -112,11 +113,13 @@ def run_subtask_loop(
     runtime: Any,
     ledger: ResourceLedger,
     absolute_deadline_epoch: float | None = None,
+    extra_system: str = "",
 ) -> Any:
     """统一 child runner:与主循环同一套 run_plain_loop,但会话/轮次/预算都独立。
 
     `runtime.loop_settings()` 由父节点冻结的 TaskRuntime 提供(子任务与父同一套
-    运行 profile);allowed_tools 由角色表决定,执行前同 schema 装配一起挡人。
+    运行 profile);allowed_tools 由角色表决定,执行前同 schema 装配一起挡人;
+    extra_system 供分支候选注入换思路提示(委托工具路径恒为空串)。
     """
     from app.graph.plain_loop import run_plain_loop
 
@@ -127,7 +130,7 @@ def run_subtask_loop(
         max_turns=max_turns,
         round_no=round_no,
         state_label=state_label,
-        extra_system="",
+        extra_system=extra_system,
         allowed_tools=allowed_tools,
         token_budget=token_budget,
         deadline_epoch=deadline_epoch,
@@ -233,6 +236,30 @@ class SubtaskManager:
     def release_slot(self) -> None:
         with self._lock:
             self._active = max(self._active - 1, 0)
+
+    def acquire_bulk(self, n: int) -> int:
+        """一次性占 n 个执行名额(分支并发池用);返回实际占用数(0 = 全拒)。
+
+        与 acquire_slot 同一把锁、同一组上限:次数(max_delegations)与并发
+        (max_concurrency)一起检查。Best-of-N 候选各消耗一个子任务名额,
+        不为分支创建重授次数/并发(SPEC G13)。
+        """
+        with self._lock:
+            if not self.enabled or n <= 0:
+                return 0
+            slots = max(self.max_delegations - len(self.children), 0)
+            conc = max(self.max_concurrency - self._active, 0)
+            take = min(n, slots, conc)
+            self._active += take
+            return take
+
+    def release_bulk(self, n: int) -> None:
+        with self._lock:
+            self._active = max(self._active - n, 0)
+
+    def per_subtask_budget(self) -> int:
+        """单子任务预留的公开读法(节点装配与 delegate 共用同一口径)。"""
+        return self._per_subtask_budget()
 
     def record_child(self, child: ChildResult) -> None:
         with self._lock:
@@ -437,3 +464,63 @@ class SubtaskManager:
                 log.exception("subtask %s: failed to read candidate diff", subtask_id)
         self.record_child(result)
         return result
+
+
+def subtask_model_factory_for(
+    bug: BugTask, model_kind: str, settings: Any
+) -> Callable[[str], Model] | None:
+    """CLI/API 共用的子任务模型工厂(G13):角色 → 模型。
+
+    - fake:题目带 `replay/subtasks.json`(形态 `{"researcher": [steps...], ...}`)
+      → 每角色一个独立 FakeLLM(冻结脚本);缺某角色脚本返回 None → delegate 明确
+      termination="unconfigured",绝不沿用父脚本游标或偷调真实模型;
+    - openai:每角色一个独立客户端(子任务不共享父会话);
+    - 其余(未开启/无脚本)→ None:delegate 恒 unconfigured,装配面与接入前逐字节相同。
+    """
+    from app.llm.fake import FakeLLM
+
+    if model_kind == "fake":
+        subtasks_path = bug.root / "replay" / "subtasks.json"
+        if not subtasks_path.exists():
+            return None
+        roles = json.loads(subtasks_path.read_text(encoding="utf-8"))
+        if not isinstance(roles, dict):
+            return None
+
+        def _fake(role: str) -> Model | None:
+            steps = roles.get(role)
+            return FakeLLM(list(steps)) if steps else None
+
+        return _fake
+    if model_kind == "openai" and getattr(settings, "llm_enabled", False):
+        from app.llm.openai_client import build_model
+
+        return lambda role: build_model("openai", settings)
+    return None
+
+
+def branch_model_factory_for(
+    bug: BugTask, model_kind: str, settings: Any
+) -> Callable[[int], Model] | None:
+    """CLI/API 共用的分支候选模型工厂(卡5b/G13):第 i 个候选 → 模型。
+
+    - fake:题目带 `replay/graph-branches.json`(`{"0": [steps...], "1": [...]}`)→
+      每候选一个独立 FakeLLM;缺某序号给空脚本(FakeLLM 立刻声明失败 → "未修好");
+    - openai:每候选一个独立客户端(候选不共享父会话);
+    - 其余(未开启/无脚本)→ None:`_should_branch` 短路,单线与 V1 一致。
+    """
+    from app.llm.fake import FakeLLM
+
+    branches_path = bug.root / "replay" / "graph-branches.json"
+    if branches_path.exists():
+        branches = json.loads(branches_path.read_text(encoding="utf-8"))
+
+        def _fake(index: int) -> Model:
+            return FakeLLM(list(branches.get(str(index)) or []))
+
+        return _fake
+    if model_kind == "openai" and getattr(settings, "llm_enabled", False):
+        from app.llm.openai_client import build_model
+
+        return lambda index: build_model("openai", settings)
+    return None

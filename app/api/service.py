@@ -424,6 +424,7 @@ class TaskService:
             real_model_name = settings.llm_model if model_name == "openai" else ""
 
             if engine == "graph":
+                from app.agent.subtasks import branch_model_factory_for, subtask_model_factory_for
                 from app.graph.runner import run_task_graph
 
                 # G10:诊断等待接线——批准事件登记 + 等待前把生命周期置 WAITING_INPUT
@@ -452,6 +453,10 @@ class TaskService:
                         resume=resume,
                         tracker_sink=self._live_event_sink(task_id),
                         arm="agent",
+                        # G13:分支/委派模型工厂与 CLI 同源(API 此前只接了 runner 默认,
+                        # 未接分支工厂;SPEC G13"修复 API 未接线"在此收口)
+                        branch_model_factory=branch_model_factory_for(bug, model_name, settings),
+                        subtask_model_factory=subtask_model_factory_for(bug, model_name, settings),
                         approval_event=approval_event,
                         on_waiting=lambda: self.repo.set_status_unless_terminal(
                             task_id, "WAITING_INPUT"

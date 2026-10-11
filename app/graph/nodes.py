@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
 import time
@@ -168,6 +169,13 @@ class TaskNodes:
     # 卡5 自适应分支:第 i 个候选用哪个模型。None = 不分支(单线,与 V1 同行为)。
     # 带默认值,runner/service 的关键字构造不受影响;由调用方注入,graph 层不 import 测试替身。
     branch_model_factory: Callable[[int], Model] | None = None
+    # G13:子任务模型工厂(角色 → 模型;None = 未配置,delegate 明确拒绝)。由调用方
+    # 注入(与 branch_model_factory 同源):graph 层不 import 测试替身,fake 回放的
+    # replay_subtasks 读取留在 eval/service 入口。
+    subtask_model_factory: Callable[[str], Model] | None = None
+    # G13:子任务编排器。delegation_enabled 且非 one_shot 时在 __post_init__ 建;
+    # None ⇒ 全程无委派、无子任务记账,阶段装配面与接入前逐字节相同。
+    subtask_manager: Any | None = None
     # M6 崩溃恢复:被打断阶段的循环快照(仅当 stage/round 与该阶段本次执行匹配时消费一次,
     # 取走即清空——同一份快照不得被后续阶段或后续轮次再回放一遍)。默认 None = 冷启动,
     # 与引入恢复能力之前的行为逐字一致。
@@ -251,6 +259,29 @@ class TaskNodes:
         if self.memory is not None and self.session is None:
             self.session = SessionState(self.memory.task_id, self.memory.session_id)
             self.memory.session_id = self.session.session_id
+        # ---------- G13:子任务编排器 ----------
+        # one_shot 始终禁委派(delegate 不进 WRITE_TOOLS,这里也直接不建)。
+        # getattr 兜底:SimpleNamespace 测试桩没有 delegation_enabled 时落在"关闭"侧,
+        # 与本文件 _persistent_context 的既有惯例一致。
+        if getattr(settings, "delegation_enabled", False) and not getattr(
+            self.policy, "is_one_shot", False
+        ):
+            from app.agent.subtasks import SubtaskManager
+
+            self.subtask_manager = SubtaskManager(
+                enabled=True,
+                max_concurrency=int(getattr(settings, "max_subagent_concurrency", 2)),
+                max_delegations=int(getattr(settings, "max_delegations", 3)),
+                max_turns=int(getattr(settings, "subtask_max_turns", 10)),
+                model_factory=self.subtask_model_factory,
+                ledger=self.ledger,
+                report_dir=self.report_dir,
+                bug=self.bug,
+                runtime=self.runtime,
+                deadline_epoch=self.deadline_epoch,
+                absolute_deadline_epoch=self.absolute_deadline_epoch,
+                cancel_event=self.cancel_event,
+            )
         # 本阶段装配好的上下文(骨架 + 记忆块);None = 尚未装配,退回"只有骨架"的旧形状
         self._stage_context: str | None = None
 
@@ -428,7 +459,19 @@ class TaskNodes:
             task_spec_hash=self.task_spec_hash,
             # G11:ask_user 的等待通道(None = headless,问题落盘但不等回答)
             interaction=self.interaction,
+            # G13:子任务编排器(经 delegate 工具访问;None = 未开启委派,工具直接拒)
+            subtasks=self.subtask_manager,
         )
+
+    def _with_delegation(self, tools: list[str]) -> list[str]:
+        """G13:委派开关打开时给阶段工具表追加 delegate。
+
+        delegate 不进静态白名单:由本方法在 localize/propose 装配时按开关追加,
+        one_shot 恒不建 subtask_manager ⇒ 天然禁。关闭委派时返回原列表逐字节。
+        """
+        if self.subtask_manager is None:
+            return list(tools)
+        return [*tools, "delegate"]
 
     def _manifest_frozen(self) -> bool:
         """验收清单是否已冻结(只查一次盘,结果幂等缓存)。
@@ -605,7 +648,10 @@ class TaskNodes:
         assert self.ctx is not None
         # G10:diagnose 模式的 LOCALIZE 白名单带受控命令与提议工具(issue-only 任务
         # 要靠 pytest_collect/pytest_selected 提出候选失败集);repair 模式与接入前相同。
-        localize_tools = DIAGNOSE_TOOLS if self.mode == "diagnose_then_repair" else READ_TOOLS
+        # G13:委派开启时追加 delegate(researcher 委托受同一阶段约束)。
+        localize_tools = self._with_delegation(
+            DIAGNOSE_TOOLS if self.mode == "diagnose_then_repair" else READ_TOOLS
+        )
         # 装配本阶段的可见上下文(骨架 + 此前的工作记忆);LOCALIZE 是第一个阶段,
         # 此时记忆里还没有观测 ⇒ 与接入前逐字节相同
         self._begin_assembly("LOCALIZE", state["round_no"], localize_tools)
@@ -1214,7 +1260,8 @@ class TaskNodes:
 
         prompt = self._propose_prompt(state, state["round_no"])
         # 补丁阶段带着定位/计划两个阶段的真实观测进入(而不是只带一段自述结论)
-        self._begin_assembly("PROPOSE_PATCH", state["round_no"], list(self.policy.propose_tools))
+        propose_tools = self._with_delegation(self.policy.propose_tools)
+        self._begin_assembly("PROPOSE_PATCH", state["round_no"], propose_tools)
         # G11:用户等待时长在进入本阶段循环前先顺延进 deadline(与 localize 同一口径)
         self._sync_wait_pause_deadline()
         try:
@@ -1226,7 +1273,7 @@ class TaskNodes:
                 round_no=state["round_no"],
                 state_label="PROPOSE_PATCH",
                 extra_system=self._persistent_context(self.workspace),
-                allowed_tools=list(self.policy.propose_tools),
+                allowed_tools=propose_tools,
                 deadline_epoch=self.deadline_epoch,
                 absolute_deadline_epoch=self.absolute_deadline_epoch,
                 token_budget=self._token_budget_for(state),
@@ -1681,25 +1728,75 @@ class TaskNodes:
             patch_applied=False,
             finish_declared=False,
         )
+        manager = self.subtask_manager
+        reserved_budget = 0
         try:
-            outcome = run_plain_loop(
-                cand_ctx,
-                self.branch_model_factory(index),  # type: ignore[misc]
-                self._propose_prompt(state, rounds),
-                max_turns=self.max_turns,
-                round_no=rounds,
-                state_label=f"BRANCH-{index}",
-                extra_system=VARIANT_HINTS.get(index, ""),
-                allowed_tools=WRITE_TOOLS,
-                # 候选各拿任务级余量的一半:两个候选合计不超一轮双倍开销。
-                # max(…, 1):余量极小时 0 会被 plain_loop 当"不限制",
-                # 脚枪式语义(复盘 P2);至少给 1,让候选在首个 turn 边界即被预算拦下
-                token_budget=max(reserve // 2, 1) if reserve else reserve,
-                deadline_epoch=self.deadline_epoch,
-                **self.runtime.loop_settings(),
-                cancel_event=self.cancel_event,
-                ledger=self.ledger,
-            )
+            if manager is None:
+                # 委派关闭:逐字节保持旧行为(直跑主线循环,预算取任务余量一半)
+                outcome = run_plain_loop(
+                    cand_ctx,
+                    self.branch_model_factory(index),  # type: ignore[misc]
+                    self._propose_prompt(state, rounds),
+                    max_turns=self.max_turns,
+                    round_no=rounds,
+                    state_label=f"BRANCH-{index}",
+                    extra_system=VARIANT_HINTS.get(index, ""),
+                    allowed_tools=WRITE_TOOLS,
+                    # 候选各拿任务级余量的一半:两个候选合计不超一轮双倍开销。
+                    # max(…, 1):余量极小时 0 会被 plain_loop 当"不限制",
+                    # 脚枪式语义(复盘 P2);至少给 1,让候选在首个 turn 边界即被预算拦下
+                    token_budget=max(reserve // 2, 1) if reserve else reserve,
+                    deadline_epoch=self.deadline_epoch,
+                    **self.runtime.loop_settings(),
+                    cancel_event=self.cancel_event,
+                    ledger=self.ledger,
+                )
+            else:
+                # G13:候选接入统一 child runner —— 名额由 _run_fallback_branches 的
+                # acquire_bulk 占,预算从子任务池预留(不叠加第二套额度),结果记 ChildResult
+                from app.agent.subtasks import _subtask_ctx, run_subtask_loop
+
+                subtask_budget = manager.per_subtask_budget()
+                if subtask_budget:
+                    if not manager.ledger.reserve_subtask(tokens=subtask_budget, stage="branch"):
+                        # 子任务额度不足:候选拒绝执行,不跑 LLM/pytest,按"无补丁"计
+                        return BranchCandidate(
+                            index=index,
+                            workspace=cand_ws,
+                            diff_text="",
+                            failed_ok=False,
+                            regression_ok=False,
+                            failed_remaining=len(self.bug.failed_tests),
+                            failed_cases=[],
+                            turns=0,
+                            tokens_used=0,
+                            tokens_prompt=0,
+                            tokens_completion=0,
+                            error="subtask budget insufficient",
+                        )
+                    reserved_budget = subtask_budget
+                outcome = run_subtask_loop(
+                    _subtask_ctx(
+                        cand_ctx,
+                        task_id=f"{self.ctx.task_id}-cand{index}",
+                        workspace=cand_ws,
+                        baseline_commit=sha,
+                        report_dir=cand_reports,
+                    ),
+                    self.branch_model_factory(index),  # type: ignore[misc]
+                    self._propose_prompt(state, rounds),
+                    max_turns=manager.max_turns,
+                    round_no=1,
+                    state_label=f"BRANCH-{index}",
+                    allowed_tools=WRITE_TOOLS,
+                    token_budget=subtask_budget or None,
+                    deadline_epoch=self.deadline_epoch,
+                    absolute_deadline_epoch=self.absolute_deadline_epoch,
+                    cancel_event=self.cancel_event,
+                    runtime=self.runtime,
+                    ledger=self.ledger,
+                    extra_system=VARIANT_HINTS.get(index, ""),
+                )
         except TaskCancelled:
             raise  # 取消语义不得被候选吞掉
         except BudgetError as exc:
@@ -1717,6 +1814,12 @@ class TaskNodes:
             )
         except Exception as exc:  # 候选失败不拖垮主流程:按"未修好"计分
             note = f"{type(exc).__name__}: {exc}"
+        finally:
+            # G13:候选结算(含取消/崩溃路径)——子任务池先预留再结算,不蒸发不泄漏
+            if manager is not None and reserved_budget:
+                manager.ledger.settle_subtask(
+                    reserved_tokens=reserved_budget, tokens_used=outcome.tokens_used
+                )
 
         diff = working_tree_diff(cand_ws)
         failed_report, _ = run_pytest(
@@ -1737,6 +1840,39 @@ class TaskNodes:
         )
         # 候选阶段不做 E3 双跑:双跑复核属于主流程的 resolved 判定,择优阶段
         # 多一倍 pytest 开销换来的只是"同一伪绿再验一次",与择优目的无关
+        if manager is not None:
+            # G13:候选也记 ChildResult(报告能说明每个候选的贡献与终止原因);
+            # 候选引用 = 自身 workspace 的 diff hash,供报告/审计追踪。
+            from app.agent.subtasks import ChildResult
+
+            termination = "finished"
+            error = ""
+            if note.startswith("预算超限"):
+                termination = "budget"
+                error = note
+            elif note:
+                termination = "crashed"
+                error = note
+            manager.record_child(
+                ChildResult(
+                    role="repair_candidate",
+                    subtask_id=f"cand{index}",
+                    ok=outcome.success,
+                    conclusion=outcome.summary,
+                    candidate_id=f"cand{index}",
+                    candidate_hash=(
+                        hashlib.sha256(diff.diff_text.encode("utf-8")).hexdigest()
+                        if diff.diff_text.strip()
+                        else ""
+                    ),
+                    turns=outcome.turns,
+                    tokens_used=outcome.tokens_used,
+                    tokens_prompt=outcome.tokens_prompt,
+                    tokens_completion=outcome.tokens_completion,
+                    termination=termination,
+                    error=error,
+                )
+            )
         return BranchCandidate(
             index=index,
             workspace=cand_ws,
@@ -1791,9 +1927,39 @@ class TaskNodes:
         )
         reserve = self._token_budget_for(state) or 0
         count = max(2, settings.branch_candidates)
-        with ThreadPoolExecutor(max_workers=count) as pool:
-            futures = [pool.submit(self._run_candidate, state, i, reserve) for i in range(count)]
-            cands = [f.result() for f in futures]  # TaskCancelled 在此向上抛出
+        manager = self.subtask_manager
+        # G13:Best-of-N 候选各消耗一个子任务名额(与委派共用 max_delegations/
+        # max_concurrency 上限),不因分支创建重授次数/并发;子任务池名额不足则
+        # 候选无法创建,按"无补丁"回到单线下一轮。
+        acquired = manager.acquire_bulk(count) if manager is not None else count
+        if acquired <= 0:
+            self.tracker.record(
+                tool="adaptive_branch_no_slot",
+                round_no=round_no,
+                state="PROPOSE_PATCH",
+                error="subtask slots unavailable for branch candidates",
+            )
+            return {
+                "turns": state.get("turns", 0),
+                "tokens_used": state.get("tokens_used", 0),
+                "tokens_prompt": state.get("tokens_prompt", 0),
+                "tokens_completion": state.get("tokens_completion", 0),
+                "status": "PROPOSE_PATCH",
+                "round_no": round_no + 1,
+                "branching_used": True,
+                "verify_failed_ok": False,
+                "verify_regression_ok": False,
+                "feedback": ("自适应分支:子任务名额/并发不足,候选未能创建;继续按单线修复。"),
+            }
+        try:
+            with ThreadPoolExecutor(max_workers=count) as pool:
+                futures = [
+                    pool.submit(self._run_candidate, state, i, reserve) for i in range(acquired)
+                ]
+                cands = [f.result() for f in futures]  # TaskCancelled 在此向上抛出
+        finally:
+            if manager is not None:
+                manager.release_bulk(acquired)
 
         winner = self._select_candidate(cands)
         self.tracker.record(
