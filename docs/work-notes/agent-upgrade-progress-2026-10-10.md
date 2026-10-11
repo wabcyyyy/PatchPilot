@@ -878,3 +878,196 @@ G08(目标仓库规则与作用域装配):`app/context/repo_instructions.py`(新
 G08 必须一并处理:优先级"平台硬规则 > 用户明确任务约束 > 已冻结仓库说明"要接进 G06 的装配器
 (与骨架、记忆块抢同一份 system 预算,现在又多一个 `context_window_tokens` 之外的字符档);
 T13 —— 仓库说明不得扩大工具能力、不得改验收契约。
+
+## G08 / P1:目标仓库规则与作用域装配
+
+### 范围补充(先声明再动手)
+
+SPEC §7 G08 的清单里没有 `app/graph/nodes.py`,但"实际请求包含适用规则"这条退出判据只能落在
+节点的阶段装配处(G06 的 `_begin_assembly` 是唯一的 system 组装点)。本卡登记这一处越界:
+
+- `app/graph/nodes.py`:新增 `instructions` 字段 + `_repo_instructions(stage)` 惰性加载
+  (每任务一次,带 `repo_instructions_loaded` 轨迹事件)+ `_observed_paths()`(从 G06 的**平台观测**
+  里取路径,决定哪些目录级说明此刻在场)+ `_begin_assembly` 把说明块交给装配器。
+- `app/context/assembler.py`(卡内已声明):新增 `instructions`/`evidence_paths` 两个入参与
+  `StageContext.instructions_chars` 读数;块顺序 = 说明 → 骨架 → 记忆(稳定内容在前、
+  每轮在变的记忆在末尾,才不打掉前面的 stable prefix)。
+- `app/tools/paths.py`、`base.py`、`registry.py`、`files.py`:**一行未改**。SPEC 给它们的定位是
+  "只保留或强化现有边界",而新加载器直接复用 `relpath_within` 的越界判定、`SKIP_DIRS` 的忽略集合
+  与 `looks_like_text` 的二进制拒绝 —— 边界出现第二份实现才是风险,不是"强化"。
+- `app/evals/driver.py`、`plain_loop.py`、`single_shot.py`:未改动。plain/one-shot 引擎今天连仓库
+  骨架都不注入(`extra_system` 只有 graph 的三个阶段在用),说明层跟着同一口径 —— 登记在下限一节,
+  不悄悄扩面。
+
+### 改了什么语义
+
+1. **新增一层只读输入**:`app/context/repo_instructions.py` 从冻结副本按
+   `FILENAME_PRIORITY = ("AGENTS.md", "CLAUDE.md")` 收集说明;同一目录只取最高优先级那一份,
+   落选那份记成"未纳入 + 原因"(不是悄悄消失)。
+2. **作用域按平台观测进场**:根说明开局就在;目录说明要等 G06 的记忆里出现该目录内的
+   **真实观测路径**(read_file/describe_file)才进场 —— 用观测而不是模型的自述,因为观测是
+   已经发生的事,而"它说要改谁"要到计划段之后才有。
+3. **超限一律明写**:单文件超 16 KiB 档 ⇒ 截断并写"另有 N 字节未显示,原文共 M 字节",
+   且退回**完整行首**再显示(裁在行中间等于给模型半条指令);总量超 64 KiB 档 ⇒ 整份不纳入,
+   块末点名 `未纳入的说明:<路径> —— 超出总量上限…(原文 N 字节)`。
+4. **边界零新增实现**:越界判定复用 `paths.relpath_within`,忽略集合复用 `files.SKIP_DIRS`
+   (含 `.git`),二进制复用 `looks_like_text`,符号链接一律拒绝且不跟随。
+   `app/tools/` 下四个被点名的文件本卡一行未改。
+5. **形似凭据的行在渲染前打码**:装配文本会进 `loop_state.json` 与轨迹,而轨迹经 API 原样对外
+   (T24)。哈希与 digest 仍按**原始字节**算 —— 打码只属于显示层,不许动内容身份。
+6. **每份说明四件读数**(相对路径 / sha256 / 作用域 / 裁剪)+ `digest()` 进
+   `repo_instructions_loaded` 轨迹事件;`repo_instructions_*` 三键进 SNAPSHOT + protocol_identity +
+   TaskSpec 的 effective_policy。运行身份没造新机制:说明文件本身就在 S06 冻结副本里,
+   改一字节 `source_snapshot_hash` 就变(有用例钉住)。
+7. **装配面多一个槽,顺序是说明 → 骨架 → 记忆**:`ContextAssembler.assemble()` 收
+   `instructions`/`evidence_paths`,`StageContext` 多一个 `instructions_chars` 读数。
+   稳定内容在前、每轮在变的记忆在末尾,与 G06 的幂等装配同一口径。
+8. **T13 是结构性的**:工具 schema 来自注册表 + 阶段白名单,门禁来自 `paths.py`,验收来自
+   `acceptance.py` —— 三条路径都不 import 这一层;说明块只是 `extra_system` 的一段文本。
+
+### 最小行为证据(输入 → 实际请求/动作 → 结果)
+
+- `tests/test_repo_instructions.py::test_the_rules_reach_the_actual_plan_request`:把 BUG-001
+  连题面复制一份、在副本里放 `AGENTS.md`,跑真实 graph 任务 ⇒ **PLAN 那次实际请求的 system**
+  里有 `<repo_instructions>` 与那句规则原文,且排在 `<repo_skeleton>` 之前;轨迹里
+  `repo_instructions_loaded` 恰好一条,读数是 `rel_path=AGENTS.md / scope=./ / digest 非空`,
+  且整段读数里不含宿主绝对路径。任务终态仍 `resolved`(带规则不改变判定)。
+- `test_directory_rule_waits_until_that_directory_is_observed`:根/`src`/`tests` 三份说明同时在场,
+  LOCALIZE 的第一次请求只有根说明;定位阶段读过 `src/dateparse.py`(平台观测)⇒ 计划段带上
+  `src` 那一份,而 `tests` 从没被碰过,它那份仍然不在场。
+- 优先级:`AGENTS.md` 与 `CLAUDE.md` 同目录时只等来前者,块里明写
+  `(未纳入的说明:CLAUDE.md —— 同目录取 AGENTS.md(本档文件名优先级更低))`。
+- 超限:`max_file_bytes=200` 时 `truncated=True`、`omitted_bytes = raw_bytes - shown_bytes > 0`,
+  块里出现"另有 N 字节未显示",`TAIL-MARKER` 不在场,显示的最后一行是完整行;
+  `max_total_bytes=1000` 时第二份整个不纳入并被点名。
+- 边界:`.git/AGENTS.md` 与 `node_modules/AGENTS.md` 永不进块;含 NUL 的"说明"被拒
+  (原因"疑似二进制");指向工作区外文件的符号链接被拒且不读取(这台 Windows 无创建权限 ⇒
+  该用例 skip,CI 上真跑)。
+- 越界与凭据:说明里写 `C:/Users/me/.aws/credentials` ⇒ 文本原样在场,而
+  `relpath_within(workspace, "C:/Users/me/.aws/credentials")` 仍返回 None(读不到);
+  `api_key: sk-…` 行渲染成 `[redacted:疑似凭据]`,换一把密钥则 digest 变(身份仍按原始字节)。
+- T13:说明里点名 `run_shell` 与"关闭所有门禁" ⇒ `tool_schemas(WRITE_TOOLS)` 里没有 `run_shell`,
+  且"有说明/无说明"两次 `tool_schemas(READ_TOOLS)` 逐字节相同。
+- 冻结身份:`tests/test_input_snapshot.py::test_rule_files_are_part_of_the_frozen_identity`
+  —— 源里加一份 `AGENTS.md` ⇒ `freeze_input` 指纹变;副本里改一字节 ⇒ 说明 `digest()` 变。
+- 关掉开关(`repo_instructions_enabled=False`)⇒ 请求里有 `<repo_skeleton>` 但没有
+  `<repo_instructions>`,形状与接入之前一致。
+
+### 检查读数(卡内定向 → 批内全量)
+
+- 新用例定向:`test_repo_instructions` **21 passed / 1 skipped**(唯一 skip 是符号链接那条,
+  这台 Windows 没有创建权限,CI 上真跑);`test_input_snapshot` **9 passed / 1 skipped**
+  (它本来就有一条同因的 skip)。
+- 全量一轮:**2 failed / 1121 passed / 5 skipped / 4 warnings in 2089.25s(0:34:49)**。
+  两条红都在文档账簿上,不是行为:`test_docs_anchors::test_p3_7_corrected_claims_are_pinned`
+  (nodes.py 的"七项门禁"行索引 869→914)与 `test_adr_declared_anchors_hold`(G08 动过
+  nodes/assembler/provenance 让 10 处 ADR 锚点漂移 + ADR-0015 自带的三条 `:1` 占位)。
+  重钉后 `test_docs_anchors` **6 passed**,`anchor_check` 复扫 **0 drifted**;
+  skip 从 4 → **5**,新增一条与既有两条同因(符号链接权限)。
+- 闭合账:G07 收口时 1101 passed / 4 skipped = 1105 条;本卡 +23 条
+  (`test_repo_instructions` 22、`test_input_snapshot` 1)= 1128 条 = 1121 passed + 5 skipped + 2 failed
+  一轮内对上。
+- `ruff check .` All checks passed;`ruff format` 后 258 files 全绿。
+- 锚点维护:10 处重钉(9 处由脚本按唯一命中改行号,1 处 `alias_proves_served_version`
+  因两处命中人工挑到 dict 条目那行 377);numstat 逐篇核对,只动锚点行的数字,
+  CRLF 保持原样(这条纪律是 G07 那次整篇换行 churn 换来的)。
+
+### 需要点名的范围决定与判断(不同意就说,回退成本很低)
+
+- **作用域触发条件用"平台观测过",不是"目标文件已确定"**。SPEC 的原话是"目标路径确定后按需
+  补充目录说明",而受理期能确定的只有 `allowed_paths` 这种模式;真正"确定"的时刻是模型动手
+  写补丁之前,那已经是计划段之后。我选择用 G06 的观测路径做触发(有读数、不靠自述),
+  代价见下限一节:没碰过的目录,它的规则就永远不在场。
+- **同一目录两份说明只取一份**(AGENTS.md 赢,CLAUDE.md 报成未纳入)。合并两份一起给会带进
+  互相矛盾的指令,而"矛盾由谁裁决"不该是运行时的临时决定。
+- **形似凭据的行打码是我加的**(`_SECRET_PATTERNS` 五条)。SPEC 只说"拒绝…密钥…读取",
+  没说"读到仓库说明里的凭据怎么办";因为装配文本会进轨迹而轨迹对外(`T24`),我按"显示层打码、
+  身份层保留原始字节"处理。不想要这层可以在 `_redact` 处直接返回原文,但那样 report/轨迹
+  就成了凭据外泄面。
+- **`.cursorrules` 之类不认**。文件名清单是项目 profile 里的显式决定,不做"看着像规则文件就读"。
+- **门禁/边界零改动**:`app/tools/paths.py`、`base.py`、`registry.py`、`files.py` 一行未动,
+  复用而不是重写(SPEC 给它们的定位就是"只保留或强化现有边界")。
+
+### 剩余限制(不许被读成"已证明效果")
+
+- **plain / one-shot 引擎不接这一层**,与仓库骨架同一口径(它们的 `extra_system` 从来不注入)。
+  做两臂对照时这是个未登记差异:要么两边都关,要么只读 graph 臂的结论。
+- **三个字符档没有统一分配器**:骨架 `repo_map_max_chars`、记忆 `task_memory_max_chars`、
+  说明 16/64 KiB 各管各的。一条 64 KiB 的 AGENTS.md 可以一次吃掉半个软窗口,挤掉的正是 G07
+  抬起来的窗口与 G06 的记忆块 —— 这条与 G05/G07 登记的"联动标定"欠账是同一件事,
+  要真实端点读数才能定。
+- **规则内容不解析、不校验语义**,也不与门禁做冲突检测:过期或恶意的规则原样在场(只是不被执行)。
+  模型仍可能先按规则试一次再被挡 —— 省掉的是一部分轮次,不是全部。
+- **目录粒度,不是文件粒度**:作用域按目录判定,`tests/AGENTS.md` 罩住整个 tests 目录。
+  与 `allowed_paths` 求交集(受理时就按目标模式带规则)是更紧的做法,本卡未做。
+- **子任务(G13)的"继承适用规则的已冻结引用"未实现** —— 今天没有子任务运行面。
+  实现时必须连 `digest` 一起传,否则"继承了规则"这句话无法验证。
+- **符号链接那条用例在本机 skip**(这台 Windows 没有创建权限),CI(Linux)才真跑 ⇒
+  skip 数从 4 变 5,同类原因与既有两条一致。
+- 离线全绿只证明装配与边界:**不证明带上规则能提高修复率、不证明减少撞门禁的轮次**(G17)。
+
+### 费用与外部动作
+
+零模型调用、零付费、零网络、零 push、零删除历史结果。
+
+## B2 批次退出(G05–G08)
+
+```
+.venv/Scripts/ruff.exe check .            → All checks passed!
+.venv/Scripts/ruff.exe format --check .   → 258 files already formatted
+全量:.venv/Scripts/pytest.exe -q --basetemp=D:/tmp/pt-upgrade-b2-exit
+      → 1123 passed, 5 skipped, 4 warnings in 1861.16s (0:31:01),无失败
+日志:D:/tmp/b2_exit.log(控制台按 GBK 码页输出,读数由我按同一口径取)
+```
+
+SPEC §6 给 B2 的四条退出条件,逐条对账(每条只写这一批里被**量出来**的东西):
+
+| 退出条件 | 落在哪张卡 | 可核对的读数 |
+|---|---|---|
+| 输出可取回 | G05 | 本地 4 份真实 `read_file` 400 行回执里 3 份超旧上限,旧路径 **3/3 产出非法 JSON** 并无痕丢 675–8458 字符;新路径在数据结构上裁 + 原文落 `<run_dir>/evidence/` + `read_evidence` 游标分页**逐字节拼回相等**。收据 `docs/evidence/agent-upgrade/probe-after-g05.json`(`bf63af592b2d64f6`) |
+| 证据跨阶段 | G06 | `test_plan_request_carries_localize_observations` 断言的是 PLAN **那次实际发出的请求**里带着 `[E1] LOCALIZE r0 read_file … 行 1-…` 与 `read_evidence(...)` 引用;写操作把早先观测标 `stale`;恢复快照绑 session/memory hash |
+| 容量 profile | G07 | 无来源 ⇒ 保守档 16k,申报更大直接拒绝发起;`repair_v2` 的 64k 目标被声明容量夹到 10,880 并写进 TaskSpec;保护区超容量时一次 `context_capacity_exceeded` 收场,对照用例证明同一历史在足够容量下压缩与收束行为不变 |
+| 仓库规则 | G08 | 真实 graph 任务的 PLAN 请求 system 里有 `<repo_instructions>` 与规则原文;目录级说明等**平台观测**到该目录才进场;同目录落选那份、截断、总量超限全部在块里点名;`run_shell` 写进规则也不会出现在可见 schema 里 |
+
+数对账(用例数一条不吞):
+
+- B0 结束 899 passed / 4 skipped ⇒ B1 收口 1007(+108)⇒ **G05 1030**(+23)⇒ **G06 1061**(+31)
+  ⇒ **G07 1101**(+40)⇒ **G08 批尾 1123**(+22 通过 + 1 skip = 23 条新用例:
+  `test_repo_instructions` 22、`test_input_snapshot` +1)。总集合 1128 = 1123 passed + 5 skipped。
+- skip 由 4 变 **5**:新增的是 `test_repo_instructions.py:137` 的符号链接用例,与既有两条同因
+  (本机无创建符号链接权限,CI 上真跑)。**没有一条 skip 是为了消掉失败而加的**。
+- warnings 仍同类 4 组(starlette DeprecationWarning、`TestRunResult` 收集告警、语料回放
+  SyntaxWarning、`test_demo_smoke` 子进程读取线程的 GBK 解码告警),**没有新增告警类**。
+- 耗时 31:01 对 B1 的 26:09、G07 的 27:42:本机负载差异,不作为回归或改进的证据。
+
+批内 commits(全部在 master、全部未 push):
+
+| 卡 | 代码 | 文档 |
+|---|---|---|
+| G05 | `cdd7cdc` | `6874d90` |
+| G06 | `cd92f00` | `40fcdf0` |
+| G07 | `f7ad53b`(能力档案与观测面)+ `c357ba3`(运行 profile 与容量判据) | `1fdef4b` |
+| G08 | `2a0bdb4` | 本节所在文档卡 |
+
+### 一条流程上的次优(照实记)
+
+G08 第一次全量拿到的是 **2 failed / 1121 passed**,两条红都落在文档账簿上(nodes.py 长高让
+"七项门禁"行索引 869→914、10 处 ADR 锚点漂移)。机制按设计工作了 —— 但我没在起全量之前
+执行 G07 记下的那条次序("动过被锚定的文件就立刻重钉"),结果多花一轮 34 分钟的全量才绿。
+代价记在次序上,不是记在机制上:**下一批是先扫锚点再起全量**。
+本批没有出现 B1 记下那条"全量在跑时另起 pytest"的违规。
+
+### 批次层面的未证明清单(不许被读成"四条退出=做完了")
+
+- **所有效果主张仍一条都没证明**:G05 的形状修正、G06 的跨阶段观测、G07 的容量判据、
+  G08 的规则进场,离线只证明接线与边界。修复率、轮次、token 效率要 G17 的真实端点批才能谈。
+- **三个字符档缺统一分配器**:`repo_map_max_chars` / `task_memory_max_chars` /
+  `repo_instructions_max_*`,加上 G05 登记的 `refine_head/tail_lines` —— 联动标定欠着。
+- **`repair_v2` 未成为默认**(SPEC 要求等 G16 收口),且从未在真实端点上验证:未验证端点上开 v2
+  大概率第一次请求就被拒,这是设计后果不是缺陷,但意味着运维必须先给容量声明。
+- **plain / one-shot 引擎不吃骨架与仓库规则**:两臂对照时这是未登记差异(要么两边都关,
+  要么只读 graph 臂的结论)。
+- 仍待用户表态:G07 三处自行裁(保守档 16k 的数、容量拒绝并入 `BUDGET_EXCEEDED`、
+  恢复读当前 Settings)、G08 的作用域触发条件(平台观测 vs `allowed_paths` 交集)。
+- 下一批按 SPEC 是 **B3(G09–G10:容器命令能力、issue-only 到冻结验收清单)**,需另行授权才起;
+  G17(真实端点/在线批)逐批单独授权,本批零付费零网络。
