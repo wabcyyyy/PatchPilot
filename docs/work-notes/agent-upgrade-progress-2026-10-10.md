@@ -1125,3 +1125,76 @@ G08 第一次全量拿到的是 **2 failed / 1121 passed**,两条红都落在文
   - 效果未证明:离线与容器只证接线与边界;修复率 / 轮次 / 成本属 G17。
 - **费用与外部动作**:零模型调用、零付费、零 push;Docker 为本地容器,非付费。
 - **下一张卡**:G10。
+
+---
+
+## G10 / P1:issue-only 诊断、验收清单提议与冻结(落地 1b6fdec;快照 3d68e31 在此基础上完工确认)
+
+- **commit**:`1b6fdec`(代码+测试+被代码强制同步的锚点/README 一个提交);上一会话的
+  半成品快照 `3d68e31`(仅过 whitespace 检查)在本卡被接续完工:proposal/control/tool
+  骨架逐文件复核后保留,缺的接线与测试补齐。
+- **开始身份**:`52f1b36`(G09 补登之后);**收据身份**:`1b6fdec`。
+- **卡面范围**(SPEC G10):`app/task_spec.py`、`app/diagnosis/`(新增)、
+  `app/agent/cli.py`(新增)、`app/agent/control.py`、`app/api/`(schemas/routes/service)、
+  `app/storage/repository.py`、`app/graph/`(runner/nodes/state)、两套新测试。
+- **超出卡面清单的接线**(按 §7 先记录理由):`app/graph/builder.py`(diagnose 节点与
+  两条条件边——没有它 route 返回的 "diagnose"/"localize" 会当场 KeyError,本次实测抓中)、
+  `app/api/preflight.py`(issue-only 没有双集可收集:空集时只做整仓收集证明"解释器/
+  pytest/仓库可收集";红/绿基线仍由 diagnose 节点在快照副本上重做,预检不替代 baseline)。
+- **落地语义**:
+  - **提议 ≠ 可信清单**:propose_acceptance 工具只落提议(绑定 task/source 身份与
+    revision);diagnose 节点在**未修改的快照副本**上重跑红/绿基线,读数写进提议工件;
+    未知清单必须 trusted_user 经 `POST /tasks/{id}/acceptance`(proposal_id +
+    content_hash + expected_revision)批准才冻结成 AcceptanceManifest。
+  - **冻结即放行凭据**:manifest 与提议 content_hash 同源;重复相同批准幂等、不同 hash
+    409 冲突、磁盘篡改在读取时按重算 hash 拒绝;冻结前 apply_patch 在**工具层**直接
+    拒绝(不依赖图路由,对应 T15/T16)。
+  - **等待与恢复**:WAITING_INPUT 是非终态生命周期(启动恢复纳入 `list_stale_running`,
+    `_resumable_row` 认盘上提议为续跑位置);同进程批准唤醒等待线程,无 waiter 时重新
+    入队;等待中的取消 0.25s 内收敛;headless(acceptance_wait_seconds=0)不等待、
+    needs_review。
+  - **模式契约**:TaskSpec v2 `mode=repair|diagnose_then_repair`;repair 双集非空收进
+    build_task_spec 兜底;diagnose 仅 graph 受理;旧契约缺 mode 按 repair 读且身份同源
+    (repair 哈希不含 mode,diagnose 含)。
+- **测试修出的存量缺口(全部在本卡修掉)**:
+  1. `builder` 漏掉 prepare→localize 与 localize→diagnose 的边映射(实测 KeyError);
+  2. `TaskSpec.from_json_dict` 的"缺字段"检查把缺省 mode 也判死(与"缺 mode 按 repair
+     读"的注释矛盾);
+  3. 基线校验用字面集合差比对 junit 形态(点分模块名)与请求形态(文件路径)——S01 的
+     教训在 G10 复现,改为共享身份匹配;并补"提议的失败测试必须真失败"(premise_error);
+  4. manifest 重算口径与提议 content_hash 不一致(revision/approved_by 字段错位)→
+     manifest_hash 与提议同源、revision 入库;
+  5. junit 状态字面量是 failure/error/skipped/passed,不是 failed;
+  6. CLI 的 --api/--token 挂主解析器时只能出现在子命令之前(改为子解析器 parents 共享)。
+- **最小行为证据**:
+  - e2e(真实 TestClient+SQLite+FakeLLM+真 pytest):issue-only 受理 → LOCALIZE 提议 →
+    平台基线校验 → WAITING_INPUT → POST acceptance 冻结 → 继续修复 → FINISHED/resolved;
+    等待期盘上无候选;批准后 manifest(approved_by=trusted_user、hash 一致)、轨迹含
+    acceptance_proposal/baseline/waiting/frozen 四事件;终态后重复批准 409。
+  - headless(窗口 0)→ NEEDS_REVIEW + 提议保留 + 无 manifest;无提议 → 不可进补丁段;
+    空集/重叠/非法身份在提议构建期拒绝;收集错误/无关失败/回归不绿均不 verified。
+- **检查读数(收据身份 `1b6fdec`)**:
+  ```
+  ruff check .            → All checks passed!              (exit 0)
+  ruff format --check .   → 273 files already formatted     (exit 0)
+  ADR 锚点全量审计        → 0 漂移(重钉 13+2 处,期望子串一字未动)
+  pytest 定向集:test_docs_anchors(6)+test_diagnosis_intake(7)+test_acceptance_manifest(6)
+      +test_graph+test_plan_invariants+test_api+test_api_golden_path
+      → 68 passed / 4:11 (exit 0)
+  回归子集:test_graph+test_plan_invariants+test_custom_task+test_api+
+      test_service_robustness+test_resume → 88 passed / 6:05 (exit 0)
+  ```
+  - 本机环境:.venv 为新 clone 重建(Python 3.14.1 / pytest 9.1.1 / ruff 0.17.0;
+    上一会话 3.14.2 / 0.16.7,差异如实登记)。basetemp 落在仓库外
+    `C:\Users\Administrator\.cache\pt\patchpilot\...`(D:/tmp 在本机沙箱下对 `\\?\`
+    路径的写入不稳定,换落点并逐条记录;仓库内落点照旧被 conftest 防线拦红)。
+  - **全量:未运行** → 由 B3 批尾统一执行(见下"B3 批次退出")。
+- **兼容与剩余限制**:
+  - legacy 任务/回放零变化(repair 路径的图边、提示、判定语义未动;缺 mode 旧契约可读)。
+  - 未证明:模型提出清单的"质量"(选测试的准确率)、真实端点上 diagnose 模式的实用性
+    ——离线只证契约与接线,属 G17。
+  - 单进程等待注册表:多进程部署下的批准唤醒未设计(与既有单进程前提一致,
+    design.md §7 已记);"等待期进程被杀后由新进程批准"的完整进程级场景未测,
+    覆盖到 `_resumable_row` 认提议 + resume 决策,留 G12/G16 复核。
+- **费用与外部动作**:零模型调用、零付费、零 push;测试全部离线(FakeLLM + 真实 pytest)。
+- **下一张卡**:B3 收口(批尾全量)→ 按 SPEC 下一批为 B4(G11–G12)。

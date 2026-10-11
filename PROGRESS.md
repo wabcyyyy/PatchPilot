@@ -1757,3 +1757,24 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
   定向 `test_command_profiles(27)+test_command_lifecycle(10)+test_docs_anchors(6)` =
   **43 passed / 3.36s**。本机为新 clone 重建 .venv(Python 3.14.1 / pytest 9.1.1 / ruff 0.17.0;
   上一会话 3.14.2 / 0.16.7,差异如实登记)。**全量:未运行**(定向通过,批次全量待运行)。
+
+## 25. B3 / G10:issue-only 受理、验收清单提议与 trusted_user 冻结(2026-10-11)
+
+- 半成品快照 `3d68e31`(仅过 whitespace 检查)→ 本会话接续完工,落地 `1b6fdec`;
+  逐条语义、范围扩张、测试修出的存量缺口与限制见进度文件 G10 节。
+- **提议 ≠ 可信清单**:工具只落提议;**平台**在未修改的快照副本上重跑红/绿基线
+  (具体 node id + 共享身份匹配;无关失败/收集错误/前提不成立分列),trusted_user 经
+  `POST /tasks/{id}/acceptance` 批准后才冻结。批准前 apply_patch 由**工具层**拒绝。
+- **冻结工件是唯一放行凭据**:manifest_hash 与提议 content_hash 同源;重复批准幂等、
+  不同 hash 冲突、磁盘篡改读取即拒;终态后批准 409。
+- **WAITING_INPUT 是可恢复生命周期**:启动恢复纳入、盘上提议即续跑位置、无 waiter
+  时重新入队;等待中取消 0.25s 收敛;headless(窗口 0)needs_review + 提议保留。
+- **模式进契约**:`mode=repair|diagnose_then_repair`(diagnose 仅 graph;repair 双集
+  非空成为构建兜底;旧契约缺 mode 按 repair 读且身份同源,repair 哈希不含 mode)。
+- **测试修出的存量缺口(本卡全修)**:builder 缺 prepare→localize/localize→diagnose
+  边映射(实测 KeyError)、from_json_dict 误把缺省 mode 判死、junit 形态与请求形态的
+  字面差、manifest 重算字段错位、状态字面量 failure≠failed、CLI 全局参数位置。
+- **收据 @`1b6fdec`**:ruff check/format 全绿;ADR 锚点审计 0 漂移(重钉 15 处,子串
+  未动);定向 68 passed / 4:11(e2e 批准→resolved 在内);回归子集 88 passed / 6:05。
+  **全量:未运行**(批尾统一执行)。新 clone 重建 .venv(3.14.1/pytest 9.1.1/ruff 0.17.0),
+  basetemp 落 `C:\Users\Administrator\.cache\pt\patchpilot\...`(D:/tmp 沙箱写入不稳)。
