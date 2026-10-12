@@ -51,7 +51,9 @@ python -m pip install -r requirements.txt -r requirements-dev.txt
 # 运行测试(全离线,模型交互用 FakeLLM 回放)
 # 临时根落点不许在仓库内(防线见 tests/conftest.py);Windows 本机系统临时目录的
 # pytest 根 ACL 已坏(PM-004),本地要显式传仓库外落点,CI 用默认值即可
-pytest -q --basetemp=D:/tmp/pt
+pytest -q -m "not slow" --basetemp=D:/tmp/pt     # 快档:日常开发 / 每个 commit 前
+pytest -q -m "not stress" --basetemp=D:/tmp/pt   # 本地全量:每张卡收尾 / push 前
+pytest -q                                        # CI 全集(含 stress 并发冒烟)
 
 # 回放模式跑一个完整修复任务(验证平台闭环)
 python -m app.evals.run_single --bug BUG-001 --model fake --engine graph --out runs

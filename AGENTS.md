@@ -32,8 +32,28 @@ PatchPilot:面向软件仓库的测试失败诊断与补丁验证平台。
 
 - Conventional Commits:`feat(scope): ...`、`fix(scope): ...`、`test(scope): ...`、`docs(scope): ...`;
 - 每张任务卡至少一个 commit;
-- 提交前本地必须跑绿:`ruff check . && pytest -q`。
-  **basetemp 落点不许在仓库内**(`tests/conftest.py` 的 `_basetemp_outside_repo` 会当场拦红,
+- 测试分三档(登记表 `tests/slow_tests.txt`,`slow` 标记由 conftest 自动打;断言不分档):
+
+  | 时机 | 命令 | 本机耗时 |
+  |---|---|---|
+  | **每个 commit 前** | `ruff check . && ruff format --check .` + 受影响的测试文件 + 快档 `pytest -q -m "not slow" --basetemp=D:/tmp/pt` | 约 2 分钟 |
+  | **每张卡收尾 / push 前**(一次) | `pytest -q -m "not stress" --basetemp=D:/tmp/pt` | 约 20 分钟 |
+  | CI(最终闸) | `pytest -q`(全集,含 stress) | — |
+
+  不要每个 commit 都跑全量;卡内中间 commit 只需快档 + 受影响文件。改动若触及图/执行器/服务主链路,
+  受影响文件按"会跑到这段代码的端到端测试文件"算,不只是同名测试文件。
+- 新用例单条超过 2s 的,登记进 `tests/slow_tests.txt`(跑完的摘要会点名超过 5s 却未登记的用例);
+  新功能优先在节点/函数层测,端到端用例每张卡 1–2 条为宜,能共用一次图运行的用 module 级夹具共用。
+- **basetemp 落点不许在仓库内**(`tests/conftest.py` 的 `_basetemp_outside_repo` 会当场拦红,
   成因见 PROGRESS 的 M10 卡:仓库在临时目录的父链上会让"其实不是 git 工作区"这类夹具缺陷悄悄变绿);
   而本机 `%TEMP%\pytest-of-*` 的 ACL 是坏的(PM-004,至今未修),所以**本地跑要显式传仓库外落点**:
   `pytest -q --basetemp=D:/tmp/pt`。CI 上系统临时目录可用,`pytest -q` 直接跑即可。
+
+## 记账与文档
+
+- CI 读数(某次 run 的通过数、连绿计数)不写进仓库文档、不为它单独提交——CI 状态以 GitHub Actions 为准;
+- `PROGRESS.md` 每张卡一段:做了什么、为什么、commit、收尾全量结果一行。不为"订正读数 / 补读数"单独提交,
+  有订正就并入下一个正常 commit;
+- 证据类文档(`docs/release-evidence-*`、`resume-evidence-*` 等)只在发布节点刷新,不随每次 CI 更新;
+- ADR 的「验证锚点」写 `` `路径` — `期望子串` ``,不写行号(`tests/test_docs_anchors.py` 会拒绝带行号的旧写法);
+  子串选能唯一说明事实的整句或定义行(如 `def foo`),不要选 `10 个` 这类会在别处碰巧出现的短串。

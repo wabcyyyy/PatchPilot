@@ -37,15 +37,16 @@ recursion_limit 随 max_rounds 推导(M5 起 5N+8:每轮多出 PLAN 一步;恢�
 
 ## 验证锚点(P3-7 防复发)
 
-以下 file:line 锚点由 `tests/test_docs_anchors.py` 逐条断言;文档或代码改动使
-锚点失配时测试失败——用「全量 pytest 绿」红线物理卡住"改代码不改文档"。
+以下锚点(`文件` — `期望子串`)由 `tests/test_docs_anchors.py` 逐条断言:所指文件里必须
+仍含期望子串,文案回退或实现被删即失败——卡住"改代码不改文档"。不钉行号:行号锚点
+每插一行代码就漂移,只制造重钉提交,不多抓一个真问题(2026-10-11 改)。
 
-- `app/graph/checkpoint.py:3` — `恢复分两级`
-- `app/graph/resume.py:1` — `崩溃恢复的 B 级接线`
-- `docs/design.md:62` — `按 superstep 留档`
-- `docs/design.md:93` — `10 个`
-- `docs/threat-model.md:45` — `攻击样例 10 个拦截`
-- `README.md:20` — `10 个攻击样例`
-- `app/graph/gates.py:1` — `七项门禁`
-- `docs/adr/0002-execution-backend-local-默认.md:32` — `无留档的实测运行`
+- `app/graph/checkpoint.py` — `恢复分两级`
+- `app/graph/resume.py` — `崩溃恢复的 B 级接线`
+- `docs/design.md` — `按 superstep 留档`
+- `docs/design.md` — `攻击样例(10 个,全部拦截)`
+- `docs/threat-model.md` — `攻击样例 10 个拦截`
+- `README.md` — `10 个攻击样例`
+- `app/graph/gates.py` — `七项门禁`
+- `docs/adr/0002-execution-backend-local-默认.md` — `无留档的实测运行`
 

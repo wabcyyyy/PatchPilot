@@ -2,10 +2,12 @@
 
 背景(interview-audit-2026-09-26.md R3-Q1):夜间 GOAL 模式改代码时周边权威
 文档没有同步修订,产出 7 处与代码互斥的假命题,且无任何机制强制一致。
-本测试把「文档句」钉在 file:line 锚点上:
+本测试把「文档句」钉在 文件 + 期望子串 的锚点上:
 
-1. 每篇 ADR 末尾必须有「验证锚点」节,逐条声明 `路径:行号` — `期望子串`;
-2. 锚点所指文件在所指行必须包含期望子串(行号漂移或文案回退都算失败);
+1. 每篇 ADR 末尾必须有「验证锚点」节,逐条声明 `路径` — `期望子串`;
+2. 锚点所指文件必须仍包含期望子串(文案回退或实现被删都算失败)。
+   2026-10-11 起不再钉行号:行号锚点每插一行代码就漂移,历史上约 30 个 commit
+   只是在"重钉行号",没有一次抓到真实的文档/代码矛盾;旧的 `路径:行号` 写法当场报错;
 3. 已知的假命题文案禁止在任何文档/源码中复活(黑名单);
 4. README 的能力清单(工具条数与名单)以代码里的注册表为准绳逐名对齐。
 
@@ -21,8 +23,10 @@ from app.tools.registry import FINISH_TOOL, REGISTRY
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# ADR 验证锚点节的条目格式:`- `相对路径:行号` — `期望子串``
-_ANCHOR_LINE = re.compile(r"^- `([^`\s]+):(\d+)` — `([^`]+)`$", re.MULTILINE)
+# ADR 验证锚点节的条目格式:`- `相对路径` — `期望子串``
+_ANCHOR_LINE = re.compile(r"^- `([^`\s:]+)` — `([^`]+)`$")
+# 锚点节里以反引号路径开头的条目都必须符合上面的格式——不合规的条目以前会被静默跳过
+_ANCHOR_LIKE = re.compile(r"^- `[^`\s]+` — ")
 _ANCHOR_SECTION = "## 验证锚点"
 
 
@@ -30,18 +34,25 @@ def _read(relpath: str) -> list[str]:
     return (REPO_ROOT / relpath).read_text(encoding="utf-8").splitlines()
 
 
-def _iter_anchor_entries() -> list[tuple[str, str, int, str]]:
-    """从全部 ADR 的验证锚点节收集 (来源 ADR, 路径, 行号, 期望子串)。"""
-    entries: list[tuple[str, str, int, str]] = []
+def _iter_anchor_entries() -> list[tuple[str, str, str]]:
+    """从全部 ADR 的验证锚点节收集 (来源 ADR, 路径, 期望子串)。"""
+    entries: list[tuple[str, str, str]] = []
     for adr in sorted((REPO_ROOT / "docs" / "adr").glob("*.md")):
         text = adr.read_text(encoding="utf-8")
         assert _ANCHOR_SECTION in text, f"{adr.name} 缺少「{_ANCHOR_SECTION}」节"
         section = text.split(_ANCHOR_SECTION, 1)[1]
-        found = _ANCHOR_LINE.findall(section)
-        assert found, f"{adr.name} 的验证锚点节为空(至少声明一条锚点)"
         rel = adr.relative_to(REPO_ROOT).as_posix()
-        for path, lineno, expected in found:
-            entries.append((rel, path, int(lineno), expected))
+        found: list[tuple[str, str]] = []
+        for line in section.splitlines():
+            if not _ANCHOR_LIKE.match(line):
+                continue
+            match = _ANCHOR_LINE.match(line)
+            assert match, (
+                f"{adr.name} 的锚点条目格式不对(只写 `路径` — `期望子串`,不带行号):{line!r}"
+            )
+            found.append((match.group(1), match.group(2)))
+        assert found, f"{adr.name} 的验证锚点节为空(至少声明一条锚点)"
+        entries.extend((rel, path, expected) for path, expected in found)
     return entries
 
 
@@ -54,16 +65,13 @@ def test_adr_anchor_sections_exist_with_entries() -> None:
 
 
 def test_adr_declared_anchors_hold() -> None:
-    """ADR 声明的每条锚点:所指文件存在、所指行包含期望子串。"""
-    for source, relpath, lineno, expected in _iter_anchor_entries():
-        lines = _read(relpath)
-        assert len(lines) >= lineno, (
-            f"锚点失配:{source} 声明 {relpath}:{lineno},但该文件只有 {len(lines)} 行"
-            "(文档改动后必须同步修订锚点)"
-        )
-        actual = lines[lineno - 1]
-        assert expected in actual, (
-            f"锚点失配:{source} 声明 {relpath}:{lineno} 应含 {expected!r},实际为 {actual!r}"
+    """ADR 声明的每条锚点:所指文件存在、且仍包含期望子串。"""
+    for source, relpath, expected in _iter_anchor_entries():
+        path = REPO_ROOT / relpath
+        assert path.is_file(), f"锚点失配:{source} 声明的 {relpath} 不存在"
+        assert expected in path.read_text(encoding="utf-8"), (
+            f"锚点失配:{source} 声明 {relpath} 应含 {expected!r},文件里已找不到"
+            "(文档或实现改动后必须同步修订锚点)"
         )
 
 
@@ -94,41 +102,30 @@ def test_p3_7_false_claims_are_gone() -> None:
 
 
 def test_p3_7_corrected_claims_are_pinned() -> None:
-    """修正后的如实表述钉在原位(行号级,独立于 ADR 锚点节)。"""
+    """修正后的如实表述必须仍在原文件里(独立于 ADR 锚点节;不钉行号,理由见模块注释)。"""
+
+    def text(relpath: str) -> str:
+        return (REPO_ROOT / relpath).read_text(encoding="utf-8")
+
     # ADR-0001:两处「崩溃恢复」假命题改为 checkpoint 仅留档
-    # (M6 改写:该表述在恢复接线落地后再次过期,现钉"按 superstep 留档 + 位置权威"与
+    # (M6 改写:恢复接线落地后,现钉"按 superstep 留档 + 位置权威"与
     #  "无可用快照仍由 recover_stale 判死"——文案变了是因为事实变了,不是放松断言)
-    adr1 = _read("docs/adr/0001-langgraph-编排.md")
-    assert any("按 superstep 留档" in line for line in adr1[22:26]), adr1[22:26]
-    assert any("仍由 recover_stale 收敛 NEEDS_REVIEW" in line for line in adr1[27:32]), adr1[27:32]
-    # design.md 第三副本(design.md:62)
-    design = _read("docs/design.md")
-    assert "按 superstep 留档" in design[61], design[61]
-    # 攻击样例 10 个 ×3(design.md:93 / threat-model.md:45 / README.md:20)
-    # design.md 行号随文档正文漂移:91→93(4fd9620 在 E3 段补真实模型佐证,+2 行)
-    assert "10 个" in design[92], design[92]
-    assert "攻击样例 10 个拦截" in _read("docs/threat-model.md")[44]
-    assert "10 个攻击样例" in _read("README.md")[19]
-    # 七项门禁 docstring(gates.py:1 / nodes.py:apply 节点;行号随 nodes.py 每次插话漂移:
-    # 465→463(verify 复查前置)→466(R-2 类型标注加 TYPE_CHECKING 导入)
-    # →470(M1 上下文压缩:localize/propose 调用点各插两行)
-    # →496(M2 仓库骨架:_persistent_context 方法 + localize/propose 各插 extra_system)
-    # →506(M3 检索工具:READ_TOOLS/WRITE_TOOLS 各加 find_symbol/describe_file)
-    # →621(M5 PLAN 阶段:plan/route_plan 节点插在 _token_budget_for 与 PROPOSE 之间,
-    #        另加 build_plan_prompt 的导入块)
-    # →623(M5 复核:plan 也接仓库骨架——计划要能点名文件与符号,只靠单薄的定位结论写不出可执行计划)
-    # →661(M6 崩溃恢复:TaskNodes 新增 resume_snapshot 字段与领取方法、prepare 的
-    #        ToolContext 构造抽成 _build_ctx 供恢复侧重建,apply 节点整体下移)
-    # →657(S02a:TaskNodes 增加 ledger 字段与 __post_init__,其上方导入块同步变化)
-    # →655(S02b:时间口径切换 deadline_epoch,propose 节点整体上移)
+    adr1 = text("docs/adr/0001-langgraph-编排.md")
+    assert "按 superstep 留档" in adr1
+    assert "仍由 recover_stale 收敛 NEEDS_REVIEW" in adr1
+    # design.md 第三副本
+    assert "按 superstep 留档" in text("docs/design.md")
+    # 攻击样例 10 个 ×3
+    assert "攻击样例(10 个,全部拦截)" in text("docs/design.md")
+    assert "攻击样例 10 个拦截" in text("docs/threat-model.md")
+    assert "10 个攻击样例" in text("README.md")
+    # 七项门禁 docstring(gates.py 模块头 / nodes.py 的 apply 节点)
     assert "七项门禁" in _read("app/graph/gates.py")[0]
-    assert "七项门禁" in _read("app/graph/nodes.py")[662]
+    assert "七项门禁" in text("app/graph/nodes.py")
     # ADR-0002:compose 冒烟如实表述
-    adr2 = _read("docs/adr/0002-execution-backend-local-默认.md")
-    assert any("无留档的实测运行" in line for line in adr2[28:34]), adr2[28:34]
-    # 事实基准:checkpoint.py 自述「恢复分两级」仍在原位(M6:读侧已接线,
-    # 此前的「当前没有崩溃恢复路径」随该事实改变而作废,见 ADR-0001 同步修订)
-    assert "恢复分两级" in _read("app/graph/checkpoint.py")[2]
+    assert "无留档的实测运行" in text("docs/adr/0002-execution-backend-local-默认.md")
+    # 事实基准:checkpoint.py 自述「恢复分两级」仍在(M6:读侧已接线)
+    assert "恢复分两级" in text("app/graph/checkpoint.py")
 
 
 def test_readme_tool_inventory_matches_registry() -> None:
