@@ -1709,3 +1709,7 @@ C4:B5 批次退出全量 pytest 收据(附 --durations=30)。
   - **批次全量** `pytest -q -m "not stress" --durations=30` → **1204 passed / 31 skipped / 0 failed**,
     exit 0,20:37;未出现未登记慢用例。skip 为本机无 docker 守护进程与 rg 不在 PATH(环境,非产品)。
 - **B5 批次状态**:G13–G14 批次全量已运行并通过。
+- **推送后 Linux CI 补一处**(`1720186`,2026-10-12):G08 用例 `test_a_host_path_written_inside_the_rule_stays_just_text`
+  在 ubuntu 上红——POSIX 的 Path 不认盘符,`relpath_within` 把 `C:/…` 当成仓库内子目录(未越出工作区)。
+  按用户裁定改边界:首段 `[A-Za-z]:` 在所有平台拒绝(与门禁 paths 规则同口径),新增平台无关单测。
+  本地全量 `-m "not stress"` → 1205 passed / 31 skipped / 0 failed(22:51);Linux 侧以 CI 为证(本机 WSL/Docker 不可用)。
