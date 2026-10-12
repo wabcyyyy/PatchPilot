@@ -1688,3 +1688,24 @@ G13+G14 全量:未运行,批次退出节给出
 ### 下一卡
 
 C4:B5 批次退出全量 pytest 收据(附 --durations=30)。
+
+---
+
+## B5 批次退出:合并入 master 后的回归修复与全量收据(2026-10-11)
+
+- **背景**:本分支(含未推送的 G11–G14)经 `8f5c767` 合入 master;合并树全量暴露 5 个失败。
+  定位:`ccbe576`(G14 收尾)上同样 5 红,`99ab509`(G12)上 5 绿 ⇒ 由 G13/G14 引入,
+  非合并所致(G14 节记的"G13+G14 全量:未运行"即此缺口)。
+- **修复**(`4c11024`,`app/graph/nodes.py` rollback;语义经用户裁定):
+  - B1 续改准入只看 checkpoint.gate_ok,候选工件不可读时 `reapply_candidate` 抛错打崩整张图
+    → 准入加 `load_candidate` 校验,读不出记 `continue_from_candidate{refused}` 并退回整体复位;
+  - B2 续改把 feedback 整段替换为续改说明,下一轮看不到仍失败的测试 → 说明接在原失败反馈之后;
+  - D1 有界停止只在还剩轮次时生效,末轮以轮数用尽 `BUDGET_EXCEEDED` 收尾(用户裁定)。
+- **测试对齐 G14 已批语义**(断言不降):recursion 公式两例显式关有界停止(测满轮拓扑,关后公式照旧成立);
+  round_transitions 断言续改事件替代 reset;plan_stage 断言失败反馈与续改说明并存;
+  repo_map 改为"骨架恰 3 处、其余候选点只带变体提示"(G13 新增委派候选点)。新增 3 例钉 B1/B2/D1。
+- **收据**:HEAD `4c11024`,工作树 clean;`.venv` Python 3.14.1 / pytest 9.1.1;basetemp `D:/tmp/pt-b5`。
+  - 定向(rollback 调用链 11 个文件)→ 115 passed;快档 `-m "not slow"` → 1018 passed / 31 skipped(2:01);
+  - **批次全量** `pytest -q -m "not stress" --durations=30` → **1204 passed / 31 skipped / 0 failed**,
+    exit 0,20:37;未出现未登记慢用例。skip 为本机无 docker 守护进程与 rg 不在 PATH(环境,非产品)。
+- **B5 批次状态**:G13–G14 批次全量已运行并通过。
