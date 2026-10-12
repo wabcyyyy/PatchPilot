@@ -425,10 +425,22 @@ class TaskService:
                     f"task_spec inconsistent (db={db_hash[:12] or 'none'}"
                     f" file={file_hash[:12] or 'none'}); model not invoked"
                 )
-            script = None
-            if model_name == "fake":
-                # 自定义任务的回放脚本来自请求内存对象;正式题从 bugs/ 目录加载
-                script = replay_script if replay_script else load_replay_script(bug, kind=engine)
+            script = replay_script
+            if model_name == "fake" and script is None and stored_spec is not None:
+                # G16 迁移收口:恢复路径按**受理契约**复原回放脚本。replay 是任务身份的
+                # 一部分(进 task_spec_hash);custom 任务没有 bugs/ 目录可回读,此前重启
+                # 恢复在这一步直接 TaskError 判死;契约优先也保证题目目录事后被改动时,
+                # 恢复不会自动用上新脚本(与"旧任务恢复不可自动使用新提示"同一条纪律)。
+                try:
+                    accepted = TaskSpec.from_json_dict(
+                        json.loads(str(stored_spec["task_spec_json"]))
+                    )
+                    script = list(accepted.replay) if accepted.replay else None
+                except ValueError:
+                    script = None
+            if model_name == "fake" and script is None:
+                # 直连执行(非服务受理路径)的正式题:从 bugs/ 目录加载
+                script = load_replay_script(bug, kind=engine)
             from app.llm.openai_client import build_model
 
             model = build_model(model_name, settings, script=script)
