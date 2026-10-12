@@ -8,7 +8,9 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # 固定镜像版本:ubuntu-latest 自 2026-10-19 起迁到 Ubuntu 26,docker 用例对宿主 uid/属主敏感
+    # (M20 根因),升级 runner 要当成一次显式变更来验,不让它随 latest 静默漂移
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
