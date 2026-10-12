@@ -1,0 +1,57 @@
+........................................................................ [  5%]
+........................................................................ [ 11%]
+........................................................................ [ 16%]
+........................................................................ [ 22%]
+........................................................................ [ 28%]
+........................................................................ [ 33%]
+........................................................................ [ 39%]
+........................................................................ [ 45%]
+........................................................................ [ 50%]
+........................................................................ [ 56%]
+........................................................................ [ 62%]
+........................................................................ [ 67%]
+........................................................................ [ 73%]
+........................................................................ [ 78%]
+........................................................................ [ 84%]
+........................................................................ [ 90%]
+........................................................................ [ 95%]
+....................................................                     [100%]
+============================== warnings summary ===============================
+app\executor\local_runner.py:59
+  D:\wcy\project\PatchPilot\app\executor\local_runner.py:59: PytestCollectionWarning: cannot collect test class 'TestRunResult' because it has a __init__ constructor (from: tests/test_backend.py)
+    @dataclass
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 30 durations =============================
+20.46s call     tests/test_ablation_invariants.py::test_verification_failure_retries_only_for_agent
+19.29s call     tests/test_driver.py::test_fake_batch_writes_manifest
+19.06s call     tests/test_plan_stage.py::test_plan_sits_between_localize_and_propose_and_eats_no_script_step
+18.90s setup    tests/test_ablation_invariants.py::test_shared_stage_messages_are_identical_across_arms
+17.88s call     tests/test_graph.py::test_graph_wrong_failed_test_id_never_resolves
+16.83s call     tests/test_demo_smoke.py::test_steer_demo_subprocess_resolves
+15.41s call     tests/test_branching.py::test_end_to_end_switch_off_stays_single_line
+15.19s call     tests/test_branching.py::test_end_to_end_branch_resolves
+15.16s call     tests/test_candidate_recovery.py::test_real_process_death_at_verify_finish_boundary_recovers
+13.91s call     tests/test_legacy_migration.py::test_custom_fake_task_resume_restores_replay_from_contract
+13.75s call     tests/test_round_transitions.py::test_verify_failure_path_consumes_one_attempt_and_recovers
+12.91s call     tests/test_custom_task.py::test_custom_task_e2e_resolved
+12.31s call     tests/test_event_stream.py::test_events_endpoint_streams_a_finished_task_to_the_terminal_frame
+12.30s call     tests/test_custom_task.py::test_api_accepts_parametrized_tuple_ids_and_executes_them
+12.16s call     tests/test_waiting_input.py::test_answer_resumes_waiting_task_and_reaches_resolved
+12.00s call     tests/test_waiting_input.py::test_steer_during_wait_is_a_clue_not_a_contract_change
+11.78s call     tests/test_recycle.py::test_service_recycles_workspace_on_finished
+11.76s call     tests/test_api_golden_path.py::test_golden_path_full_flow
+11.75s call     tests/test_demo_smoke.py::test_restart_resume_demo_subprocess_resolves
+11.71s call     tests/test_resume_crash.py::test_resume_survives_an_unclean_process_death
+11.51s call     tests/test_custom_task.py::test_s06_execution_uses_frozen_snapshot_after_source_mutation
+11.20s call     tests/test_demo_smoke.py::test_issue_only_demo_subprocess_resolves
+11.20s setup    tests/test_live_progress.py::test_no_duplicate_events_between_sink_and_backfill
+11.19s call     tests/test_demo_smoke.py::test_delegate_demo_subprocess_resolves
+11.11s call     tests/test_live_progress.py::test_live_stage_and_trajectory_visible_mid_run
+10.99s call     tests/test_resume.py::test_graph_resume_finishes_and_reruns_every_gate
+10.94s call     tests/test_live_progress.py::test_sink_failure_degrades_and_backfills
+10.75s call     tests/test_demo_smoke.py::test_dirty_ticket_demo_subprocess_resolves
+10.57s call     tests/test_graph.py::test_repeat_failure_streak_prompts_new_direction
+10.38s call     tests/test_graph.py::test_graph_patch_rejected_then_retry_resolves
+1276 passed, 1 deselected, 1 warning in 1267.84s (0:21:07)
+EXIT=0

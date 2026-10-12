@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "release": "agent-upgrade-b6-g16",
+  "run_identity": {
+    "platform_commit": "5825c3cca5878ab7bbc2d33a95c7dae5f45f3352",
+    "branch": "master",
+    "dirty_files": [
+      "M .github/workflows/ci.yml",
+      " M .gitignore",
+      " M AGENTS.md",
+      " M pyproject.toml",
+      "?? VALIDATION.md",
+      "?? docs/evidence/agent-upgrade/b6-full-pytest-2026-10-12.log",
+      "?? docs/evidence/agent-upgrade/release-receipt.json",
+      "?? scripts/ai_validate.py",
+      "?? scripts/ai_validate_graph.py",
+      "?? scripts/ai_validate_quick.py",
+      "?? scripts/ai_validate_run.py",
+      "?? tests/test_ai_validation.py",
+      "?? validation-rules.json",
+      "?? verify.ps1"
+    ],
+    "generated_at": "2026-10-12T16:03:02.636+00:00"
+  },
+  "environment": {
+    "python": "3.14.1",
+    "executable": "D:\\wcy\\project\\PatchPilot\\.venv\\Scripts\\python.exe",
+    "pytest": "pytest 9.1.1",
+    "ruff": "ruff 0.17.0"
+  },
+  "scenarios": {
+    "demos": [
+      {
+        "scenario": "dirty-ticket",
+        "module": "demo.run_dirty_ticket",
+        "exit_code": 0,
+        "ok": true,
+        "seconds": 10.7
+      },
+      {
+        "scenario": "api-golden-path",
+        "module": "demo.run_api_ticket",
+        "exit_code": 0,
+        "ok": true,
+        "seconds": 23.3
+      },
+      {
+        "scenario": "issue-only-full-flow",
+        "module": "demo.run_issue_only_ticket",
+        "exit_code": 0,
+        "ok": true,
+        "seconds": 11.5
+      },
+      {
+        "scenario": "steer-and-answer",
+        "module": "demo.run_steer_ticket",
+        "exit_code": 0,
+        "ok": true,
+        "seconds": 13.7
+      },
+      {
+        "scenario": "delegate-subtask",
+        "module": "demo.run_delegate_ticket",
+        "exit_code": 0,
+        "ok": true,
+        "seconds": 11.0
+      },
+      {
+        "scenario": "crash-resume",
+        "module": "demo.run_restart_resume_ticket",
+        "exit_code": 0,
+        "ok": true,
+        "seconds": 11.6
+      }
+    ],
+    "demos_all_ok": true,
+    "skipped": false
+  },
+  "pytest_full_suite": {
+    "status": "recorded",
+    "command": "pytest -q -m \"not stress\" --basetemp=D:/tmp/pt --durations=30",
+    "scope": "local full suite (stress excluded; CI runs the full set)",
+    "exit_code": 0,
+    "passed": 1276,
+    "failed": 0,
+    "skipped": 0,
+    "deselected": 1,
+    "duration_seconds": 1267.84,
+    "duration_human": "21:07",
+    "basetemp": "D:/tmp/pt",
+    "interpreter": ".venv Python 3.14.1 / pytest 9.1.1 / ruff 0.17.0",
+    "head": "see run_identity.platform_commit",
+    "docker_note": "本机 Docker 守护进程可用:此前 skip 的容器用例本轮真实执行并通过(0 skipped)",
+    "log": "docs/evidence/agent-upgrade/b6-full-pytest-2026-10-12.log",
+    "note": "第一次全量 4 failed(均为 B6-C2 引入的回归:loop_settings 新键/single_shot 未接新 kwarg/两处测试补丁位置),单独复现修复后重跑本收据"
+  },
+  "container_execution_evidence": {
+    "present": true,
+    "release_incomplete_for_container_execution": false
+  },
+  "evidence_index": [
+    "docs/evidence/agent-upgrade/b6-full-pytest-2026-10-12.log",
+    "docs/evidence/agent-upgrade/baseline.json",
+    "docs/evidence/agent-upgrade/offline-scenarios.md",
+    "docs/evidence/agent-upgrade/probe-after-g01.txt",
+    "docs/evidence/agent-upgrade/probe-after-g05.json",
+    "docs/evidence/agent-upgrade/probe-after-g09-docker.json",
+    "docs/evidence/agent-upgrade/probe-before-g01.json",
+    "docs/evidence/agent-upgrade/release-evidence-2026-10-12.md",
+    "docs/evidence/agent-upgrade/release-receipt.json"
+  ],
+  "known_limitations": [
+    "离线收据只证协议与边界:修复率、轮次/成本收益、窗口配比最优性属于 G17 真实端点批,FakeLLM 的 resolved 数不得宣读为真实修复率",
+    "repair_v2 的 64k 目标窗口/keep=12、max_identical_failures=3、委派并发=2/每任务 3 次是工程起点,无真实负载读数",
+    "release_incomplete_for_container_execution:本机无 Docker 守护进程,G09 的容器执行隔离证据缺失(docker 用例 skip),容器内执行路径未在声明环境内验证",
+    "在线 cost/hybrid 预算闸要求价目表与金额配置,离线验收不覆盖真实计费链路",
+    "MVP 的上下文容量检查只在显式声明容量时生效(legacy_v1 刻意豁免),未声明容量不承诺"
+  ],
+  "text_demo_steps": "demo/README.md"
+}
