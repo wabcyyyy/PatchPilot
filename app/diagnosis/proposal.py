@@ -245,6 +245,7 @@ def verify_baseline(
     regression_tests: list[str],
     work_dir: Path,
     timeout_seconds: int,
+    execution_backend: str | None = None,
     env: object = None,
 ) -> BaselineCheck:
     """在**快照副本**上校验提议清单的红/绿基线(冻结正本零写入)。
@@ -270,6 +271,7 @@ def verify_baseline(
         work_dir / "baseline-red.xml",
         timeout_seconds=timeout_seconds,
         env=env,  # type: ignore[arg-type]
+        execution_backend=execution_backend,
     )
     green_report, green_run = run_pytest(
         python_exe,
@@ -278,6 +280,7 @@ def verify_baseline(
         work_dir / "baseline-green.xml",
         timeout_seconds=timeout_seconds,
         env=env,  # type: ignore[arg-type]
+        execution_backend=execution_backend,
     )
     check.red_exit_code = red_report.exit_code
     check.green_exit_code = green_report.exit_code

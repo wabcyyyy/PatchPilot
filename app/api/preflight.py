@@ -100,6 +100,7 @@ def run_preflight(
     failed_tests: list[str],
     regression_tests: list[str],
     container_image: str | None = None,
+    execution_backend: str = "local",
     timeout_seconds: int = 60,
 ) -> PreflightReport:
     """对冻结输入做受理预检;任一项不过即抛 InvalidRequestError(带全部失败原因)。
@@ -119,7 +120,8 @@ def run_preflight(
             workspace=scratch / "ws",
             failed_tests=failed_tests,
             regression_tests=regression_tests,
-            container_image=container_image,
+            container_image=container_image
+            or ("configured" if execution_backend == "docker" else None),
             timeout_seconds=timeout_seconds,
         )
     finally:
@@ -162,7 +164,7 @@ def _run_checks(
                     ok=False,
                     detail=(
                         "task requires container env but docker daemon is unavailable;"
-                        " start Docker Desktop or run with execution_backend=local"
+                        " start Docker Desktop; container tasks cannot fall back to local"
                     ),
                 )
             )

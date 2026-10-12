@@ -161,7 +161,7 @@ class TaskService:
     ) -> tuple[dict[str, Any], bool]:
         """创建任务;返回 (任务, 是否本次新建)。
 
-        幂等键 = bug_id + engine + model,同键任务未到终态时返回 (原任务, False)。
+        幂等键 = 完整 TaskSpec 哈希,同键任务未到终态时返回 (原任务, False)。
         G10:repo_path 且双测试集皆空 = issue-only 受理(diagnose_then_repair 模式,
         仅 graph 引擎);失败/回归集必须经诊断提议与 trusted_user 批准后才冻结生产。
         G16:agent_profile 请求显式选运行 profile(None = Settings);arm 在 API 面
@@ -276,6 +276,7 @@ class TaskService:
                     failed_tests=list(bug.failed_tests),
                     regression_tests=list(bug.regression_tests),
                     container_image=bug.env.image if bug.env else None,
+                    execution_backend=str(spec.effective_policy["execution_backend"]),
                     timeout_seconds=max(get_settings().intake_timeout_seconds // 2, 30),
                 )
                 log.info(
@@ -425,6 +426,12 @@ class TaskService:
                     f"task_spec inconsistent (db={db_hash[:12] or 'none'}"
                     f" file={file_hash[:12] or 'none'}); model not invoked"
                 )
+            from app.task_spec import settings_for_policy
+
+            accepted = TaskSpec.read_file(spec_path)
+            settings = settings_for_policy(settings, accepted.effective_policy)
+            if model_name == "openai":
+                settings = settings.model_copy(update={"llm_model": accepted.model_name})
             script = replay_script
             if model_name == "fake" and script is None and stored_spec is not None:
                 # G16 迁移收口:恢复路径按**受理契约**复原回放脚本。replay 是任务身份的
@@ -460,7 +467,7 @@ class TaskService:
                 interaction = InteractionChannel(
                     registry=self._questions,
                     task_id=task_id,
-                    wait_seconds=get_settings().user_wait_seconds,
+                    wait_seconds=settings.user_wait_seconds,
                     on_waiting=lambda: self.repo.set_status_unless_terminal(
                         task_id, "WAITING_INPUT"
                     ),

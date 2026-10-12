@@ -468,11 +468,13 @@ def execute(
             # R2 整改:参数校验用签名绑定,只把"绑定失败"报成 bad arguments——
             # 此前 except TypeError 会把 handler 函数体内的业务 TypeError 也误报
             bound = inspect.signature(spec.handler).bind(ctx, **args)
-            result = spec.handler(*bound.args, **bound.kwargs)
         except TypeError as exc:
             result = ToolResult.fail(f"bad arguments for {name}: {exc}")
-        except Exception as exc:
-            result = ToolResult.fail(f"{type(exc).__name__}: {exc}")
+        else:
+            try:
+                result = spec.handler(*bound.args, **bound.kwargs)
+            except Exception as exc:
+                result = ToolResult.fail(f"{type(exc).__name__}: {exc}")
 
     duration_ms = int((time.monotonic() - started) * 1000)
     if name in MUTATING_TOOLS and result.ok:

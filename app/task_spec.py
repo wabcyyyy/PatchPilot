@@ -42,6 +42,7 @@ from app.prompts import (
 )
 
 if TYPE_CHECKING:
+    from app.config import Settings
     from app.evals.bugset import BugTask
 
 SCHEMA_VERSION = 1
@@ -235,6 +236,19 @@ def _effective_policy(settings: Any, *, profile: str | None = None) -> dict[str,
     policy["agent_runtime_profile"] = runtime.profile_name
     policy["runtime_profile"] = runtime.as_dict()
     return policy
+
+
+def settings_for_policy(settings: Settings, policy: dict[str, Any] | None) -> Settings:
+    """用受理策略构建任务配置副本;旧契约缺键沿用现状,不修改全局缓存。"""
+    if not policy:
+        return settings
+    from app.agent.runtime import TaskRuntime
+
+    updates = {key: value for key, value in policy.items() if key in type(settings).model_fields}
+    runtime = TaskRuntime.from_frozen(policy)
+    if runtime is not None:
+        updates["llm_max_tokens"] = runtime.context.completion_output_cap_tokens
+    return settings.model_copy(update=updates)
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,863 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PatchPilot 面试学习资料</title><style>
+:root{--bg:#f6f8fb;--panel:#fff;--ink:#1b2027;--dim:#5b6472;--line:#dbe2ea;
+--accent:#0b6bcb;--fact:#157f3c;--infer:#8a5a00;--test:#0a5cc0;--know:#6f42c1;
+--prod:#b0257a;--risk:#c03024;--script:#4a5462;--soft:#eef2f7;--hover:#e8f1fb;
+--even:#fafbfd;--quote:#f2f7fd}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+font:15px/1.75 ui-sans-serif,-apple-system,"Segoe UI","Noto Sans CJK SC",sans-serif}
+nav{position:fixed;inset:0 auto 0 0;width:300px;overflow:auto;background:var(--panel);
+border-right:1px solid var(--line);padding:14px 12px}
+nav a{display:block;color:var(--dim);text-decoration:none;padding:3px 8px;
+border-radius:6px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+nav a.l1{color:var(--ink);font-weight:600;margin-top:10px}
+nav a.l2{padding-left:16px}nav a.l3{padding-left:26px}
+nav a:hover,nav a.on{background:var(--hover);color:var(--accent)}
+main{margin-left:300px;padding:24px 40px 120px;max-width:1010px}
+article{margin-bottom:56px;padding-bottom:18px;border-bottom:1px solid var(--line)}
+h1{font-size:24px;margin:6px 0 18px}h2{font-size:19px;margin:30px 0 12px;color:var(--accent)}
+h3{font-size:16px;margin:22px 0 8px}h4{font-size:14px;margin:16px 0 6px;color:var(--dim)}
+a{color:var(--accent)}.anchor{opacity:.35;text-decoration:none;font-weight:400}
+code{background:var(--soft);padding:1px 5px;border-radius:4px;font-size:12.5px;
+font-family:ui-monospace,Consolas,monospace;color:#25303e}
+pre{background:#fbfcfe;border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto}
+pre code{background:none;padding:0;font-size:12.5px;line-height:1.6;color:#25303e}
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13.5px}
+th,td{border:1px solid var(--line);padding:6px 9px;text-align:left;vertical-align:top}
+th{background:var(--soft)}tr:nth-child(even) td{background:var(--even)}
+blockquote{margin:14px 0;padding:8px 14px;border-left:3px solid var(--accent);
+background:var(--quote);color:#33404f}
+hr{border:0;border-top:1px solid var(--line);margin:24px 0}
+.tag{display:inline-block;padding:0 7px;border-radius:999px;font-size:11.5px;
+border:1px solid currentColor;font-weight:600;background:#fff}
+.t-fact{color:var(--fact)}.t-infer{color:var(--infer)}.t-test{color:var(--test)}
+.t-know{color:var(--know)}.t-prod{color:var(--prod)}.t-risk{color:var(--risk)}
+.t-script{color:var(--script)}
+.pri{font-weight:700;padding:0 5px;border-radius:4px;font-size:12px}
+.p-P0{background:#fdebea;color:#a4262c}.p-P1{background:#fff4d9;color:#8a5a00}
+.p-P2{background:#e8f5ec;color:#157f3c}
+details.qa{border:1px solid var(--line);border-radius:10px;background:var(--panel);
+margin:12px 0;padding:0 14px;box-shadow:0 1px 2px rgba(20,30,45,.05)}
+details.qa>summary{cursor:pointer;font-weight:600;font-size:15px;padding:10px 0;
+list-style:none;color:var(--accent)}
+details.qa>summary::before{content:"▸ "}
+details.qa[open]>summary::before{content:"▾ "}
+li.fu>details>summary{cursor:pointer;color:var(--infer);font-size:13.5px;list-style:none}
+li.fu>details>summary::before{content:"↳ "}
+li.fu{margin:4px 0}
+#bar{position:sticky;top:0;z-index:5;margin:0 0 18px;padding:10px 12px;background:#fffffff2;
+border:1px solid var(--line);border-radius:10px;display:flex;gap:8px;align-items:center;
+flex-wrap:wrap;box-shadow:0 2px 6px rgba(20,30,45,.06)}
+#q{flex:1;min-width:200px;background:#fff;border:1px solid #ccd6e2;color:var(--ink);
+padding:7px 10px;border-radius:8px;font-size:14px}
+#q:focus{outline:2px solid var(--accent);outline-offset:1px}
+button{background:#fff;border:1px solid #ccd6e2;color:#22303f;padding:6px 10px;
+border-radius:8px;cursor:pointer;font-size:13px}
+button:hover{background:var(--hover)}
+.hide{display:none!important}
+#count{color:var(--dim);font-size:12.5px}
+#menu{display:none}
+@media(max-width:760px){
+#menu{display:inline-block}nav{transform:translateX(-101%);transition:transform .15s;
+box-shadow:2px 0 10px rgba(20,30,45,.12)}
+body.nav-open nav{transform:none}main{margin:0;padding:18px}}
+@media print{nav,#bar,#menu{display:none}main{margin:0;max-width:none}
+article{border:0;page-break-after:auto}}
+</style></head>
+<body><nav><a class="l1" href="#top">↑ 顶部</a><a class="l1" href="#README">PatchPilot 面试学习资料（interview-guide）</a><a class="l2" href="#README-h2">校准范围与事实源</a><a class="l2" href="#README-h3">阅读顺序</a><a class="l2" href="#README-h4">HTML 站</a><a class="l2" href="#README-h5">三条纪律（贯穿全部材料）</a><a class="l1" href="#00-project-audit">00 · 当前实现事实基座</a><a class="l2" href="#00-project-audit-h2">1. 当前项目</a><a class="l2" href="#00-project-audit-h3">2. 完整执行链</a><a class="l2" href="#00-project-audit-h4">3. graph / plain 与 LangGraph</a><a class="l2" href="#00-project-audit-h5">4. 当前关键事实与局限</a><a class="l2" href="#00-project-audit-h6">5. Legacy Map</a><a class="l2" href="#00-project-audit-h7">6. Claim vs Reality</a><a class="l2" href="#00-project-audit-h8">7. 实验口径</a><a class="l2" href="#00-project-audit-h9">8. 面试表达</a><a class="l1" href="#doc-cleanup-report">文档校准记录</a><a class="l2" href="#doc-cleanup-report-h2">本轮变更</a><a class="l2" href="#doc-cleanup-report-h3">纠正的错误结论</a><a class="l2" href="#doc-cleanup-report-h4">历史材料</a><a class="l1" href="#01-project-overview">01 · 项目介绍</a><a class="l2" href="#01-project-overview-h2">一句话</a><a class="l2" href="#01-project-overview-h3">30 秒</a><a class="l2" href="#01-project-overview-h4">90 秒</a><a class="l2" href="#01-project-overview-h5">3 分钟补充</a><a class="l2" href="#01-project-overview-h6">证据与边界</a><a class="l1" href="#02-architecture">02 · 当前架构与取舍</a><a class="l2" href="#02-architecture-h2">M1 · API 与任务受理</a><a class="l2" href="#02-architecture-h3">M2 · graph 与 LangGraph</a><a class="l2" href="#02-architecture-h4">M3 · 共享工具循环与 plain</a><a class="l2" href="#02-architecture-h5">M4 · 工具与能力边界</a><a class="l2" href="#02-architecture-h6">M5 · 模型与配置</a><a class="l2" href="#02-architecture-h7">M6 · localization / evidence / memory / 仓库</a><a class="l2" href="#02-architecture-h8">M7 · 执行器与 Docker</a><a class="l2" href="#02-architecture-h9">M8 · Git 与补丁</a><a class="l2" href="#02-architecture-h10">M9 · pytest 身份</a><a class="l2" href="#02-architecture-h11">M10 · 门禁与终局</a><a class="l2" href="#02-architecture-h12">M11 · 持久化 / 幂等 / 恢复 / 资源</a><a class="l2" href="#02-architecture-h13">M12 · 用户交互与子任务</a><a class="l2" href="#02-architecture-h14">M13 · 评测</a><a class="l1" href="#03-risk-register">03 · 风险与表达边界</a><a class="l1" href="#04-code-walkthrough">04 · 最重要的 20% 代码精读</a><a class="l2" href="#04-code-walkthrough-h2">1. 请求入口：受理只做&quot;决定要不要做&quot;，不做&quot;怎么做&quot;</a><a class="l2" href="#04-code-walkthrough-h3">2. Agent 内循环：五道检查的顺序就是设计</a><a class="l2" href="#04-code-walkthrough-h4">3. 工具统一入口：可见即可执行，异常一律收敛</a><a class="l2" href="#04-code-walkthrough-h5">4. 候选补丁写入口：块协议 → 计算行号 → 双门禁 → 原子应用</a><a class="l2" href="#04-code-walkthrough-h6">5. 七项门禁：每一条都对应一次真实事故</a><a class="l2" href="#04-code-walkthrough-h7">6. 反伪绿判定：all_passed 为什么不是一个 rc == 0</a><a class="l2" href="#04-code-walkthrough-h8">7. 终局验收：一个合取式管住所有引擎</a><a class="l2" href="#04-code-walkthrough-h9">8. 上下文压缩与容量：把&quot;塞不下&quot;和&quot;压不动&quot;分成两件事</a><a class="l2" href="#04-code-walkthrough-h10">9. 执行器：argv、env 白名单、超时杀进程树</a><a class="l2" href="#04-code-walkthrough-h11">10. 数据库与事件流：三张表 + 终态不可复活</a><a class="l2" href="#04-code-walkthrough-h12">11. FakeLLM：回放契约与它的两个特例</a><a class="l2" href="#04-code-walkthrough-h13">12. Redis / Qdrant 专题（面试八股对撞真实代码）</a><a class="l2" href="#04-code-walkthrough-h14">13. 测试体系里最值得讲的三个夹具</a><a class="l2" href="#04-code-walkthrough-h15">14. Python 语法点清单（只列项目真实用到的）</a><a class="l2" href="#04-code-walkthrough-h16">15. 如果只能读 5 段代码（Day 1 收尾自测）</a><a class="l2" href="#04-code-walkthrough-h17">本轮接线校准</a><a class="l1" href="#05-evaluation">05 · 评测证据与证明力</a><a class="l2" href="#05-evaluation-h2">1. 离线测试与 FakeLLM</a><a class="l2" href="#05-evaluation-h3">2. 真实模型实验确实存在，但强度不同</a><a class="l2" href="#05-evaluation-h4">3. SWE-bench 接入真实边界</a><a class="l2" href="#05-evaluation-h5">4. 指标与事实源</a><a class="l2" href="#05-evaluation-h6">5. 推荐面试回答</a><a class="l1" href="#06-production-gap">06 · Demo → Production 的缺口（按 P0/P1/P2）</a><a class="l1" href="#06-production-gap-h2">P0（不做就不能对外提供服务）</a><a class="l2" href="#06-production-gap-h3">P0-1 Authentication / Authorization（鉴权与授权）</a><a class="l2" href="#06-production-gap-h4">P0-2 Rate Limit / 成本控制（最直接的烧钱风险）</a><a class="l2" href="#06-production-gap-h5">P0-3 Sandbox（执行隔离成为默认路径）</a><a class="l2" href="#06-production-gap-h6">P0-4 可观测性：Logging / Tracing / Metrics</a><a class="l1" href="#06-production-gap-h7">P1（上线后一周内会出事）</a><a class="l2" href="#06-production-gap-h8">P1-1 Timeout / Retry / Idempotency（这三件事的真实</a><a class="l2" href="#06-production-gap-h9">P1-2 Queue（任务队列）</a><a class="l2" href="#06-production-gap-h10">P1-3 Cache</a><a class="l2" href="#06-production-gap-h11">P1-4 Secret Management</a><a class="l2" href="#06-production-gap-h12">P1-5 Prompt Injection（本项目已经认真防了一部分）</a><a class="l2" href="#06-production-gap-h13">P1-6 Data Privacy</a><a class="l2" href="#06-production-gap-h14">P1-7 Model Fallback</a><a class="l1" href="#06-production-gap-h15">P2（规模化之前处理）</a><a class="l2" href="#06-production-gap-h16">P2-1 Database Migration &amp; Horizontal Scali</a><a class="l2" href="#06-production-gap-h17">P2-2 Load Test</a><a class="l2" href="#06-production-gap-h18">P2-3 Failure Recovery（这条其实很强，讲的时候别把它降级）</a><a class="l2" href="#06-production-gap-h19">一页总览（面试前 30 秒扫这张表）</a><a class="l1" href="#07-ai-knowledge-map">07 · AI 应用开发知识地图（由本项目外扩）</a><a class="l1" href="#07-ai-knowledge-map-h2">P0（26 条）</a><a class="l2" href="#07-ai-knowledge-map-h3">A. 模型调用基础</a><a class="l2" href="#07-ai-knowledge-map-h4">B. Agent 机制</a><a class="l2" href="#07-ai-knowledge-map-h5">C. 护栏与可靠性</a><a class="l2" href="#07-ai-knowledge-map-h6">D. 评测与数据</a><a class="l2" href="#07-ai-knowledge-map-h7">E. 服务与工程</a><a class="l1" href="#07-ai-knowledge-map-h8">P1（建议掌握，按被问概率排）</a><a class="l1" href="#07-ai-knowledge-map-h9">P2（以后补）</a><a class="l2" href="#07-ai-knowledge-map-h10">3 天里的用法</a><a class="l1" href="#08-interview-questions">08 · 项目面试题</a><a class="l2" href="#08-interview-questions-h2">Q1 · Agent 还是 Workflow？</a><a class="l2" href="#08-interview-questions-h3">Q2 · 为什么 LangGraph？</a><a class="l2" href="#08-interview-questions-h4">Q3 · resolved 怎么算？</a><a class="l2" href="#08-interview-questions-h5">Q4 · 怎么防假绿？</a><a class="l2" href="#08-interview-questions-h6">Q5 · crash 后为什么重跑？</a><a class="l2" href="#08-interview-questions-h7">Q6 · 配置漂移怎么防？</a><a class="l2" href="#08-interview-questions-h8">Q7 · 账本坏了怎么办？</a><a class="l2" href="#08-interview-questions-h9">Q8 · 幂等键是什么？</a><a class="l2" href="#08-interview-questions-h10">Q9 · 检索是不是 RAG？</a><a class="l2" href="#08-interview-questions-h11">Q10 · evidence 和 memory 有何区别？</a><a class="l2" href="#08-interview-questions-h12">Q11 · 仓库说明能改权限吗？</a><a class="l2" href="#08-interview-questions-h13">Q12 · Docker 是否真的用？</a><a class="l2" href="#08-interview-questions-h14">Q13 · local 隔离到什么程度？</a><a class="l2" href="#08-interview-questions-h15">Q14 · 预算能保证绝不超账单？</a><a class="l2" href="#08-interview-questions-h16">Q15 · 子 Agent 会不会跑飞？</a><a class="l2" href="#08-interview-questions-h17">Q16 · 真实模型跑过吗？</a><a class="l2" href="#08-interview-questions-h18">Q17 · FakeLLM 掩盖什么？</a><a class="l2" href="#08-interview-questions-h19">Q18 · Redis/SQLite 能多实例吗？</a><a class="l2" href="#08-interview-questions-h20">Q19 · 本轮删了什么？</a><a class="l2" href="#08-interview-questions-h21">Q20 · 如何审查 AI 改动？</a><a class="l1" href="#09-interview-script">09 · 面试表达稿</a><a class="l2" href="#09-interview-script-h2">核心价值</a><a class="l2" href="#09-interview-script-h3">为什么 LangGraph</a><a class="l2" href="#09-interview-script-h4">有效性与不足</a><a class="l2" href="#09-interview-script-h5">本轮真实修复</a><a class="l2" href="#09-interview-script-h6">AI Coding</a><a class="l1" href="#10-claim-check">10 · 简历表述核对</a><a class="l1" href="#11-cheatsheet">11 · 面试速记</a><a class="l2" href="#11-cheatsheet-h2">一句话</a><a class="l2" href="#11-cheatsheet-h3">执行链</a><a class="l2" href="#11-cheatsheet-h4">必须会讲</a><a class="l2" href="#11-cheatsheet-h5">证据与局限</a><a class="l2" href="#11-cheatsheet-h6">本轮清理</a><a class="l1" href="#12-3day-plan">12 · 三天准备安排</a><a class="l2" href="#12-3day-plan-h2">Day 1 · 讲清真实链路</a><a class="l2" href="#12-3day-plan-h3">Day 2 · 证据与风险</a><a class="l2" href="#12-3day-plan-h4">Day 3 · 练表达</a><a class="l1" href="#13-mock-interview">13 · 三轮模拟面试</a><a class="l2" href="#13-mock-interview-h2">第一轮 · 业务与架构</a><a class="l3" href="#13-mock-interview-h3">问：用一分钟介绍。</a><a class="l3" href="#13-mock-interview-h4">问：一次请求走到结果？</a><a class="l3" href="#13-mock-interview-h5">问：为什么双引擎？</a><a class="l3" href="#13-mock-interview-h6">问：Docker边界？</a><a class="l2" href="#13-mock-interview-h7">第二轮 · 判定与失败</a><a class="l3" href="#13-mock-interview-h8">问：finish说成功就成功？</a><a class="l3" href="#13-mock-interview-h9">问：崩在verify后怎么恢复？</a><a class="l3" href="#13-mock-interview-h10">问：账本损坏？</a><a class="l3" href="#13-mock-interview-h11">问：测试全绿有什么漏洞？</a><a class="l3" href="#13-mock-interview-h12">问：预算和账单一样吗？</a><a class="l2" href="#13-mock-interview-h13">第三轮 · 证据与真实性</a><a class="l3" href="#13-mock-interview-h14">问：真实模型到底跑没跑？</a><a class="l3" href="#13-mock-interview-h15">问：FakeLLM能证明什么？</a><a class="l3" href="#13-mock-interview-h16">问：本轮清理为什么可信？</a><a class="l3" href="#13-mock-interview-h17">问：代码是不是自己全写的？</a><a class="l3" href="#13-mock-interview-h18">问：后续怎么生产化？</a></nav>
+<main id="top"><div id="bar"><input id="q" placeholder="全文搜索（按 / 聚焦）"><button id="menu">目录</button><button id="open">全部展开</button><button id="close">全部折叠</button><button id="p0">只展开关键题</button><span id="count"></span></div>
+<p class="hint" style="color:var(--dim);font-size:13px"><span class="tag t-fact">代码事实</span> <span class="tag t-infer">合理推断</span> <span class="tag t-test">实际测试</span> <span class="tag t-know">面试知识</span> <span class="tag t-prod">生产化扩展</span> <span class="tag t-risk">风险点</span> <span class="tag t-script">面试口径</span> · 本页由 <code>scripts/build_interview_site.py</code> 从 <code>docs/interview-guide/*.md</code> 生成，Markdown 为站点内容源，产品事实按源码、测试与有效 SPEC/ADR 核对，请勿直接编辑本文件。</p>
+<article id="README"><h1 id="README-h1">PatchPilot 面试学习资料（interview-guide） <a class="anchor" href="#README-h1">#</a></h1>
+<p>对 <code>D:\wcy\project\PatchPilot</code> 做的一次<strong>逆向考古</strong>产物：面向 AI Agent / AI 应用 / AI 全栈岗位，3 天准备期。</p>
+<p><strong>Markdown 是站点内容源；产品事实以当前源码、对应测试与有效 SPEC/ADR 共同核对</strong>；HTML 只负责阅读体验（<code>site/index.html</code>，无外部依赖）。</p>
+<h2 id="README-h2">校准范围与事实源 <a class="anchor" href="#README-h2">#</a></h2>
+<p>它不描述设计意图，它描述<strong>当前代码能被证明的事实</strong>，并把文档与代码的偏差单列成表。事实优先级：</p>
+<p>当前执行代码与测试、有效 SPEC/ADR 共同核对；历史记录只证明对应时间/身份下的行为，不当作当前能力。</p>
+<p>标注体系（所有文件统一）：<span class="tag t-fact">代码事实</span> / <span class="tag t-infer">合理推断</span> / <span class="tag t-test">实际测试</span> / <span class="tag t-know">面试知识</span> / <span class="tag t-prod">生产化扩展</span> / <span class="tag t-risk">风险点</span> / <span class="tag t-script">面试口径</span>。</p>
+<h2 id="README-h3">阅读顺序 <a class="anchor" href="#README-h3">#</a></h2>
+<table><thead><tr><th>序号</th><th>文件</th><th>什么时候读</th></tr></thead><tbody><tr><td>00</td><td><a href="#00-project-audit">项目考古报告</a></td><td><strong>先读</strong>：地图、真实执行链、冲突表、风险清单</td></tr><tr><td>—</td><td><a href="#doc-cleanup-report">docs 清理报告</a></td><td>本轮修改与已有历史工作区改动的区别</td></tr><tr><td>01</td><td><a href="#01-project-overview">项目介绍三版本</a></td><td>Day 1：30 秒 / 90 秒 / 3 分钟</td></tr><tr><td>02</td><td><a href="#02-architecture">架构逐模块</a></td><td>Day 1–2：当前模块、调用关系与取舍</td></tr><tr><td>03</td><td><a href="#03-risk-register">风险登记表</a></td><td>当前风险与证据边界</td></tr><tr><td>04</td><td><a href="#04-code-walkthrough">核心代码精读</a></td><td>Day 1：验收/身份/恢复/账本代码 + Python 语法点</td></tr><tr><td>05</td><td><a href="#05-evaluation">怎么证明有效</a></td><td>Day 2：能证明 / 不能证明 / 实验设计</td></tr><tr><td>06</td><td><a href="#06-production-gap">Demo → Production 缺口</a></td><td>Day 3：未来扩展，不作为现有能力</td></tr><tr><td>07</td><td><a href="#07-ai-knowledge-map">AI 应用知识地图</a></td><td>Day 2：<span class="pri p-P0">P0</span> 26 条 + <span class="pri p-P1">P1</span>/<span class="pri p-P2">P2</span></td></tr><tr><td>08</td><td><a href="#08-interview-questions">项目专属面试题</a></td><td>Day 2–3：20 题 × 3–5 层追问链</td></tr><tr><td>09</td><td><a href="#09-interview-script">面试表达稿</a></td><td>Day 3：亮点/不足措辞、没上线怎么答、AI Coding</td></tr><tr><td>10</td><td><a href="#10-claim-check">简历表述体检</a></td><td>Day 3：能写 / 需弱化 / 不建议写</td></tr><tr><td>11</td><td><a href="#11-cheatsheet">速记卡</a></td><td><strong>面试前 30 分钟</strong></td></tr><tr><td>12</td><td><a href="#12-3day-plan">3 天排程</a></td><td>开工前定计划（必读/必会/可跳过）</td></tr><tr><td>13</td><td><a href="#13-mock-interview">三轮模拟面试</a></td><td>Day 3 实战（第三轮建议录音）</td></tr></tbody></table>
+<h2 id="README-h4">HTML 站 <a class="anchor" href="#README-h4">#</a></h2>
+<pre><code>python scripts/build_interview_site.py     # 重新生成 docs/interview-guide/site/index.html</code></pre>
+<p>浅色主题、单文件、无网络依赖、直接双击打开：左侧导航（滚动时高亮当前篇）+ 全文搜索（命中即自动展开该篇里含关键词的追问/答案卡）+ <span class="pri p-P0">P0</span>/<span class="pri p-P1">P1</span>/<span class="pri p-P2">P2</span> 与标签着色 + 打印时隐藏导航。窄屏用&quot;目录&quot;按钮开合侧栏。</p>
+<h2 id="README-h5">三条纪律（贯穿全部材料） <a class="anchor" href="#README-h5">#</a></h2>
+<ol><li>不把生产化扩展说成已实现；</li></li><li>不维护当前通过数/代码规模快照；历史实验数字带提交、环境、样本和局限；</li></li><li>项目真实性优先于包装 —— 这份材料的全部价值在于&quot;我知道哪里弱&quot;。</li></li></ol>
+<p>本轮校准见 <a href="../../work-notes/realignment-2026-10-12.md">任务卡与收据</a>。未发起付费实验或本地全量。</p></article><article id="00-project-audit"><h1 id="00-project-audit-h1">00 · 当前实现事实基座 <a class="anchor" href="#00-project-audit-h1">#</a></h1>
+<p>本页校准于 2026-10-12 的工作区。当前源码、对应测试与有效 SPEC/ADR 共同确认事实；</p>
+<p>历史日志是演化证据，不是当前能力表。完整审查与交付见 <a href="../../work-notes/realignment-2026-10-12.md">实现校准任务卡</a>。</p>
+<h2 id="00-project-audit-h2">1. 当前项目 <a class="anchor" href="#00-project-audit-h2">#</a></h2>
+<p>PatchPilot 是 Python/pytest 仓库的测试失败诊断与补丁验证原型，服务面是 FastAPI，</p>
+<p>任务与轨迹落 SQLite，Redis 可选地承担任务锁。CLI submit 是 HTTP 客户端。</p>
+<p>模型层为 OpenAI 兼容客户端或离线 FakeLLM；不做向量检索、跨任务长期记忆或官方 SWE-bench 评测。</p>
+<p>测试数量不作为固定能力，历史发布收据只证明当时提交/dirty/环境下的结果。</p>
+<h2 id="00-project-audit-h3">2. 完整执行链 <a class="anchor" href="#00-project-audit-h3">#</a></h2>
+<ol><li>TaskCreateIn/路由 → TaskService 校验仓库与模型开关，构建完整 TaskSpec 哈希幂等键。</li></li><li>custom 输入复制冻结并核对指纹，预检环境；Docker 预检只查 daemon，真实收集由容器基线确认。</li></li><li>契约写文件与 SQLite，再进入线程池；执行先交叉复核受理身份。</li></li><li>graph runner 从受理策略重建任务配置、模型 runtime 与账本，物化独立 Git 工作区。</li></li><li>baseline 验证失败集真红、回归真绿；localize 用 AST 骨架、符号与字面检索读证据。</li></li><li>issue-only 路径由 diagnose 提出具体测试，平台重做红/绿基线，经 trusted_user 批准后冻结清单。</li></li><li>plan 产生文本计划，propose 运行工具循环；块锚定补丁经编译、门禁、git apply 与语法/落点复检。</li></li><li>apply 冻结候选；verify 平台独立跑失败/回归集，按 JUnit 完整身份匹配，开启时再双跑比对。</li></li><li>finish 使用共享 acceptance，graph 另校验候选绑定。失败经 rollback 留证、复位、回 plan。</li></li><li>JSONL/SQLite 保存轨迹，report.json 记录引擎证据，tasks 保存服务生命周期。取消/迟到事件不能复活终态。</li></li></ol>
+<h2 id="00-project-audit-h4">3. graph / plain 与 LangGraph <a class="anchor" href="#00-project-audit-h4">#</a></h2>
+<p>graph 明确阶段拓扑、条件边与 superstep 检查点。模型在阶段内自主选工具，不能任意改变平台阶段或 verdict。</p>
+<p>真正模型工具循环在 run_plain_loop，graph、plain 与子任务都调用。</p>
+<p>plain driver 是单轮基线/循环/平台验证，不具有 graph 的诊断审批、多轮候选或自动恢复编排。</p>
+<p>两者共享工具、pytest adapter、final_acceptance；共享判定不等于功能等价。</p>
+<p>LangGraph 本身不保证恢复正确：平台还必须重建 ctx、读候选与账本、清旧结论并重验。</p>
+<h2 id="00-project-audit-h5">4. 当前关键事实与局限 <a class="anchor" href="#00-project-audit-h5">#</a></h2>
+<table><thead><tr><th>能力</th><th>当前事实</th><th>可核对位置</th></tr></thead><tbody><tr><td>判定</td><td>非空 diff、双集验证、门禁、资源合规（终局复核deadline）、未取消合取；模型 finish 不决定 resolved</td><td>graph/acceptance.py；test_acceptance</td></tr><tr><td>测试身份</td><td>文件、类链、函数、参数化，拒缺失/歧义/skip</td><td>adapters/test_identity.py、pytest_adapter.py；test_test_identity</td></tr><tr><td>候选</td><td>graph hash 绑定当前工作区与冻结 manifest；验证有新 attempt ID</td><td>graph/candidate.py、nodes.py；test_candidate_checkpoints</td></tr><tr><td>恢复</td><td>continue/revalidate/already_terminal/reject；写阶段重应用重验；无可信身份不冷启动</td><td>graph/resume.py；test_candidate_recovery、test_resume_crash</td></tr><tr><td>资源</td><td>pending/reserve/settle/unknown，未知消耗继续占额度；费用是价表估计，不是账单</td><td>graph/resources.py；test_budget_reservations</td></tr><tr><td>localization</td><td>AST/rg 文件预筛/Python 字面匹配与符号跳转，无检索质量基准</td><td>context/repo_map.py、tools/search.py、symbols.py</td></tr><tr><td>evidence/memory</td><td>有界 JSON + 原文分页；平台观测与模型假设分开，引用可 stale</td><td>context/evidence.py、task_memory.py；test_evidence_store</td></tr><tr><td>仓库规则</td><td>冻结副本说明进上下文，目录说明按观测激活；不扩权</td><td>context/repo_instructions.py；test_repo_instructions</td></tr><tr><td>交互/委派</td><td>graph 问答/批准持久化；有界单层角色子任务，默认关闭，不覆盖父验收</td><td>agent/control.py、subtasks.py；test_subagent_wiring</td></tr><tr><td>受理冻结</td><td>后端、测试超时、初始账本、runtime、模型身份与轮次沿用契约；不修改全局 Settings</td><td>task_spec.settings_for_policy；test_frozen_policy</td></tr><tr><td>Docker</td><td>默认 local；pytest 容器网络/内存/CPU限额，诊断命令另有 PID/no-new-privileges</td><td>executor/docker_runner.py、command_runner.py</td></tr><tr><td>服务</td><td>单进程原型，SQLite 线程锁、线程池、SSE 数据库轮询；Redis 不是队列/缓存</td><td>api/service.py、events.py；storage</td></tr></tbody></table>
+<p>目录副本不是进程沙箱。local 会执行目标仓库 conftest/模型复现代码，子进程不是平台同一进程，</p>
+<p>但共享宿主权限。Docker 不能证明测试语义正确，compose socket 也需要部署方隔离。</p>
+<p>全绿只是指定测试下成立，不能防住过拟合或所有恶意仓库伪造 JUnit。</p>
+<h2 id="00-project-audit-h6">5. Legacy Map <a class="anchor" href="#00-project-audit-h6">#</a></h2>
+<p>ACTIVE：两引擎及共享工具循环、验收、门禁、candidate/恢复、工具注册表。</p>
+<p>LEGACY BUT REQUIRED：legacy_v1、FakeLLM 旧计划回放、旧报告/SQLite 迁移、历史实验 fold_output。</p>
+<p>DEAD（本轮删除）：_matches_requested 私有 wrapper 与未接线 ErrorResponse。</p>
+<p>UNCERTAIN（保留）：reset_workspace（plain 默认工具表可达、graph 阶段不开放）、装配缓存辅助方法。</p>
+<p>ResourceLedger.to_state 的删除是本轮开始前的已有工作，不计为本轮删除。</p>
+<h2 id="00-project-audit-h7">6. Claim vs Reality <a class="anchor" href="#00-project-audit-h7">#</a></h2>
+<p>严格验收与 graph 恢复有代码和既有测试支撑，不能上升为全面安全保证。</p>
+<p>原冻结策略是 PARTIAL，本轮补真实 pytest 链的环境漂移回归。</p>
+<p>“从未导入 SWE 样本/从未实跑消融”与历史实验记录相冲突，已纠正。</p>
+<p>“提交/push 前本地全量”已过时，日常统一 verify.ps1、90 秒、定向测试，完整回归交 CI。</p>
+<h2 id="00-project-audit-h8">7. 实验口径 <a class="anchor" href="#00-project-audit-h8">#</a></h2>
+<p>FakeLLM 回放里包含参考补丁，证明编排、护栏与取证，不证明模型修复率。</p>
+<p>旧 eval-report-real 缺模型名/成本/provenance，证据较弱；另有 SWE 真实模型与消融记录，</p>
+<p>见 <a href="#05-evaluation">实验边界</a>。不能因为 runs 被忽略就断言实验未发生，也不能因为记录存在就认定当前版本已复验。</p>
+<h2 id="00-project-audit-h9">8. 面试表达 <a class="anchor" href="#00-project-audit-h9">#</a></h2>
+<p>讲已实现的判定与恢复机制，主动说 local 默认、有限样本、官方 harness 未使用、费用估计、单机部署限制。</p>
+<p><span class="pri p-P0">P0</span>/<span class="pri p-P1">P1</span> 面试知识优先级不等于仓库缺陷严重性；本轮审查未确认 <span class="pri p-P0">P0</span>，不作“所有攻击都不可能”承诺。</p></article><article id="doc-cleanup-report"><h1 id="doc-cleanup-report-h1">文档校准记录 <a class="anchor" href="#doc-cleanup-report-h1">#</a></h1>
+<p>2026-10-12 本轮不搬移历史文件，也不改历史实验数字。</p>
+<p>工作区开始前已有归档搬移、Docker/资源账本/验证工具修改和整套 interview-guide；这些不计作本轮成果。</p>
+<h2 id="doc-cleanup-report-h2">本轮变更 <a class="anchor" href="#doc-cleanup-report-h2">#</a></h2>
+<p>README 修正 resolved、两引擎功能差异、默认执行后端和日常验证入口。</p>
+<p>项目企划书更新当前状态/工具/数据字段/API与幂等口径，早期阶段规划明确为历史。</p>
+<p>docs索引标明当前 SPEC/ADR 分工；ADR-0009 的身份验证锚点改指 all_passed 实际调用。</p>
+<p>interview-guide 校准架构、评测、风险、表达与速记；去掉易漂移行号与固定测试/代码规模数字，HTML从Markdown重建。</p>
+<h2 id="doc-cleanup-report-h3">纠正的错误结论 <a class="anchor" href="#doc-cleanup-report-h3">#</a></h2>
+<p>“reset_workspace全产品不可达”错误：plain不限制阶段时会暴露注册表；graph阶段不开放。</p>
+<p>“fold_output死代码”错误：历史脚本与测试仍使用，保留。</p>
+<p>“真实SWE/消融未执行”错误：已有带日期记录；完整产物、样本偏差和当前版本未复验的局限仍需说明。</p>
+<p>“pytest容器有PID/no-new-privileges”错误：该限制在诊断命令容器路径，pytest路径仅网络/内存/CPU等。</p>
+<p>“规范文案不能校准”错误：本轮按已有设计修正文字，不引入新门禁或验收语义。</p>
+<h2 id="doc-cleanup-report-h4">历史材料 <a class="anchor" href="#doc-cleanup-report-h4">#</a></h2>
+<p>PROGRESS/TODO、archive和实验快照保留当时事实；不把旧待办、通过数或预登记当当前规范/成果。</p>
+<p>本轮实际检查与收据见 <a href="../../work-notes/realignment-2026-10-12.md">校准任务卡</a>，完整回归交CI。</p></article><article id="01-project-overview"><h1 id="01-project-overview-h1">01 · 项目介绍 <a class="anchor" href="#01-project-overview-h1">#</a></h1>
+<h2 id="01-project-overview-h2">一句话 <a class="anchor" href="#01-project-overview-h2">#</a></h2>
+<p>PatchPilot 面向 Python/pytest 仓库做测试失败诊断与补丁验证，平台独立执行测试并计算验收结论。</p>
+<h2 id="01-project-overview-h3">30 秒 <a class="anchor" href="#01-project-overview-h3">#</a></h2>
+<p>“你提交仓库和缺陷描述，Agent 检索、提出补丁，平台在独立工作区验证原失败集与回归集。</p>
+<p>resolved 要求补丁非空、双集全通过、门禁通过、预算内且未取消。它是可运行原型，</p>
+<p>离线回放验证控制链；历史真实 SWE 实验有限，不宣称生产可用或官方成绩。”</p>
+<h2 id="01-project-overview-h4">90 秒 <a class="anchor" href="#01-project-overview-h4">#</a></h2>
+<p>“LangGraph 负责阶段拓扑和检查点，每个模型阶段内部复用手写工具循环。</p>
+<p>工具 schema 与执行能力来自同一阶段集合；AST/符号/字面搜索辅助定位，原始证据可分页取回，</p>
+<p>平台观测进入任务记忆，模型只能写引用假设。块补丁经门禁和 Git/语法复检后，</p>
+<p>平台重新跑具体测试，使用完整 JUnit 身份而非只看返回码。</p>
+<p>最终共享 acceptance 不采信 finish 声明；graph 还绑定冻结候选，恢复时重应用并重验。</p>
+<p>默认 local 不是沙箱，容器后端与单进程服务也有部署边界。</p>
+<p>FakeLLM 回放含答案；真实模型与消融有历史记录、样本偏差和负结果，不能作为当前版本泛化收益。”</p>
+<h2 id="01-project-overview-h5">3 分钟补充 <a class="anchor" href="#01-project-overview-h5">#</a></h2>
+<p>受理 TaskSpec 完整 hash 幂等、冻结 custom 输入副本、预检后双写契约，提交线程池。</p>
+<p>Docker 预检不在宿主导入目标 conftest，只查 daemon；真实收集由容器 baseline 确认。</p>
+<p>执行按受理配置建模型、账本与 runtime；未知消耗继续占预算，恢复不重授。</p>
+<p>issue-only 清单由模型提议、平台基线复核、trusted_user 批准，不让模型自定成功标准。</p>
+<p>失败回滚保全证据再复位、至多消耗一次轮次；任务终态与 stage 分开，迟到事件不能复活取消任务。</p>
+<p>plain 是单轮替代驱动，共享工具循环与验收，功能不等同 graph。</p>
+<h2 id="01-project-overview-h6">证据与边界 <a class="anchor" href="#01-project-overview-h6">#</a></h2>
+<p>详细链路见 <a href="#00-project-audit">事实基座</a>，实验见 <a href="#05-evaluation">评测口径</a>。</p>
+<p>开发只跑 verify.ps1 定向检查，完整回归交 CI；历史收据不代表当前提交通过。</p>
+<p>不要用源码行数、commit 数或测试总数推断 AI 参与比例、生产能力或修复率。</p></article><article id="02-architecture"><h1 id="02-architecture-h1">02 · 当前架构与取舍 <a class="anchor" href="#02-architecture-h1">#</a></h1>
+<h2 id="02-architecture-h2">M1 · API 与任务受理 <a class="anchor" href="#02-architecture-h2">#</a></h2>
+<p>FastAPI 同步路由校验输入，TaskService 构造 TaskSpec 完整哈希作幂等键；在途同契约返回原任务。</p>
+<p>custom 输入冻结后预检，契约双写到文件/SQLite，再交线程池。CLI submit 通过 HTTP 调服务。</p>
+<p>API 按单进程原型设计，默认鉴权/仓库白名单未启用，多租户与负载能力未证明。</p>
+<p>代码：api/routes.py、service.py、preflight.py、schemas.py；测试：test_custom_task、test_preflight。</p>
+<h2 id="02-architecture-h3">M2 · graph 与 LangGraph <a class="anchor" href="#02-architecture-h3">#</a></h2>
+<p>builder 定阶段/条件边，节点闭包持有工具上下文，可序列化 TaskState 进 checkpoint。</p>
+<p>repair：prepare/baseline/localize/plan/propose/apply/verify/finish；issue-only 多 diagnose；失败经 rollback 重规划。</p>
+<p>图提供明确阶段边界与恢复位置，平台仍要实现工具循环、预算、候选重应用与重验。</p>
+<p>选择代价是闭包重建与阶段状态维护；不能声称框架自动保证恢复正确。</p>
+<p>代码：graph/builder.py、nodes.py、runner.py；测试：test_graph、test_plan_invariants。</p>
+<h2 id="02-architecture-h4">M3 · 共享工具循环与 plain <a class="anchor" href="#02-architecture-h4">#</a></h2>
+<p>run_plain_loop 发请求、结算 usage、执行阶段工具、维护消息/快照、处理文本完成协议与取消。</p>
+<p>graph 的模型阶段和子任务都复用它。plain driver 单轮运行此循环，另行编排基线和平台验证。</p>
+<p>两引擎共享 tools/pytest adapter/acceptance，但 graph 的审批、候选恢复与多轮编排不属于 plain。</p>
+<p>代码：graph/plain_loop.py、evals/driver.py；测试：test_plain_loop、test_driver、test_frozen_policy。</p>
+<h2 id="02-architecture-h5">M4 · 工具与能力边界 <a class="anchor" href="#02-architecture-h5">#</a></h2>
+<p>registry 同源产生 schema 与执行入口，阶段白名单限制可见与可执行集合；finish 为完成协议工具。</p>
+<p>候选补丁写入口 apply_patch，另有 scratch、假设记忆与问答持久写入。run_tests 只选平台预定义集合。</p>
+<p>reset_workspace 在 plain 全量工具表可达，graph 阶段未开放；不因一个入口无调用就删公开工具。</p>
+<p>恢复策略区分 safe_replay/state_check/no_rerun；未知工具保守不重跑。</p>
+<p>代码：tools/registry.py、base.py、paths.py；测试：test_tool_capabilities、test_tool_recovery。</p>
+<h2 id="02-architecture-h6">M5 · 模型与配置 <a class="anchor" href="#02-architecture-h6">#</a></h2>
+<p>OpenAI 兼容 SDK 薄封装，无模型响应流式；SDK/平台重试互斥，协议错误携带计量事实。</p>
+<p>能力显式声明与来源，不按模型名猜窗口；served_model 是观测，不证明别名背后的服务版本。</p>
+<p>TaskRuntime 冻结窗口/输出能力；settings_for_policy 给每任务配置副本，保留受理预算/后端/超时/模型名。</p>
+<p>旧契约缺字段走兼容回退，外部价格文件与服务端版本不能仅靠 profile 名保证不变。</p>
+<p>代码：llm/openai_client.py、usage.py、profiles.py、agent/runtime.py、task_spec.py；测试：test_llm、test_frozen_policy。</p>
+<h2 id="02-architecture-h7">M6 · localization / evidence / memory / 仓库规则 <a class="anchor" href="#02-architecture-h7">#</a></h2>
+<p>AST 骨架 + rg 文件预筛 + Python 字面逐行匹配 + 符号跳转，不是向量 RAG，无召回质量成绩。</p>
+<p>工具回执先结构化裁剪再序列化，原文落 evidence，read_evidence 按工件游标分页。</p>
+<p>TaskMemory 分平台观测与引用假设，修改后引用可 stale；ContextAssembler 按阶段/轮次幂等装配。</p>
+<p>仓库说明从输入副本加载，目录说明按观测激活；规则进入上下文但不进入权限判定。</p>
+<p>没有跨任务长期记忆。容量不够且保护区压不动时停止，不把软阈值当任务累计预算。</p>
+<p>代码：context/、tools/search.py、symbols.py、memory.py；测试：test_evidence_store、test_task_memory、test_repo_instructions。</p>
+<h2 id="02-architecture-h8">M7 · 执行器与 Docker <a class="anchor" href="#02-architecture-h8">#</a></h2>
+<p>local_runner 用 argv/Popen、环境白名单、超时进程树清理；默认 local 共享宿主权限，目录副本不是沙箱。</p>
+<p>pytest Docker：--rm、网络、内存/CPU、workspace/reports 挂载与 uid 对齐。</p>
+<p>诊断 run_command Docker 另带 PID 限额、no-new-privileges；不能把其参数套到 pytest 路径。</p>
+<p>受控 profile 不接受自由 shell；write_repro 写 scratch，命令在诊断副本运行。</p>
+<p>Docker custom 预检只查 daemon，不宿主 collect；容器内依赖/收集由 baseline 确认。</p>
+<p>默认执行器镜像依赖有限，题目 env 可使用自带镜像；compose socket 是部署边界。</p>
+<p>代码：executor/、tools/commands.py；测试：test_backend、test_command_profiles、test_docker。</p>
+<h2 id="02-architecture-h9">M8 · Git 与补丁 <a class="anchor" href="#02-architecture-h9">#</a></h2>
+<p>冻结输入与物化工作区为物理副本、重建 Git 基线，不是 git worktree。</p>
+<p>模型块锚定协议编译 unified diff，经门禁、git apply --check、落点检查、apply、TOCTOU 与 Python 语法复检。</p>
+<p>回滚先保全 diff 再 reset/clean 并验证干净。不能删用户原仓库或把失败现场伪装为空补丁成功。</p>
+<p>代码：gitops/、tools/patching.py；测试：test_gitops、test_blockpatch、test_attacks。</p>
+<h2 id="02-architecture-h10">M9 · pytest 身份 <a class="anchor" href="#02-architecture-h10">#</a></h2>
+<p>JUnit file/class chain/name/参数化身份对应具体 node ID；缺失、歧义、跳过不能算通过。</p>
+<p>退出码为零不够，平台必须重新验证声明的双集。签名规则保持现有归一化，不因文档校准改变。</p>
+<p>重复运行一致只能检测部分 flaky，不能防住预置伪绿或证明补丁语义等价。</p>
+<p>代码：adapters/pytest_adapter.py、test_identity.py；测试：test_test_identity、test_backend。</p>
+<h2 id="02-architecture-h11">M10 · 门禁与终局 <a class="anchor" href="#02-architecture-h11">#</a></h2>
+<p>五类静态补丁检查在 run_gates，命令与资源门禁各在执行路径；不是七个互相独立的最终布尔字段。</p>
+<p>共享 final_acceptance 要求验证通过、gate passed、非空diff、within_budget、未取消。</p>
+<p>graph 还比当前 diff/候选 hash、冻结 manifest 与本次 verification_attempt_id。plain 无该恢复链。</p>
+<p>规则可审计但不能防住指定测试上的过拟合；不让模型 judge 代替平台判断。</p>
+<p>代码：graph/gates.py、acceptance.py、candidate.py；测试：test_acceptance、test_candidate_checkpoints。</p>
+<h2 id="02-architecture-h12">M11 · 持久化 / 幂等 / 恢复 / 资源 <a class="anchor" href="#02-architecture-h12">#</a></h2>
+<p>tasks/trajectory_events/patches 为当前三张业务表，去重迁移另保存 duplicates 归档。</p>
+<p>SQLite WAL 与连接线程锁；终态原子写，stage 独立进度；Redis 可选任务锁，未证明多实例领取安全。</p>
+<p>checkpoint + loop/session/memory + candidate + ledger 决定四态恢复；写阶段重验，END只核对读报告。</p>
+<p>账本预留/结算/未知持有，不重授；损坏账本标unknown且阻止新请求，不能当成全新额度。</p>
+<p>费用为micro-USD估计，非真实账单；恢复deadline保留停机时间，用户等待顺延受绝对寿命封顶。</p>
+<p>代码：storage/、graph/resume.py、resources.py；测试：test_candidate_recovery、test_budget_reservations。</p>
+<h2 id="02-architecture-h13">M12 · 用户交互与子任务 <a class="anchor" href="#02-architecture-h13">#</a></h2>
+<p>graph 问题/回答/纠偏落盘，回答与批准是可信用户事件，不能修改冻结测试/金额/权限边界。</p>
+<p>headless 需要澄清或批准时如实待审，不能自动伪造同意。会话修补孤儿 tool_calls 只给明确占位回执。</p>
+<p>三种冻结角色，单层有限委派、独立会话与父预算切分，默认关闭；子结论不能覆盖父验收。</p>
+<p>角色模型工厂由service/CLI注入，缺独立Fake脚本不能偷偷沿用父游标或发付费调用。</p>
+<p>代码：agent/control.py、session.py、subtasks.py；测试：test_waiting_input、test_subagent_wiring。</p>
+<h2 id="02-architecture-h14">M13 · 评测 <a class="anchor" href="#02-architecture-h14">#</a></h2>
+<p>自建题、版本化指标、manifest批定义、控制身份与观测分离；one_shot是评测CLI臂，API拒绝。</p>
+<p>SWE适配器复用平台pytest与验收，可用官方镜像，但不是官方harness/成绩。</p>
+<p>Fake回放含参考答案；历史真实SWE/消融/重复实验有记录与负结果，当前升级未补跑。</p>
+<p>见 <a href="#05-evaluation">评测证明力</a>，不要把历史分数当当前能力。</p></article><article id="03-risk-register"><h1 id="03-risk-register-h1">03 · 风险与表达边界 <a class="anchor" href="#03-risk-register-h1">#</a></h1>
+<p>这里列当前局限，面试准备优先级与产品缺陷 <span class="pri p-P0">P0</span>/<span class="pri p-P1">P1</span> 不是同一套分级。</p>
+<p>本轮已确认缺陷与处置见 <a href="../../work-notes/realignment-2026-10-12.md">校准任务卡</a>。</p>
+<table><thead><tr><th>风险</th><th>当前事实</th><th>推荐回答</th></tr></thead><tbody><tr><td>模型效果</td><td>fake 回放包含参考答案；真实 SWE/消融是有限历史实验，当前升级未复跑</td><td>回放证明控制链，历史真实实验不能外推当前修复率</td></tr><tr><td>默认隔离</td><td>local 执行目标 conftest 与复现脚本，共享宿主权限；Docker 两条路径限制不同</td><td>目录副本不构成沙箱，部署要单独验证</td></tr><tr><td>测试过拟合</td><td>指定测试全绿可与上游语义不等价；不受信 JUnit 仍能伪造</td><td>resolved 是声明测试与规则下的结论，不是语义正确证明</td></tr><tr><td>验收身份</td><td>具体 node IDs/候选 hash/验证 attempt 均重要</td><td>恢复只恢复输入与进度，成功必须重新验证</td></tr><tr><td>冻结配置</td><td>本轮补后端/超时/初始账本/模型身份接线，旧契约缺键按兼容规则回退</td><td>指明哪些字段冻结，不承诺所有外部环境永不变</td></tr><tr><td>资源估算</td><td>chars/4 + 协议常数，价格估计非真实账单；未知用量不能当零</td><td>预留与计量可审计，不宣传绝不超 provider 账单</td></tr><tr><td>服务并发</td><td>单进程线程池/SQLite线程锁/SSE轮询；没有真实负载指标</td><td>配置并发不是测量吞吐，未证明多实例领取安全</td></tr><tr><td>Redis</td><td>可选任务锁；启动连接失败回内存，运行中故障可能失败</td><td>不是缓存、队列或任务调度器，也不是多实例安全证明</td></tr><tr><td>输入与输出</td><td>仓库说明部分脱敏/作用域校验，测试输出没有通用秘密过滤</td><td>权限由平台强制，prompt 注入与输出泄漏仍有边界</td></tr><tr><td>仓库检索</td><td>AST/字面/符号，无向量库或召回评测</td><td>不声称做了 semantic/hybrid retrieval 或量化召回</td></tr><tr><td>委派</td><td>默认关闭、有界单层，独立会话，父预算与验收独占</td><td>不是开放式群聊，不允许子任务覆盖成功判定</td></tr><tr><td>恢复依赖</td><td>checkpointer 可降级不可恢复；旧身份不完整转待审</td><td>检查点存在不等于恢复可用，更不等于 exactly-once</td></tr><tr><td>AI 协作</td><td>Git 作者或 Co-Authored-By 不能精确证明代码生成比例</td><td>讲自己掌握的验收、关键链路和修复证据，勿编造参与百分比</td></tr></tbody></table>
+<p>本轮保留 legacy_v1、旧回放与 fold_output，因为有明确契约/历史实验调用方。</p>
+<p>reset_workspace 在 plain 全量工具表可达，graph 阶段不开放，不能称“全产品死配置”。</p>
+<p>规范文案可以按既有实现校准，AGENTS 的保护区限制的是未经讨论的语义变化，不是禁止修正文档。</p>
+<p>历史 PROGRESS/TODO/实验快照保留当时事实，并明确不能作为当前完成证据。</p></article><article id="04-code-walkthrough"><h1 id="04-code-walkthrough-h1">04 · 最重要的 20% 代码精读 <a class="anchor" href="#04-code-walkthrough-h1">#</a></h1>
+<blockquote>选段标准：<strong>面试会问的机制，恰好落在这几段里</strong>。每段结构：代码 → 它在干什么 → 为什么这么写 → 会被怎么问 → 顺手讲的 Python 语法点。 行号以当前 HEAD 为准，可当场打开核对。</blockquote>
+<hr>
+<h2 id="04-code-walkthrough-h2">1. 请求入口：受理只做&quot;决定要不要做&quot;，不做&quot;怎么做&quot; <a class="anchor" href="#04-code-walkthrough-h2">#</a></h2>
+<pre><code># app/api/service.py（节选逻辑）
+spec = build_task_spec(..., max_turns=DEFAULT_MAX_TURNS, ...)
+idem_key = spec.task_spec_hash           # 任务身份 = 契约哈希
+existing = repo.find_by_idem_key(idem_key)
+if existing: return existing_row, False  # 幂等：同 spec 第二次进来不再开新任务
+lock = build_lock(settings.redis_url)    # 默认 InMemoryLock
+lock.acquire(f&quot;task:{idem_key}&quot;, ttl=settings.task_timeout_seconds + 60)</code></pre>
+<p><strong>在干什么</strong>：把&quot;这次请求要不要执行&quot;变成一个纯哈希比较 + 一把带 TTL 的锁。</p>
+<p><strong>为什么</strong>：客户端重试（网络抖动、用户多点一次）在无幂等的设计里就是<strong>双份钱 + 双份工作区</strong>。</p>
+<p><strong>会被怎么问</strong>：&quot;幂等键为什么用 spec 哈希而不是 request id？&quot;→ 因为语义是&quot;同样的输入就是同一个任务&quot;，与客户端身份无关；代价是 <code>DEFAULT_MAX_TURNS=20</code> 竟然参与身份（<code>service.py</code> 硬编码、不是 Settings 项），改它会让历史任务的哈希漂移——这是我愿意承认的设计瑕疵。</p>
+<p><code>Python 语法点</code>：<strong><code>@lru_cache</code> + 冻结 dataclass</strong>。<code>get_settings()</code> 带 <code>@lru_cache</code>（<code>config.py</code>）意味着 Settings 在进程内是单例，测试必须显式清缓存——<code>conftest.py</code> 的 <code>_fresh_settings</code> 就是 autouse 夹具在每条用例前后清一次，因为它曾经造成过跨用例泄漏。这是&quot;装饰器改变函数语义 → 测试必须配合&quot;的典型样本。</p>
+<hr>
+<h2 id="04-code-walkthrough-h3">2. Agent 内循环：五道检查的顺序就是设计 <a class="anchor" href="#04-code-walkthrough-h3">#</a></h2>
+<pre><code># app/graph/plain_loop.py（节选）
+for turn_no in range(start_turn, max_turns + 1):
+    if cancel_event is not None and cancel_event.is_set():
+        raise TaskCancelled(f&quot;cancelled at turn {turn_no} boundary&quot;)
+    if deadline_epoch is not None and time.time() &gt; deadline_epoch:
+        raise _budget_error(&quot;task exceeded time budget ...&quot;, tokens_spent, ...)
+    parked = _interaction_gate(turn_no)  # 等用户回答/纠偏
+    if parked is not None:
+        return parked
+    messages, repaired = SessionState.repair_orphans(messages, recovery_policy)</code></pre>
+<pre><code># app/graph/plain_loop.py（节选，资源账本）
+call_id = ledger.begin_call(stage=state_label, round_no=round_no)
+ledger.reserve(
+    call_id=call_id,
+    stage=state_label,
+    round_no=round_no,
+    request_tokens=estimate_request(messages, schemas).total_tokens,
+)</code></pre>
+<p><strong>在干什么</strong>：每回合开头按固定顺序过 取消 → 墙钟 → 交互 → 孤儿配对 → 保护区容量 → 压缩 → 阶段份额 → 任务账本，然后才发请求。</p>
+<p><strong>为什么这个顺序</strong>：</p>
+<ul><li>取消和截止是&quot;必须立刻停&quot;的，放最前；</li></li><li>交互门放在配对<strong>之前</strong>，因为恢复后要&quot;从同一处重新进入，恰好一次&quot;（代码注释明写）；</li></li><li><code>repair_orphans</code> 放在唯一发送点之前——注释解释了原因：严格端点遇到&quot;assistant 声明了 tool_call 但没有回执&quot;会直接 400，整题崩成 NEEDS_REVIEW；如果指望四个回填分支各自记得配对，就一定会有分支漏掉。</li></li><li><code>ledger.reserve</code> 的注释是最值钱的一句：&quot;<strong>检查与登记在同一临界区完成</strong>，比较基数是已用 + 全部在途预留 + 本次预留。此前只看已用，两个并发请求各自都装得下就都发出去了，现金/额度上限形同一半。&quot;→ 这是 <strong>TOCTOU 在预算上的版本</strong>，也是&quot;我先只查再扣&quot;的竞态修复。</li></li></ul>
+<p><strong>会被怎么问</strong>：&quot;两个并发请求同时通过预算检查怎么办？&quot;→ 指着这段说&quot;我踩过，现在是原子预留 + 在途计入&quot;。</p>
+<p><code>Python 语法点</code>：<strong>异常携带业务数据</strong>。<code>BudgetError</code> 带 <code>tokens_spent/turns/last_content</code>（<code>errors.py</code>），<code>ModelTransportError</code> 带 usage 信封——因为&quot;钱已经花了&quot;这个事实不能因为抛异常就丢账。这是 Python 里用异常做<strong>结构化返回</strong>而非纯控制流的正确姿势（也解释了为什么补丁应用失败不是异常而是 <code>PatchApplyResult</code>）。</p>
+<hr>
+<h2 id="04-code-walkthrough-h4">3. 工具统一入口：可见即可执行，异常一律收敛 <a class="anchor" href="#04-code-walkthrough-h4">#</a></h2>
+<pre><code># app/tools/registry.py（节选）
+spec = REGISTRY.get(name)
+if spec is None:
+    result = ToolResult.fail(f&quot;unknown tool: {name}&quot;)
+else:
+    ctx.tracker.record(tool=&quot;tool_started&quot;, ...)          # 执行之前先广播
+    try:
+        bound = inspect.signature(spec.handler).bind(ctx, **args)   # ← 关键
+        result = spec.handler(*bound.args, **bound.kwargs)
+    except TypeError as exc:
+        result = ToolResult.fail(f&quot;bad arguments for {name}: {exc}&quot;)
+    except Exception as exc:
+        result = ToolResult.fail(f&quot;{type(exc).__name__}: {exc}&quot;)</code></pre>
+<p><strong>在干什么</strong>：用 <code>inspect.signature(...).bind()</code> 做参数校验；只有&quot;绑定失败&quot;才叫 <code>bad arguments</code>；其他异常统一变成 <code>ToolResult</code> 回填给模型；工具名前必须发一条 <code>tool_started</code>。</p>
+<p><strong>为什么这么写</strong>（注释里就是整改记录）：&quot;此前 <code>except TypeError</code> 会把 handler 函数体内的业务 TypeError 也误报成参数错误&quot;——<strong>异常类型复用导致的误诊</strong>，这是 AI 生成代码里极其常见的缺陷，能讲出来就是审阅能力的证据。</p>
+<p><code>tool_started</code> 的价值：&quot;SSE 的 tool_started 与轨迹共享同一条事实（没有第二条进度来源）；崩溃在 handler 中途时，事件流上&#x27;已开始、无结果&#x27;与孤儿 tool_call 的恢复语义对得上。&quot;→ <strong>一条事实只有一个来源</strong>，这是可观测性设计而不是加日志。</p>
+<p><strong>会被怎么问</strong>：&quot;工具抛异常会整个任务挂掉吗？&quot;→ &quot;不会，工具异常收敛成一次失败的回执喂回模型，由它决定重试还是换路；但只有工具层的异常收敛，执行器/门禁的异常是分层上抛的。&quot;</p>
+<p><code>Python 语法点</code>：</p>
+<ul><li><strong><code>*</code> 强制关键字参数</strong>：<code>def execute(ctx, name, args, *, round_no=0, state=&quot;-&quot;)</code> —— 防止位置参数误传；</li></li><li><strong><code>@property</code> 把判定规则藏在字段名下</strong>：<code>all_passed</code> 看起来像布尔，实际是一整套反伪绿算法（见 §6）；</li></li><li><strong>上下文管理器 + 锁</strong>：<code>repository.py</code> 用一把 <code>threading.Lock</code> 包住所有 SQLite 访问，配合 <code>check_same_thread=False</code>——这是&quot;我自己管理并发正确性&quot;而不是靠框架。</li></li></ul>
+<hr>
+<h2 id="04-code-walkthrough-h5">4. 候选补丁写入口：块协议 → 计算行号 → 双门禁 → 原子应用 <a class="anchor" href="#04-code-walkthrough-h5">#</a></h2>
+<pre><code># app/tools/patching.py（骨架，按调用顺序）
+report = run_gates(skeleton_diff, allowed_paths=..., max_files=...)  # 门禁①：编译前形状
+diff_text = compile_block_patch(patch_text)  # 锚点匹配 + 行号由平台算
+report = run_gates(diff_text, ...)  # 门禁②：编译后产物
+apply_result = apply_diff(workspace, diff_text)  # 不是异常，是结构体</code></pre>
+<pre><code># app/gitops/patcher.py（顺序）
+landing = check_landing(paths)  # symlink → symlink_escape；resolve 逃逸 → path_escape
+rc = git([&quot;apply&quot;, &quot;--check&quot;, &quot;--whitespace=nowarn&quot;], input_bytes=diff_text)  # stdin，不进 argv
+snapshot = read_bytes_of_touched_py_files()
+rc = git([&quot;apply&quot;], input_bytes=diff_text)
+rescan = detect_escape_after_apply()  # TOCTOU 复扫
+if rescan:
+    git([&quot;apply&quot;, &quot;-R&quot;], input_bytes=diff_text)  # 反打回
+if not ast_parses(new_content):
+    restore(snapshot)  # 语法失败按字节还原</code></pre>
+<p><strong>在干什么</strong>：模型的补丁不是 diff，是<strong>块协议</strong>（<code>*** Begin/End Patch</code> + 锚点文本）。行号由 <code>SequenceMatcher.get_grouped_opcodes(3)</code> 计算（<code>blockpatch.py</code>），锚点 0 命中 / 多命中 / 乱序都直接拒。门禁跑两次是为了同时拦住&quot;坏意图&quot;和&quot;坏编译产物&quot;。</p>
+<p><strong>为什么</strong>：模型写 unified diff 最常见的失败就是行号偏移和上下文不符；把行号从契约里拿掉，失败模式从&quot;打不上&quot;变成&quot;锚点不明确&quot;，后者可以喂回模型让它自己修正。</p>
+<p><strong>会被怎么问</strong>：&quot;补丁部分应用了怎么办？&quot;→ &quot;<code>git apply</code> 全成或全不成，失败返回结构体；真正危险的是 TOCTOU，所以应用后再复扫一次，违规就 <code>git apply -R</code> 反向打回，反打失败也如实上报、不自动掩盖。&quot;</p>
+<p><code>Python 语法点</code>：<strong><code>difflib.SequenceMatcher</code></strong>（标准库做行号计算，不用第三方）；<strong>bytes 快照 + <code>os.replace</code> 原子写</strong>（<code>candidate.py</code> 拒绝空补丁、tmp+replace 落盘）。</p>
+<hr>
+<h2 id="04-code-walkthrough-h6">5. 七项门禁：每一条都对应一次真实事故 <a class="anchor" href="#04-code-walkthrough-h6">#</a></h2>
+<pre><code># app/graph/gates.py（判定要点，非原文）
+if not diff_text.strip():
+    violation(&quot;format&quot;, &quot;diff is empty&quot;)
+elif &quot;diff --git&quot; not in diff_text and not diff_text.startswith((&quot;--- &quot;, &quot;+++ &quot;)):
+    violation(&quot;format&quot;, ...)
+for rel in files:
+    if is_test_file(rel):
+        violation(&quot;files&quot;, &quot;modifying test file is forbidden&quot;)
+    if (
+        &quot;..&quot; in parts
+        or &quot;.git&quot; in parts
+        or rel.startswith((&quot;/&quot;, &quot;\\&quot;))
+        or re.fullmatch(r&quot;[A-Za-z]:&quot;, parts[0])
+    ):
+        violation(&quot;paths&quot;, &quot;path escapes workspace&quot;)
+    if not path_allowed(rel, allowed_paths):
+        violation(&quot;paths&quot;, &quot;outside allowed scope&quot;)
+for rel in parse_new_files(diff_text):  # 影子模块（N-1）
+    if any(name in _RESERVED_TOP_LEVEL for name in candidates):
+        violation(&quot;shadow&quot;, ...)
+for rel in parse_new_symlinks(diff_text):  # mode 120000 一律拒（P3-6/R3-Q4）
+    violation(&quot;files&quot;, &quot;new symlink is forbidden&quot;)
+if len(files) &gt; max_files:
+    violation(&quot;scope&quot;, ...)
+return GateReport(ok=not violations, violations=violations)</code></pre>
+<p><strong>读代码时要抓到的三个&quot;为什么&quot;</strong>：</p>
+<ol><li><strong>冒号只按 Windows 盘符形态拒绝</strong>（注释复盘 <span class="pri p-P2">P2</span>）：早期实现把所有含 <code>:</code> 的路径当绝对路径，误杀 <code>weird:name.py</code> 这类 POSIX 合法文件名 → 说明门禁会有<strong>误杀成本</strong>，收紧与放宽都是语义变更（AGENTS.md 把它列禁区的原因）。</li></li><li><strong>影子模块门禁</strong>：新增顶层 <code>pytest/</code> 或 <code>json.cpython-314-...so</code> 会让 <code>python -m pytest</code> 的 <code>sys.path[0]=cwd</code> 劫持<strong>判定层本身</strong>。这是本项目最精彩的一条安全设计——它防的不是改测试，而是<strong>替换裁判</strong>。</li></li><li><strong>符号链接与目标无关一律拒</strong>：注释理由很硬——&quot;链接目标的合法性是文件内容，静态文本无从审计&quot;。<strong>承认静态分析的边界并据此收紧</strong>，这是可以当亮点讲的判断力。</li></li></ol>
+<p><strong>实际测试</strong>：<code>tests/test_attacks.py</code> 用 <code>bugs/attacks/</code> 的 10 个目录逐条验证对应门禁拦截，且断言工作区仍未被污染。</p>
+<hr>
+<h2 id="04-code-walkthrough-h7">6. 反伪绿判定：<code>all_passed</code> 为什么不是一个 <code>rc == 0</code> <a class="anchor" href="#04-code-walkthrough-h7">#</a></h2>
+<pre><code># app/adapters/pytest_adapter.py（节选，docstring 摘要 + 关键分支）
+if self.exit_code != RC_OK or self.timed_out: return False
+if self.failed or self.errors or self.skipped: return False     # 跳过也算不过
+if not self.requested_ids: return True
+...  # 每条 requested id 解析成 TestIdentity，解析不了即不过
+distinct_cases = 去重后的 (file, classname, name) 三元组
+for identity in identities:
+    matching = [c for c in distinct_cases if case_matches(identity, *c)]
+    if len(matching) != 1: return False     # 0 = 被 deselect；≥2 = 身份歧义
+    if matching[0] not in passed_statuses: return False
+return True</code></pre>
+<p><strong>为什么值得逐行讲</strong>：注释直接写了攻击方式——&quot;仅凭 <code>exit_code==0</code> 防不了伪：仓库内 conftest 可以把用例 skip 或 deselect，junit 的 rc 依然是 0&quot;。而 <code>≥2 判不过</code>修的是 F3 缺陷：只比&quot;文件名 + 方法名&quot;时，<code>TestB::test_same</code> 会被当成满足了 <code>TestA::test_same</code>。</p>
+<p><strong>顺带</strong>：<code>build_pytest_cmd</code> 强制 <code>-o junit_family=xunit1</code>，注释解释&quot;xunit2 不写 <code>file</code> 属性，classname 随 rootdir 漂移&quot;，因为匹配以 <code>file</code> 为主判据。→ <strong>判定依赖输出格式细节</strong>，这是很真实的工程约束。</p>
+<p><strong>会被怎么问</strong>：&quot;你怎么确定它不是把测试藏起来而不是修好了？&quot;→ 三层：测试文件禁止修改（门禁 2）、skip/deselect 一律判不过（本段）、点名测试必须唯一命中（本段）。然后<strong>主动补一句</strong>：&quot;但这只防手段不防意图，过拟合补丁我防不住——那需要隐藏测试集。&quot;</p>
+<hr>
+<h2 id="04-code-walkthrough-h8">7. 终局验收：一个合取式管住所有引擎 <a class="anchor" href="#04-code-walkthrough-h8">#</a></h2>
+<pre><code># app/graph/acceptance.py（原文）
+resolved = (
+    validation == VALIDATION_PASSED
+    and gate == GATE_PASSED
+    and diff_non_empty
+    and resource_status == &quot;within_budget&quot;
+    and not cancelled
+)</code></pre>
+<p><code>validation</code> 需要 <code>verify_ran</code> 且失败集与回归集都绿且<strong>双跑不矛盾</strong>（矛盾 → <code>inconclusive</code> → NEEDS_REVIEW）；<code>gate</code> 需要 <code>gate_ran and gate_ok</code>；账本 <code>exhausted/unknown</code> 一票否决；token 用 <code>max(state, ledger)</code> 复核；graph 还要候选绑定——工作区 diff 的 sha256 必须等于冻结的 <code>candidate_hash</code>。</p>
+<p><strong>为什么最值钱的是模块 docstring</strong>（<code>acceptance.py</code>）：它记录了缺陷现场——&quot;graph 的 finish 节点无条件写 FINISHED/resolved，plain 的判定段只看两个布尔；两引擎都不在终局复查&#x27;未超预算、非空 diff、取消状态&#x27;。修法：两引擎调用<strong>同一个</strong> helper。&quot;→ 面试里这就是&quot;我发现过什么 bug、怎么修&quot;的完美答案：<strong>缺陷是两个实现各自判定，修法是收敛判定而不是补断言</strong>。</p>
+<hr>
+<h2 id="04-code-walkthrough-h9">8. 上下文压缩与容量：把&quot;塞不下&quot;和&quot;压不动&quot;分成两件事 <a class="anchor" href="#04-code-walkthrough-h9">#</a></h2>
+<pre><code># app/context/token_window.py（行为）
+compact_messages():  Pass A 把旧工具结果换成&quot;工具名+参数&quot;存根；Pass B 整回合组丢弃（不造孤儿）
+protected_region():  头部约束 + 尾部钉住的回合组 = 压不动的那一段
+# 调用侧（plain_loop.py）
+if estimate_request(protected_region(messages), schemas).total_tokens &gt; capacity_ceiling:
+    record(CONTEXT_CAPACITY_EXCEEDED)     # 不再反复压缩</code></pre>
+<p><strong>为什么</strong>：注释讲得很直白——&quot;压缩只会把额度耗光再发一发照样装不下的请求&quot;。<strong>软窗口关掉（=0）也要过这一关</strong>，&quot;关闭软压缩&quot;从不等于&quot;宣称端点装得下&quot;。</p>
+<p><strong>顺带的诚实性设计</strong>（M6/ADR-0014）：能力档案必须带来源（<code>operator_config</code>/<code>provider_docs</code>/<code>probed</code>），没来源落保守档，<strong>申报更大一律拒绝发起</strong>，不从模型名推断窗口；端点回报的 <code>served_model</code> 与请求名不一致就标漂移。</p>
+<p><strong>会被怎么问</strong>：&quot;上下文超了怎么办？&quot;→ 先压缩、压缩不看预算只看保护区、保护区都塞不下就明确失败，并说明&quot;我不会让它在压缩空转里烧钱&quot;。</p>
+<hr>
+<h2 id="04-code-walkthrough-h10">9. 执行器：argv、env 白名单、超时杀进程树 <a class="anchor" href="#04-code-walkthrough-h10">#</a></h2>
+<pre><code># app/executor/local_runner.py（关键行）
+env = build_env(os.environ)                    # :32-56 只保留 _ENV_ALLOWLIST
+kwargs[&quot;creationflags&quot;] = CREATE_NEW_PROCESS_GROUP   # :117 POSIX 用 start_new_session
+proc = subprocess.Popen(command, cwd=..., env=..., stdin=DEVNULL, stdout=PIPE, stderr=PIPE)  # :125
+try: out, err = proc.communicate(timeout=timeout)
+except subprocess.TimeoutExpired:              # :137 超时是业务结果，不是异常
+    kill_tree(proc)                            # :79-96 taskkill /F /T /PID 或 killpg(SIGKILL)
+    ...三段兜底：proc.kill() → 限时 communicate → 关管道   # :141-156</code></pre>
+<p><code>cmd.py</code> 同理：<code>[&quot;git&quot;, &quot;-C&quot;, str(cwd), *args]</code> + <code>subprocess.run(..., input=input_bytes)</code>。</p>
+<p><strong>为什么强调</strong>：这是&quot;注入面&quot;的正面答案（无 shell、无字符串拼接、diff 走 stdin）。</p>
+<p><strong>诚实的另一面</strong>：兜底只关管道不 reap，逃逸孙进程可能留存；<code>whitelist.py</code> 只匹配 basename（靠&quot;argv[0] 永远由平台设置&quot;这个调用方约束兜住）；<strong>默认后端没有任何资源配额</strong>。</p>
+<p><code>Python 语法点</code>：<strong><code>subprocess</code> 的 timeout 语义</strong>、<code>communicate</code> 与 <code>PIPE</code> 的死锁规避、Windows/POSIX 进程组差异（<code>CREATE_NEW_PROCESS_GROUP</code> vs <code>start_new_session</code>）——问&quot;跨平台怎么做的&quot;时，这段就是答案。</p>
+<hr>
+<h2 id="04-code-walkthrough-h11">10. 数据库与事件流：三张表 + 终态不可复活 <a class="anchor" href="#04-code-walkthrough-h11">#</a></h2>
+<pre><code># app/storage/db.py
+tasks(status, result_json, task_spec_json, task_spec_hash, stage, last_event_at, ...)
+trajectory_events(id AUTOINCREMENT, task_id, event_id, ...)   # :104+ 唯一 (task_id,event_id) 部分索引
+patches(...); trajectory_events_duplicates(...)               # 归档重复事件
+# app/storage/repository.py
+:138 set_status_unless_terminal   :150 finalize_task(先到先赢)   :168 cancel_task_row
+:285 upsert_event_live(同时推进 stage/last_event_at)</code></pre>
+<p><strong>在干什么</strong>：<code>trajectory_events.id</code> 自增号就是 <strong>SSE 的续传游标</strong>（客户端带 <code>last_event_id</code>，<code>routes.py</code>）；<code>test_runs</code>/<code>evaluations</code> 两张表已退出当前 schema/读写路径（不自动删旧数据库里的历史表）（<code>:54-60</code> 留注释），因为判定结果已经全在 <code>tasks</code> 与工件里——企划书已同步当前业务表与迁移归档，旧表仅在历史数据库中可能残留。</p>
+<p><strong>会被怎么问</strong>：&quot;迟到事件会不会把已完成任务改回运行中？&quot;→ &quot;<code>set_status_unless_terminal</code> + <code>finalize_task</code> 的&#x27;先赢&#x27;语义保证终态不可被复活，但进度列 <code>stage/last_event_at</code> 允许由 live sink 推进，这是分开的两个字段。&quot;</p>
+<hr>
+<h2 id="04-code-walkthrough-h12">11. FakeLLM：回放契约与它的两个特例 <a class="anchor" href="#04-code-walkthrough-h12">#</a></h2>
+<pre><code># app/llm/fake.py, 71, 110-121
+provider = &quot;fake-replay&quot;
+steps = json.load(replay_script)  # [{&quot;tool&quot;: ..., &quot;args&quot;: {...}}, ...]
+if PLAN_MARKER in last_user_text and plan_mode != &quot;strict&quot;:
+    return plan_reply  # 非消费通道：不推进游标
+if cursor &gt;= len(steps):
+    return finish(success=False)  # 脚本耗尽 = 失败</code></pre>
+<p><strong>为什么必须读懂它</strong>：<code>bugs/&lt;ID&gt;/replay/script.json</code> 里的 <code>apply_patch</code> 步骤<strong>内含完整补丁文本</strong>，而那份文本是 <code>gen_bugs.py</code> 从 buggy/fixed 源码 <code>unified_diff</code> 出来的——即<strong>标准答案</strong>。</p>
+<p>→ 一句话：<strong>FakeLLM 证明的是&quot;平台能不能正确判定一次修复&quot;，不是&quot;模型能不能修复&quot;</strong>。PLAN_MARKER 特例的存在理由是&quot;不重写历史回放夹具&quot;，这是兼容性债的活标本。</p>
+<hr>
+<h2 id="04-code-walkthrough-h13">12. Redis / Qdrant 专题（面试八股对撞真实代码） <a class="anchor" href="#04-code-walkthrough-h13">#</a></h2>
+<ul><li><strong>Redis</strong>（<span class="tag t-fact">代码事实</span>）：只有 <code>locks.py</code> 的分布式锁；<code>RedisLock</code> 用 <code>SET NX EX</code> + Lua <code>if redis.call(&quot;get&quot;,KEYS[1])==ARGV[1] then del</code>（token 比对防误删他人锁，<code>:43-62</code>）；默认 <code>redis_url=&quot;&quot;</code> → <code>InMemoryLock</code>（其 release 无持有者校验，但 DB 幂等挡住双持有者）。<strong>没有缓存、没有队列、没有 pub/sub</strong>。<span class="tag t-risk">风险点</span>：Redis 故障时现在会直接失败，没有降级路径。</li></li><li><strong>Qdrant</strong>（<span class="tag t-fact">代码事实</span>）：<strong>项目里不存在</strong>。<code>grep -riE &quot;qdrant|embedding|vector|faiss|chroma&quot; app/</code> 零命中，<code>pyproject.toml</code> 无该依赖。如果被问&quot;你的向量库怎么用的&quot;，正确答案是&quot;我没有用向量库，我用 AST 骨架 + rg 预筛 + 逐行了断，理由是……&quot;（见 <code>02</code> M6）。<strong>不要因为技能栈里写了 Qdrant 就把它安到这个项目上</strong>——这是最容易一击致命的错配。</li></li></ul>
+<hr>
+<h2 id="04-code-walkthrough-h14">13. 测试体系里最值得讲的三个夹具 <a class="anchor" href="#04-code-walkthrough-h14">#</a></h2>
+<pre><code># tests/conftest.py
+@pytest.fixture(autouse=True, scope=&quot;session&quot;)
+def _basetemp_outside_repo(...):
+    assert repo_root not in (root, *root.parents)   # 临时目录父链上不许有本仓库 .git</code></pre>
+<p><strong>为什么</strong>：仓库在临时目录父链上时，<code>git add -A -N</code> 会&quot;其实不是 git 工作区却静默什么都不加&quot;，夹具缺陷会<strong>悄悄变绿</strong>。这条断言是我见过的最实用的&quot;防止测试自己骗自己&quot;的写法。</p>
+<pre><code># tests/conftest.py  demo_repo：把 tests/fixtures/demo_repo 物化成一次性 git 仓库
+# tests/conftest.py pytest_collection_modifyitems：按 tests/slow_tests.txt 自动打 slow 标记</code></pre>
+<p><code>Python 语法点</code>：<strong>fixture 作用域与 autouse</strong>（session/函数级）、<code>collect_ignore</code>（夹具仓库里有故意红的测试）、<code>pytest_collection_modifyitems</code> 钩子做<strong>外部登记表驱动的标记</strong>、<code>pytest_runtest_logreport</code> 抓&quot;跑了 ≥5s 却没登记&quot;的用例——即<strong>测试套自己也在被治理</strong>。</p>
+<p><strong>实际测试</strong>：<code>tests/test_slow_registry.py</code> 校验登记表没有悬空条目、<code>stress ⊆ slow</code>。</p>
+<hr>
+<h2 id="04-code-walkthrough-h15">14. Python 语法点清单（只列项目真实用到的） <a class="anchor" href="#04-code-walkthrough-h15">#</a></h2>
+<table><thead><tr><th>语法</th><th>项目里的位置</th><th>为什么用</th></tr></thead><tbody><tr><td><code>TypedDict</code></td><td><code>graph/state.py</code>（<code>total=False</code>）</td><td>LangGraph 状态需可 JSON 序列化；无 reducer → last-write-wins</td></tr><tr><td><code>@dataclass(frozen=True)</code></td><td><code>task_spec.py</code>、<code>diagnosis/proposal.py</code></td><td>任务契约不可变，可算内容哈希</td></tr><tr><td><code>@property</code></td><td><code>pytest_adapter.py</code> <code>all_passed</code></td><td>把复杂判定藏在读起来像字段的名字下</td></tr><tr><td><code>@lru_cache</code></td><td><code>config.py</code> <code>get_settings</code></td><td>进程内单例；副作用是测试必须清缓存</td></tr><tr><td><code>@pytest.fixture(autouse=True)</code></td><td><code>conftest.py</code></td><td>每条用例强制隔离设置与临时目录</td></tr><tr><td>Pydantic v2 校验器</td><td><code>schemas.py</code> <code>_exactly_one_source</code>、<code>config.py</code>（pydantic-settings）</td><td>交叉字段校验（bug_id XOR repo_path）；配置全部走 Settings</td></tr><tr><td><code>inspect.signature().bind()</code></td><td><code>registry.py</code></td><td>参数校验与业务 TypeError 分离</td></tr><tr><td>生成器 + SSE</td><td><code>routes.py</code>、<code>events.py</code></td><td>同步生成器被 <code>iterate_in_threadpool</code> 包裹（<span class="tag t-risk">风险点</span>：每流占一线程）</td></tr><tr><td><code>secrets.compare_digest</code></td><td><code>auth.py</code></td><td>定长比较防时序侧信道</td></tr><tr><td><code>threading.Lock</code> / <code>ThreadPoolExecutor</code></td><td><code>repository.py</code>、<code>service.py</code>、<code>nodes.py</code></td><td>真实并发来源（不是 async）</td></tr><tr><td><code>async def</code></td><td>仅 ASGI 管道 <code>app.py</code></td><td><span class="tag t-risk">风险点</span>：async 未带来真并发</td></tr><tr><td><code>difflib.SequenceMatcher</code></td><td><code>blockpatch.py</code></td><td>由锚点计算 unified diff 行号</td></tr><tr><td><code>sqlite3</code> 原生 + WAL</td><td><code>db.py</code>（<code>check_same_thread=False</code>）</td><td>单文件零运维；并发正确性自己管</td></tr><tr><td>异常分层</td><td><code>errors.py</code></td><td><code>TaskError/ExecError/GateError/BudgetError/TaskCancelled/Model*Error</code>，异常携带已消耗事实</td></tr></tbody></table>
+<hr>
+<h2 id="04-code-walkthrough-h16">15. 如果只能读 5 段代码（Day 1 收尾自测） <a class="anchor" href="#04-code-walkthrough-h16">#</a></h2>
+<ol><li><code>app/graph/acceptance.py</code> —— 判定是什么。</li></li><li><code>app/graph/gates.py</code> —— 护栏是什么。</li></li><li><code>app/graph/plain_loop.py</code> —— Agent 循环与终止是什么。</li></li><li><code>app/tools/registry.py</code> —— 动作面与错误契约是什么。</li></li><li><code>app/adapters/pytest_adapter.py</code> —— &quot;通过&quot;这件事怎么定义。</li></li></ol>
+<p>能用 3 分钟把这 5 段连成一条链（受理 → 循环 → 工具 → 门禁 → 判定），Day 1 目标即达成；连不成，就回到 <code>00</code> §2 的箭头图重走一遍。</p>
+<h2 id="04-code-walkthrough-h17">本轮接线校准 <a class="anchor" href="#04-code-walkthrough-h17">#</a></h2>
+<p>TaskSpec 的 settings_for_policy 生成任务配置副本，服务/两引擎及报告使用该配置；</p>
+<p>pytest 显式接收冻结后端和超时。graph 候选分支与 diagnose 红/绿基线同样传递该后端。</p>
+<p>损坏的 ledger_state.json 保留并标 unknown，拒新额度与 resolved；不因恢复重新发预算。</p>
+<p>registry 将签名绑定与 handler 执行放在不同异常范围，内部 TypeError 如实报告为执行失败。</p>
+<p>对应回归见 test_frozen_policy、test_preflight、test_budget_reservations、test_tools。</p>
+<p>终局共享acceptance直接复核deadline，防止VERIFY已绿但门禁/diff处理期间越时仍resolved；graph传用户等待顺延后的实际deadline。</p></article><article id="05-evaluation"><h1 id="05-evaluation-h1">05 · 评测证据与证明力 <a class="anchor" href="#05-evaluation-h1">#</a></h1>
+<p>必须分开回答：平台如何判定补丁成立，以及真实模型在什么样本上取得什么结果。</p>
+<h2 id="05-evaluation-h2">1. 离线测试与 FakeLLM <a class="anchor" href="#05-evaluation-h2">#</a></h2>
+<p>模型交互使用 FakeLLM，不依赖网络；真实 Git、pytest 子进程、JUnit、SQLite 与崩溃注入用于验证平台接线。</p>
+<p>参考补丁被嵌入回放脚本，所以 fake 的 resolved 不能宣读为模型修复率。</p>
+<p>legacy 计划模式自动识别计划请求并返回预制文本，不能验证真实模型计划遵循；strict 模式与协议测试补这层边界。</p>
+<table><thead><tr><th>检查</th><th>证明的事实</th><th>局限</th></tr></thead><tbody><tr><td>test_attacks / test_test_identity</td><td>门禁与具体身份匹配的已知攻击/缺失/歧义场景</td><td>不是任意不受信仓库的安全证明</td></tr><tr><td>test_candidate_recovery / test_resume_crash</td><td>候选重应用、重验、真实进程死亡恢复</td><td>不是所有崩溃点或多实例一致性证明</td></tr><tr><td>test_budget_reservations / test_f1_budget</td><td>预留/结算/未知用量与终局拒绝</td><td>估算不是 tokenizer 真值，也不是 provider 账单</td></tr><tr><td>test_frozen_policy</td><td>graph/plain 配置漂移后仍走受理后端、双跑和预算</td><td>不替代每个外部端点/部署的复验</td></tr><tr><td>test_bugset / test_driver / test_graph</td><td>自建题基线和平台闭环</td><td>合成小仓库与答案回放不证明泛化</td></tr><tr><td>test_backend / test_docker</td><td>路由、容器命令以及可用环境下的容器 smoke</td><td>mock 路由和真实 Docker 证据必须分开</td></tr><tr><td>test_docs_anchors</td><td>引用子串、注册清单、相对链接一致</td><td>子串存在不证明完整能力语义</td></tr></tbody></table>
+<p>用例总数以对应提交/环境的收据为准，不维护当前通过数或 CI 连绿数。</p>
+<h2 id="05-evaluation-h3">2. 真实模型实验确实存在，但强度不同 <a class="anchor" href="#05-evaluation-h3">#</a></h2>
+<table><thead><tr><th>材料</th><th>能支持什么</th><th>不能支持什么</th></tr></thead><tbody><tr><td>work-notes/eval-report-real.md</td><td>一份早期真实模型批次快照</td><td>缺模型名/成本/provenance，不作当前修复率依据</td></tr><tr><td><a href="../../work-notes/swe-ablation-evidence-2026-10-07.md">SWE 消融证据</a></td><td>导入外部真实题、真实模型运行、双跑复核、两臂与后续重复噪声实验的历史记录，含负结果</td><td>最早两臂跨 graph/plain、判定强度不同；小样本/选择偏差；不能推广为当前版本收益</td></tr><tr><td><a href="../../archive/paid-batch-preregistration-2026-10-08.md">付费批预登记与停手</a></td><td>预登记题单、重复设计、负结果与停止条件</td><td>预登记不等于实施全部目标，更不构成新付费授权</td></tr><tr><td>evidence/agent-upgrade 的离线收据</td><td>对应当时提交、dirty 与环境下的发布检查</td><td>不是当前提交 CI 结果或官方 benchmark 成绩</td></tr></tbody></table>
+<p>本轮只读实验记录并做离线校准，没有付费请求、没有重跑 SWE 批次。</p>
+<p>原始 runs 不随 Git 全部入库；记录可证明当时报告了哪些结果，独立复核仍需要完整产物与对应环境。</p>
+<p>“效果证据为零”和“已证明循环普遍优于单发”都超出事实。</p>
+<h2 id="05-evaluation-h4">3. SWE-bench 接入真实边界 <a class="anchor" href="#05-evaluation-h4">#</a></h2>
+<p>swebench.py/import_swebench.py 将元数据、源码/test_patch 和 env 转成本地任务；可使用官方题目镜像，</p>
+<p>复用本平台 pytest adapter、门禁和验收。使用官方镜像不等于使用官方评测 harness。</p>
+<p>当前判定是具体失败集与抽样回归集，不是官方完整 PASS_TO_PASS 覆盖；样本、筛选、协议与提交形态自定。</p>
+<p>历史实跑不等于提交了官方成绩；仓库没有 bugs/SWE-* 也不意味着从未在 runs/ 下导入运行。</p>
+<h2 id="05-evaluation-h5">4. 指标与事实源 <a class="anchor" href="#05-evaluation-h5">#</a></h2>
+<p>metrics_version=2；annotate_v1 仅用于显式历史重算，不删除或混算。</p>
+<p>resolved 真值来自平台 acceptance，metrics 做统计；strict 定位为 bool(touched) and touched &lt;= expected，</p>
+<p>仍可能只覆盖参考文件的一部分，所以 coverage 必须一起读。</p>
+<p>latest_per_bug 是历史每题/臂取最新口径；重复实验使用 pair_runs 保留 (task, arm, repetition)。</p>
+<p>manifest 是批定义，比较控制身份与观测结果；成本 micro-USD 来自 usage × 价表，非 settled_bill。</p>
+<h2 id="05-evaluation-h6">5. 推荐面试回答 <a class="anchor" href="#05-evaluation-h6">#</a></h2>
+<p>“离线回放证明平台的已覆盖控制链路，不能证明模型效果。真实 SWE 与消融有历史实跑，</p>
+<p>但样本有限、早期对照跨引擎、回归集抽样，后续还有负结果。当前升级没有重新实跑，</p>
+<p>所以我讲机制与边界，不报官方解决率，也不把历史分数当当前版本成绩。”</p>
+<p>未来扩展可以是同引擎分层抽样、隐藏测试、人类盲审、预登记重复；这些不是本轮新增功能或已完成能力。</p></article><article id="06-production-gap"><h1 id="06-production-gap-h1">06 · Demo → Production 的缺口（按 <span class="pri p-P0">P0</span>/<span class="pri p-P1">P1</span>/<span class="pri p-P2">P2</span>） <a class="anchor" href="#06-production-gap-h1">#</a></h1>
+<blockquote>分级是未来生产化优先级，不代表当前仓库审查确认了同级缺陷。 铁律：<strong>禁止把生产化扩展说成已实现</strong>。本文每一节先给&quot;当前真实情况（含代码位置）&quot;，再给&quot;缺什么 / 怎么补&quot;。 讲法模板：「这条我已经有什么 → 这条我明确没有 → 上线第一步是哪个」。</blockquote>
+<hr>
+<h1 id="06-production-gap-h2"><span class="pri p-P0">P0</span>（不做就不能对外提供服务） <a class="anchor" href="#06-production-gap-h2">#</a></h1>
+<h2 id="06-production-gap-h3"><span class="pri p-P0">P0</span>-1 Authentication / Authorization（鉴权与授权） <a class="anchor" href="#06-production-gap-h3">#</a></h2>
+<table><thead><tr><th>维度</th><th>当前真实情况（<span class="tag t-fact">代码事实</span>）</th><th>缺口</th></tr></thead><tbody><tr><td>AuthN</td><td><code>app/api/auth.py</code>：Bearer token，<code>secrets.compare_digest</code> 定长比较；但 <code>PATCHPILOT_API_TOKEN</code> <strong>默认空 = 完全关闭</strong>，只在启动时打一条 warning（<code>app.py</code>）；<code>/api/health</code> 永久豁免</td><td>无用户体系、无 API Key 生命周期（签发/轮换/吊销）、无 session、无 OIDC</td></tr><tr><td>AuthZ</td><td><strong>无角色概念</strong>。任何能调 API 的主体可以对任意 <code>bug_id</code> / 任意 <code>repo_path</code> 建任务</td><td>无资源级授权：谁能看哪个任务、谁的报告、谁的任务</td></tr><tr><td>输入约束</td><td><code>PATCHPILOT_ALLOWED_REPO_ROOTS</code> <strong>默认空 = 不限制</strong>（<code>config.py</code>），且只作用于 <code>repo_path</code> 分支（<code>service.py</code>）；<code>bug_id</code> 走 pattern + <code>bugs_root</code> 校验（<code>schemas.py</code>、<code>service.py</code>）</td><td>compose 里也传空（<code>docker-compose.yml</code>）</td></tr></tbody></table>
+<p><strong>为什么是 <span class="pri p-P0">P0</span></strong>：<span class="tag t-fact">代码事实</span> 的组合是&quot;默认无鉴权 + 可指定任意宿主目录 + 该目录的 <code>conftest.py</code> 会被执行&quot; → 若服务执行攻击者可控制的仓库，暴露默认无鉴权入口可能导致宿主代码执行。<code>docs/threat-model.md</code> 自己就是这么写的。</p>
+<p><strong>怎么补</strong>（顺序即优先级）：① 默认开启 token 并在<strong>非回环绑定 fail-fast</strong>（现在是 warning）；② <code>ALLOWED_REPO_ROOTS</code> 默认非空；③ 引入 principal 概念 + 任务归属行（<code>tasks.owner</code>），所有 GET/cancel/answer 校验归属；④ 令牌哈希存库（现在配置里是明文）；⑤ 走 OIDC/服务账号；⑥ 速率与配额绑定 principal。</p>
+<p><strong>面试口径</strong>：&quot;默认姿态是回环单用户，这是我明确不防的一项，写在威胁模型里。要对外服务，第一件事不是加权限模型，是<strong>把默认值从&#x27;不限&#x27;改成&#x27;拒&#x27;</strong>。&quot;</p>
+<h2 id="06-production-gap-h4"><span class="pri p-P0">P0</span>-2 Rate Limit / 成本控制（最直接的烧钱风险） <a class="anchor" href="#06-production-gap-h4">#</a></h2>
+<p><strong>当前真实情况</strong>：没有任何限流（无中间件、无 429）。唯一的钱闸门是<strong>单任务预算</strong>：<code>token_budget=200000</code>、<code>cost_budget_micro_usd=0</code>（0=不限）、<code>max_model_calls=0</code>、<code>llm_max_tokens=4096</code>、<code>default_max_rounds=5</code>、<code>max_turns=20</code>，由 <code>ResourceLedger</code> 原子预留执行（<code>plain_loop.py</code>）。</p>
+<p><strong>缺口</strong>：全局并发只有 <code>task_max_workers=2</code> 这一个隐式限流；<strong>没有 per-user/per-IP 速率、没有每日配额、没有排队上限、没有&quot;提交即扣额度&quot;</strong>；<code>budget_mode=tokens</code> 默认按 token 而非钱，<code>cost</code> 只在有价目时才算得出（未收录模型 n/a）。</p>
+<p><strong>怎么补</strong>：令牌桶 per-principal + 队列上限 + 429/Retry-After；预算以&quot;钱&quot;为主单位并在受理时<strong>预扣</strong>（现在是执行中拦）；接入账单源做对账（<code>pricing.py:provenance</code> 明写&quot;本仓库没有任何账单来源&quot;，<code>settled_bill</code> 永远拿不到真值）；成本异常检测（单任务超 p95 阈值即熔断）。</p>
+<h2 id="06-production-gap-h5"><span class="pri p-P0">P0</span>-3 Sandbox（执行隔离成为默认路径） <a class="anchor" href="#06-production-gap-h5">#</a></h2>
+<p>见 <code>02</code> M7 与 <code>03</code> 的默认隔离风险。<span class="tag t-fact">代码事实</span>：docker 后端真实存在（<code>command_runner.py</code>：<code>--rm --network none --memory 1g --cpus 1.0 --pids-limit 128 --security-opt no-new-privileges</code>），但 <code>execution_backend=local</code> 是默认（<code>config.py</code>），执行默认 local，可显式选择 Docker，默认 executor 镜像依赖有限；题目 env 可自带官方或定制镜像，compose 挂 <code>docker.sock</code>，<code>docker_only</code> 无人使用。</p>
+<p><strong>怎么补</strong>：默认 docker；镜像按目标仓库 lock 文件构建（或让受理阶段要求提供镜像）；<code>--read-only</code> + tmpfs scratch；去 socket；每任务独立网络命名空间；用 gVisor/Kata 补内核面；宿主 env 白名单再删可写路径（现在仍透 <code>TEMP/APPDATA/USERPROFILE</code>）；资源配额加到 local 兜底路径上。</p>
+<h2 id="06-production-gap-h6"><span class="pri p-P0">P0</span>-4 可观测性：Logging / Tracing / Metrics <a class="anchor" href="#06-production-gap-h6">#</a></h2>
+<ul><li><strong>Logging</strong>（有，<span class="tag t-fact">代码事实</span>）：stdlib <code>logging</code>，业务日志带 <code>task_id</code>（<code>registry.py</code> 的整改注释就是补 task_id 的现场）+ <code>request_id</code> contextvar（<code>app.py</code>）。</li></li><li><strong>Tracing</strong>（无）：没有 OpenTelemetry，没有 span 父子关系；一次任务的因果链靠 <code>trajectory.jsonl</code> + SQLite <code>trajectory_events</code>（自增 id 作游标）。这已经比多数 Demo 强，但<strong>跨服务不可串联</strong>。</li></li><li><strong>Metrics</strong>（无）：没有 <code>/metrics</code>，没有 Prometheus，没有 p95 延迟。<code>app/evals/metrics.py</code> 是<strong>评测指标</strong>不是运维指标，别混称。</li></li><li><strong>怎么补</strong>：OTel（trace + 模型调用 span，属性含 model/tokens/cost/latency/tool）；Prometheus 指标（任务终态分布、每阶段耗时、工具失败率、预算耗尽率、恢复次数、SSE 在线数）；结构化 JSON 日志 + 集中采集；把 <code>trajectory_events</code> 的自增 id 作为 trace correlation key。</li></li><li class="fu"><details><summary>追问预案</summary><p>&quot;你怎么发现线上任务变慢？&quot;→ &quot;我现在发现不了，因为没指标。我能做的是每次任务的 <code>duration_ms</code> 已经逐工具记录在轨迹里（<code>registry.py</code>），生产化只要把它聚合出来。&quot;</p></details></li></li></ul>
+<hr>
+<h1 id="06-production-gap-h7"><span class="pri p-P1">P1</span>（上线后一周内会出事） <a class="anchor" href="#06-production-gap-h7">#</a></h1>
+<h2 id="06-production-gap-h8"><span class="pri p-P1">P1</span>-1 Timeout / Retry / Idempotency（这三件事的真实状态） <a class="anchor" href="#06-production-gap-h8">#</a></h2>
+<table><thead><tr><th>项</th><th>有</th><th>没有 / 弱点</th></tr></thead><tbody><tr><td>Timeout</td><td>请求级 <code>llm_timeout_seconds=120</code>；执行级 <code>command_timeout_seconds=120</code> + 杀进程树；任务级 <code>task_timeout_seconds=900</code> + 绝对寿命 <code>86400s</code>；受理级 <code>intake_timeout_seconds=120</code></td><td><strong>没有 per-test timeout</strong>（只有整轮 pytest）；<code>recycle_grace_seconds</code> 与 <code>acceptance_wait_seconds=3600</code> 语义重叠；<code>_execute</code> 在 shutdown 时不 join 线程（<code>service.py</code>）</td></tr><tr><td>Retry</td><td>传输层 allowlist + SDK/平台重试互斥（<code>openai_client.py</code>）；工具恢复策略 <code>no_rerun/state_check</code>（<code>registry.py</code>）</td><td><strong>没有语义级退避重试</strong>（429/529 都归传输处理）；崩溃恢复时&quot;崩溃前落地的写&quot;仍靠模型读恢复提示自行判断（<code>session.py</code>）；重试不重算预算（<code>service.py</code>）</td></tr><tr><td>Idempotency</td><td><strong>强</strong>：spec 哈希 + 锁 + 唯一索引 + 终态先到先赢（<code>service.py</code>、<code>repository.py</code>）</td><td>锁 key 只在配 Redis 时才是跨进程的；<code>InMemoryLock</code> release 无持有者校验（docstring 自认，靠 DB 兜）</td></tr></tbody></table>
+<p><strong>怎么补</strong>：给 pytest 加单测超时（<code>pytest-timeout</code> 不可信，因为不能要求靶仓装插件 → 由执行器按输出静默时长判停）；重试用满 exponential backoff + jitter 并区分 429/5xx；恢复时把&quot;写类工具&quot;的执行事实落到 ledger（现在只到轨迹）。</p>
+<h2 id="06-production-gap-h9"><span class="pri p-P1">P1</span>-2 Queue（任务队列） <a class="anchor" href="#06-production-gap-h9">#</a></h2>
+<p><strong>当前真实情况</strong>：没有队列。<code>ThreadPoolExecutor(max_workers=2)</code> + 立即受理，意味着<strong>提交 1000 个任务就创建 1000 个工作区目录和 1000 行 DB 记录</strong>，线程池自己排队，但磁盘和 DB 没人管（<code>recycle_finished_workspace=True</code> 只回收终态且超 grace 的）。</p>
+<p><strong>怎么补</strong>：外部 broker + worker pool（arq/Celery/Temporal）+ 队列深度上限 + 优先级 + 公平调度 per-principal；受理时入队而非起线程；加背压（429）。</p>
+<h2 id="06-production-gap-h10"><span class="pri p-P1">P1</span>-3 Cache <a class="anchor" href="#06-production-gap-h10">#</a></h2>
+<p><strong>当前真实情况</strong>：<strong>全系统没有任何缓存</strong>（Redis 只做锁）。已有的只是&quot;同一进程内的重复计算复用&quot;：上下文装配按 <code>(stage, round_no)</code> 幂等缓存并记 <code>context_assembly_reused</code> 事件（<code>nodes.py</code>）、<code>get_settings()</code> 的 <code>lru_cache</code>。</p>
+<p><strong>缺口 &amp; 机会</strong>：模型层无缓存（同一 prompt 重复请求照样付钱）；无检索缓存。生产化的第一份缓存应该是<strong>响应级</strong>（prompt hash → completion，带 TTL 与 provider 计费口径），第二份是<strong>检索/仓库骨架</strong>（按 commit hash 失效）。</p>
+<p><strong>追问预案</strong>：&quot;为什么不用 Redis 缓存？&quot;→ &quot;因为我确实没用上。如果加，我会先用它缓存装配好的上下文骨架（键=仓库 commit+profile），因为那是纯计算且随任务重复；模型响应缓存要谨慎，因为它会污染非确定性回归。&quot;</p>
+<h2 id="06-production-gap-h11"><span class="pri p-P1">P1</span>-4 Secret Management <a class="anchor" href="#06-production-gap-h11">#</a></h2>
+<p><strong>当前真实情况</strong>：<code>.env</code> + pydantic-settings；API token 与 LLM key 都是<strong>进程环境变量</strong>，明文在配置文件里。已有缓解：子进程 env 白名单重建（<code>local_runner.py</code>，注释点名 API_TOKEN/LLM_API_KEY 曾被不受信 conftest 读到，这是真实修复）；轨迹/快照按 key 名脱敏（<code>tracker.py</code>、<code>provenance.py</code>）；仓库说明里形似凭据的行渲染前打码（<code>repo_instructions.py</code>）。</p>
+<p><strong>缺口</strong>（<span class="tag t-risk">风险点</span>）：<strong>输出侧完全不脱敏</strong>——靶仓测试打印的密钥会进模型上下文、<code>trajectory.jsonl</code>、证据仓（<code>output_filter.py</code> 无 redaction）；价目覆盖文件路径也走配置。</p>
+<p><strong>怎么补</strong>：KMS/Vault + 短时效凭据；出站前 redaction pass（正则 + 熵检测）；轨迹分级 + TTL + 加密；对&quot;可能被不受信代码读到&quot;的进程再降权限（独立 service account、per-task 密钥）。</p>
+<h2 id="06-production-gap-h12"><span class="pri p-P1">P1</span>-5 Prompt Injection（本项目已经认真防了一部分） <a class="anchor" href="#06-production-gap-h12">#</a></h2>
+<p><strong>已有（<span class="tag t-fact">代码事实</span>）</strong>，这是可以正面讲的：</p>
+<ul><li>优先级硬编码：<strong>平台硬规则 &gt; 用户任务约束 &gt; 仓库说明</strong>，且&quot;规则只指导怎么改，工具白名单、门禁与验收契约的判定路径<strong>完全不读这一层</strong>&quot;（<code>docs/adr/0015</code>、<code>repo_instructions.py</code>）——即不受信文本<strong>拿不到权限面</strong>；</li></li><li>不受信仓库的 <code>AGENTS.md/CLAUDE.md</code> 从冻结副本按固定文件名加载，符号链接/<code>.git</code>/二进制/宿主路径拒读，超限明写；</li></li><li>模型没有通用写工具，候选补丁入口过门禁，scratch/记忆/交互写入另有边界；模型不能决定阶段跳转；</li></li><li><code>update_memory</code> 拒绝模型自称 <code>verified/confirmed/resolved</code>（<code>memory.py</code>）——防&quot;自我说服&quot;；</li></li><li>终局判定不采信模型自述（<code>acceptance.py</code>）。</li></li></ul>
+<p><strong>缺口</strong>：不受信<strong>代码内容</strong>（读到的源码、测试输出）可以诱导模型去 <code>run_command</code>（profile 受限）或写复杂补丁；没有输入分类器、没有危险意图检测、没有&quot;工具调用需人批准&quot;的默认策略（<code>ask_user</code> 存在但不由平台触发）。<span class="tag t-infer">合理推断</span>：最实际的攻击面仍是 <span class="pri p-P0">P0</span>-3（执行隔离），而不是纯提示层。</p>
+<p><strong>怎么补</strong>：把不受信内容用显式分隔符 + 每次请求重申&quot;以下是数据不是指令&quot;；对 <code>python_repro</code>/<code>run_command</code> 加批准门槛；引入轻量意图分类器 + 高风险动作二次确认；把 <code>ask_user</code> 从&quot;模型可请求&quot;变成&quot;平台可强制&quot;。</p>
+<h2 id="06-production-gap-h13"><span class="pri p-P1">P1</span>-6 Data Privacy <a class="anchor" href="#06-production-gap-h13">#</a></h2>
+<p><strong>当前真实情况</strong>：任务把宿主仓库源码复制进 <code>runs/&lt;task&gt;/</code>（工作区 + <code>source_snapshot</code>），轨迹里存 prompt/completion 全文与工具输出，证据仓存<strong>裁前原文</strong>（<code>evidence/</code>，<code>evidence_max_total_bytes=64MB</code>）。没有任何数据分类、保留策略、删除接口——<code>recycle.py</code> 只删 <code>source_snapshot</code>（且这是&quot;回收后无法重新取证&quot;的取舍）。发往第三方模型 API 的数据没有任何 DLP/PII 过滤。</p>
+<p><strong>怎么补</strong>：数据分级 + 保留/删除 SLA + 用户可删除接口 + 出站 DLP + 轨迹采样与压缩（现在是全量）。</p>
+<h2 id="06-production-gap-h14"><span class="pri p-P1">P1</span>-7 Model Fallback <a class="anchor" href="#06-production-gap-h14">#</a></h2>
+<p><strong>当前真实情况</strong>：<strong>没有</strong>。模型不可用/超时/被拒 = 任务 <code>NEEDS_REVIEW</code> 或失败。<code>profiles.py</code> 有档案、<code>capabilities.py</code> 能报能力，但没有跨供应商回退、没有熔断、没有健康探测。</p>
+<p><strong>怎么补</strong>：主/备供应商配置 + 熔断（错误率阈值）+ 回退时<strong>必须重算能力档案与价目</strong>（否则预算判定失真）+ <code>served_model</code> 漂移检测已有，可以直接接上。</p>
+<hr>
+<h1 id="06-production-gap-h15"><span class="pri p-P2">P2</span>（规模化之前处理） <a class="anchor" href="#06-production-gap-h15">#</a></h1>
+<h2 id="06-production-gap-h16"><span class="pri p-P2">P2</span>-1 Database Migration &amp; Horizontal Scaling <a class="anchor" href="#06-production-gap-h16">#</a></h2>
+<p><strong>当前真实情况</strong>：<code>db.py</code> 用手写 <code>ALTER TABLE ... ADD COLUMN</code> 的容错迁移（加列即可，无版本表、无回滚）；单 SQLite 文件、单连接 <code>check_same_thread=False</code> + WAL、全局 <code>threading.Lock</code> → <strong>写吞吐与多实例领取安全未经过生产验证</strong>。当前三张业务表，去重迁移另有归档表。</p>
+<p><strong>怎么补</strong>：Alembic（版本化 + 可回滚）；Postgres（行锁 + <code>SELECT FOR UPDATE SKIP LOCKED</code> 领取任务）；事件流从轮询改 pubsub；工件（report.json/轨迹/证据）迁对象存储，DB 只存指针。</p>
+<h2 id="06-production-gap-h17"><span class="pri p-P2">P2</span>-2 Load Test <a class="anchor" href="#06-production-gap-h17">#</a></h2>
+<p><strong>当前真实情况</strong>：<code>stress</code> 标记只有 1 个测试、约 100s、本机跳过（<code>pyproject.toml</code> markers + <code>slow_tests.txt</code>）。<strong>没有任何压测数据</strong>，<code>task_max_workers=2</code> 是设定值而非测量值。</p>
+<p><strong>怎么补</strong>：先量基线（提交速率、SSE 并发、线程池耗尽点）；再做容量模型（每任务占 1 线程 + 可能嵌套 1 分支池线程 + 每个 SSE 观察者长期占 1 线程）；重点压&quot;2 个跑着的任务 + 10 个观察者&quot;这个形状，因为它现在就会把 ~40 线程的 anyio limiter 压住。</p>
+<p><strong>面试口径</strong>：&quot;没有压测数据，所以我不给任何 QPS 或延迟承诺——我能给出的是瓶颈在哪一段。&quot;</p>
+<h2 id="06-production-gap-h18"><span class="pri p-P2">P2</span>-3 Failure Recovery（这条其实很强，讲的时候别把它降级） <a class="anchor" href="#06-production-gap-h18">#</a></h2>
+<p><strong>已有（<span class="tag t-fact">代码事实</span>）</strong>：LangGraph SQLite checkpoint（B 层）+ <code>loop_state.json</code> 回合边界快照（A 层，只在一致切点写、2MiB 上限、永不抛错）+ <code>ledger_state.json</code> + 冻结候选；<code>prepare_resume</code> 返回 <code>continue/revalidate/already_terminal/reject</code> 结构化决策；可写阶段强制重验证且<strong>清空 verify/gate 布尔</strong>；<code>already_terminal</code> 只重放工件不重跑；孤儿 <code>tool_calls</code> 用显式标注的占位回执修复并附恢复策略；真实进程崩溃有测试（<code>test_resume_crash.py</code> 用 <code>os._exit</code>）；<code>demo/run_restart_resume_ticket.py</code> 是可演场景。</p>
+<p><strong>缺</strong>：<code>checkpointer</code> 依赖缺失时静默返回 <code>None</code>（任务能跑但不可恢复，应 fail-fast，<code>checkpoint.py</code>）；没有跨机恢复（文件工件在本地盘）；没有&quot;多久没心跳判死&quot;的租约机制（只有锁 TTL）。</p>
+<hr>
+<h2 id="06-production-gap-h19">一页总览（面试前 30 秒扫这张表） <a class="anchor" href="#06-production-gap-h19">#</a></h2>
+<p>覆盖关系先说清楚，免得数字对不上：上面正文按 <strong><span class="pri p-P0">P0</span> 4 节 / <span class="pri p-P1">P1</span> 7 节 / <span class="pri p-P2">P2</span> 3 节 = 14 节</strong>组织，下表 <strong>19 行</strong>逐项对上任务书列出的 21 项能力——<code>Cost Control</code> 与 <code>Token Budget</code> 合成一行（代码里就是同一个账本），<code>Logging / Tracing / Metrics</code> 合成 <span class="pri p-P0">P0</span>-4 一节但表里 Tracing/Metrics 与 Logging 同属&quot;可观测性&quot;一行，<code>Authentication</code>/<code>Authorization</code> 拆成 AuthN/AuthZ 两行。有人问&quot;你数过没有&quot;，答案是&quot;14 节、19 行、21 项，对应关系在这里&quot;。</p>
+<table><thead><tr><th>能力</th><th>状态</th><th>一句话</th></tr></thead><tbody><tr><td>Idempotency</td><td><strong>有且强</strong></td><td>spec 哈希 + 锁 + 唯一索引 + 终态先到先赢</td></tr><tr><td>Failure Recovery</td><td><strong>有且强</strong></td><td>三层快照 + 重验证 + 不复用结论 + 真崩溃测试</td></tr><tr><td>Timeout</td><td><strong>基本有</strong></td><td>四层超时齐；缺 per-test</td></tr><tr><td>Retry</td><td><strong>谨慎有</strong></td><td>分层互斥 + 恢复策略标签；缺语义退避</td></tr><tr><td>Cost/Token Budget</td><td><strong>有</strong></td><td>原子预留 + provider 真值优先；缺预扣与账单对账</td></tr><tr><td>AuthN</td><td>有开关，<strong>默认关</strong></td><td>Bearer + 定长比较；无用户体系</td></tr><tr><td>AuthZ</td><td><strong>无</strong></td><td>只有 repo 根白名单，且默认为空</td></tr><tr><td>Rate Limit</td><td><strong>无</strong></td><td>只有 <code>workers=2</code> 的隐式限流</td></tr><tr><td>Sandbox</td><td><strong>代码有，默认路径无</strong></td><td>local 后端 = 宿主任意 Python</td></tr><tr><td>Secret Mgmt</td><td><strong>弱</strong></td><td>env 白名单已修；输出不脱敏</td></tr><tr><td>Prompt Injection</td><td><strong>部分防</strong></td><td>不受信文本无权限面；缺意图检测</td></tr><tr><td>Data Privacy</td><td><strong>无</strong></td><td>全量轨迹 + 无保留策略</td></tr><tr><td>Cache</td><td><strong>无</strong></td><td>Redis 只做锁</td></tr><tr><td>Queue</td><td><strong>无</strong></td><td>线程池即队列，无背压</td></tr><tr><td>Logging / Tracing / Metrics</td><td><strong>只有 Logging</strong></td><td>结构化轨迹 + stdlib 日志齐；无 OTel tracing、无 metrics 出口</td></tr><tr><td>Model Fallback</td><td><strong>无</strong></td><td>一家不通就停</td></tr><tr><td>DB Migration</td><td><strong>手写</strong></td><td>加列容错，无版本化</td></tr><tr><td>Horizontal Scaling</td><td><strong>不支持</strong></td><td>单文件 SQLite + 全局锁</td></tr><tr><td>Load Test</td><td><strong>无</strong></td><td>不给 QPS 承诺</td></tr></tbody></table>
+<p><strong>背这段收尾</strong>：&quot;我的原型里，判定链、幂等、恢复、预算这四块是能拿上台面的；隔离默认值、鉴权默认值、可观测性和队列是上线前必须补的四件事。我把它们按&#x27;不做就不能对外&#x27;和&#x27;上线后一周内会出事&#x27;分开排了序，顺序在 <code>06</code> 这份文档里。&quot;</p></article><article id="07-ai-knowledge-map"><h1 id="07-ai-knowledge-map-h1">07 · AI 应用开发知识地图（由本项目外扩） <a class="anchor" href="#07-ai-knowledge-map-h1">#</a></h1>
+<blockquote>分级：<strong><span class="pri p-P0">P0</span> = 3 天内必须掌握</strong>（不掌握就会在项目追问里崩）；<strong><span class="pri p-P1">P1</span> = 建议掌握</strong>（能加分）；<strong><span class="pri p-P2">P2</span> = 以后补</strong>。 每一项给：核心解释 + <strong>本项目的落点</strong>（有则指代码，无则标 <span class="tag t-know">面试知识</span>/<span class="tag t-prod">生产化扩展</span>）。 用法：<span class="pri p-P0">P0</span> 条目必须做到&quot;能解释 + 能指到自己项目的代码或明确说没做&quot;。</blockquote>
+<hr>
+<h1 id="07-ai-knowledge-map-h2"><span class="pri p-P0">P0</span>（26 条） <a class="anchor" href="#07-ai-knowledge-map-h2">#</a></h1>
+<h2 id="07-ai-knowledge-map-h3">A. 模型调用基础 <a class="anchor" href="#07-ai-knowledge-map-h3">#</a></h2>
+<p><strong>1. Token 与 Context Window</strong></p>
+<p>token 是计费与容量的单位，不是字数；<code>context_window</code> 是<strong>输入+输出</strong>的总容量，很多失败源于只算输入。</p>
+<p>本项目落点（<span class="tag t-fact">代码事实</span>）：<strong>四个概念各有名字和读数</strong>——单请求硬容量、软压缩目标、任务累计额度、单次输出上限（<code>docs/adr/0014</code>）；<code>token_estimate_factor=1.0</code> 只做本地估算与 provider 真值的换算；估算不出就记 <code>unknown</code> 且 <code>unknown</code> 一票否决 resolved。</p>
+<p><span class="tag t-script">面试口径</span>：不要说&quot;我的模型窗口是 128k&quot;，要说&quot;我不从模型名推断窗口，能力必须带来源声明，没来源落保守档&quot;。</p>
+<p><strong>2. Temperature / top_p / 采样参数</strong></p>
+<p>影响确定性；评测时温度越高越需要重复次数；结构化输出场景常用 0。</p>
+<p><span class="tag t-know">面试知识</span>：<strong>本项目没有暴露 temperature 配置</strong>——真实模型批次的可复现性因此受限（诚实答案）。生产化应把采样参数纳入 TaskSpec/manifest（现在纳入的是 profile、max_rounds、预算）。</p>
+<p><strong>3. Structured Output</strong></p>
+<p>三种做法：JSON mode、function calling、约束解码。陷阱：模型截断（<code>finish_reason=length</code>）时 JSON 不完整、参数是字符串不是对象、多余自由文本。</p>
+<p>本项目落点（<span class="tag t-fact">代码事实</span>）：用 <strong>native function calling</strong>（<code>openai_client.py</code>）；参数非法 JSON → 包成 <code>{&quot;_raw&quot;:...}</code> 并计 <code>tool_arguments_invalid</code>；<strong>截断且仍有 pending tool_call → 硬失败 <code>ModelResponseError</code>，但带 usage 信封</strong>——因为钱已经花了。</p>
+<p><span class="tag t-know">面试知识</span>：JSON schema 校验 + repair retry 的通用套路；本项目 <code>MAX_PROTOCOL_REPAIRS=1</code>（<code>plain_loop.py</code>）。</p>
+<p><strong>4. Function/Tool Calling vs MCP</strong></p>
+<p>Function calling = 供应商协议里的&quot;模型输出结构化调用意图&quot;，执行由你的运行时做；MCP = 工具/资源/提示的<strong>跨进程标准协议</strong>（client-server，可插拔），解决的是生态复用而不是模型能力。</p>
+<p>本项目落点：手写 <code>REGISTRY</code> 产 OpenAI function schema，<strong>&quot;可见 == 可执行&quot;用同一份白名单</strong>（<code>registry.py</code> + <code>plain_loop.py</code>）。</p>
+<p><span class="tag t-know">面试知识</span>：如果要把 16 个工具做成 MCP server，需要处理的是生命周期、鉴权、以及&quot;阶段白名单在 server 侧还是 client 侧&quot;——我会坚持放在 client 侧，因为可见性是我安全模型的一部分。</p>
+<p><span class="tag t-risk">风险点</span>：别说&quot;我用了 MCP&quot;。没有。</p>
+<p><strong>5. Prompt Engineering vs Context Engineering</strong></p>
+<p>前者写指令，后者决定<strong>每一次请求里真正出现什么</strong>。AI 应用的效果差异大多来自后者。</p>
+<p>本项目落点（<span class="tag t-fact">代码事实</span>，很好的差异化素材）：三阶段装配（骨架→大纲→观测）+ 按 <code>(stage, round_no)</code> 幂等缓存 + 优先级&quot;平台规则 &gt; 用户约束 &gt; 仓库说明&quot; + 工作记忆只传<strong>平台观测</strong>不传模型自述 + 观测带 staleness 与 <code>read_evidence</code> 回取指针 + 超限明写省略了多少行、保留哪些行号区间。</p>
+<h2 id="07-ai-knowledge-map-h4">B. Agent 机制 <a class="anchor" href="#07-ai-knowledge-map-h4">#</a></h2>
+<p><strong>6. ReAct</strong></p>
+<p>Reason + Act 交替：思考 → 调工具 → 观察 → 再思考。它的失败模式是循环、观察误读、过早终止。</p>
+<p>本项目落点：<code>plain_loop.py</code> 的回合循环就是 ReAct 的受控实现；<code>finish</code> 做成伪工具让&quot;终止&quot;成为一次显式动作（<code>registry.py</code>、<code>plain_loop.py</code>）。</p>
+<p><strong>7. Agent vs Workflow</strong></p>
+<p>判据：<strong>下一步由模型决定还是由代码决定</strong>。Workflow 可预期、可审计；Agent 灵活但难保证终止。</p>
+<p>本项目落点：见 <code>02</code> M2 —— &quot;Workflow 定阶段，Agent 定动作&quot;，8 个 <code>route_*</code> 全硬编码。<strong>这道题你必须答得干脆</strong>，犹豫就会显得不理解自己的架构。</p>
+<p><strong>8. Agent State</strong></p>
+<p>状态 = 每一步读写的事实集合。设计要点：可序列化（才能 checkpoint）、无隐藏对象、字段有 owner。</p>
+<p>本项目落点：<code>TypedDict total=False</code>（<code>state.py</code>），无 reducer → last-write-wins；不可序列化对象放闭包 <code>TaskNodes</code>。</p>
+<p><span class="tag t-know">面试知识</span>：LangGraph 的 reducer/append 语义（<code>Annotated[list, operator.add]</code>）——本项目<strong>没用</strong>，因为阶段间是覆盖语义不是累加语义。这是被追问时的准确回答。</p>
+<p><strong>9. Memory</strong></p>
+<p>区分三种：会话内短期（消息历史）、任务内工作记忆（跨阶段观测）、跨任务长期（用户偏好/知识库）。</p>
+<p>本项目落点：<code>TaskMemory</code> 是<strong>任务内跨阶段工作记忆</strong>（<code>task_memory.py</code>），且严格区分&quot;平台观测&quot;与&quot;模型假设&quot;（后者必须带引用，自称已验证被拒）；<strong>没有跨任务记忆</strong>。</p>
+<p><span class="tag t-risk">风险点</span>：不要把 <code>SessionState</code>（消息序列修复，<code>session.py</code>）说成 Memory。</p>
+<p><strong>10. Termination</strong></p>
+<p>Agent 必须有多层终止：最大步数、墙钟、预算、无进展检测、人工中止。</p>
+<p>本项目落点（<span class="tag t-fact">代码事实</span>，这是你最该背熟的一条链）：<code>max_turns=20</code>/回合 → <code>task_timeout_seconds=900</code> + 绝对寿命 <code>86400s</code> → <code>token/cost/calls</code> 账本 → <strong>无进展检测 = 失败签名 streak</strong>（≥2 提示换思路、≥3 收敛 NEEDS_REVIEW）→ <code>recursion_limit=5N+8</code> 图级 → <code>TaskCancelled</code> 协作式（回合边界 + 命令轮询，&gt;5s 才升级为 <code>cancellation_pending</code>）。</p>
+<p><strong>11. Infinite Loop / Repeated Tool Call</strong></p>
+<p>根因通常是&quot;反馈不可比&quot;（看不出是同一个失败）或&quot;失败信息不足&quot;。</p>
+<p>本项目落点：<code>failure_signature = kind + 首行空白折叠[:160]</code>（<code>pytest_adapter.py</code>）；签名规则是受保护代码，因为 streak 依赖它稳定。</p>
+<p><span class="tag t-know">面试知识</span>：更进阶的做法是&quot;动作哈希去重 + 强制策略变化&quot;（我用了签名，没用动作哈希，可以答出来作为延伸）。</p>
+<p><strong>12. Tool Failure 处理</strong></p>
+<p>三种：抛穿（任务死）、重试（可能重复副作用）、把失败作为观察喂回（模型决定）。</p>
+<p>本项目落点：<code>execute</code> 把所有异常收敛成 <code>ToolResult</code>（<code>registry.py</code>）+ <code>RECOVERY_POLICY</code> 标注 <code>no_rerun/state_check</code>+ 崩溃恢复时孤儿回执带恢复提示。</p>
+<p><span class="tag t-know">面试知识</span>：副作用工具的幂等键/去重表是生产做法，本项目<strong>只做了 LLM 层重试的互斥</strong>，没做工具层幂等。</p>
+<p><strong>13. Multi-Agent</strong></p>
+<p>真实需求通常是：角色隔离（工具集不同）、上下文隔离、预算隔离、并行。反模式是&quot;对话式群聊&quot;。</p>
+<p>本项目落点：<code>roles.py</code> 三套冻结工具集、子任务无 <code>delegate/ask_user</code> ⇒ 深度 1；<code>SubtaskManager</code> 管槽位/并发/父切子预算/独立 ToolContext/独立轨迹/自有工作区；默认 <code>delegation_enabled=False</code>。</p>
+<p><span class="tag t-script">面试口径</span>：&quot;有界子任务委派，不是 Multi-Agent。&quot;（详见 <code>02</code> M12）</p>
+<h2 id="07-ai-knowledge-map-h5">C. 护栏与可靠性 <a class="anchor" href="#07-ai-knowledge-map-h5">#</a></h2>
+<p><strong>14. Guardrail</strong></p>
+<p>输入护栏（分类/黑名单）、动作护栏（白名单/参数校验/审批）、输出护栏（脱敏/格式）、判定护栏（不接受模型自述）。</p>
+<p>本项目落点：动作护栏最强（16 个受控工具、候选补丁写入口、七项门禁、阶段白名单）；输入有仓库说明来源/作用域与冻结验收校验，但没有通用prompt注入检测；输出护栏弱（结构裁剪有，仓库说明部分脱敏，工具输出无通用脱敏）。</p>
+<p><strong>15. Hallucination（在代码修复场景的特异形态）</strong></p>
+<p>不是&quot;编造事实&quot;，而是：引用不存在的文件/符号、给不存在的测试 id、把&quot;我以为跑过&quot;当事实。</p>
+<p>本项目落点（<span class="tag t-fact">代码事实</span>，很精彩）：测试 id 必须唯一解析到 <code>(file, classname, name)</code> 三元组，0 命中=被 deselect、≥2=歧义，都判不过（<code>pytest_adapter.py</code>）；<code>update_memory</code> 自称 verified 被拒；影子模块门禁防&quot;新建同名模块劫持判定&quot;。</p>
+<p><strong>16. Retry 的副作用问题</strong></p>
+<p>&quot;Retry 可能重复执行副作用&quot;是必考题。答案要素：区分只读/幂等写/非幂等写；非幂等要么带幂等键要么禁止盲重跑。</p>
+<p>本项目落点：<code>RECOVERY_POLICY</code>（见 §12）+ SDK/平台重试互斥 + 恢复不重算预算。</p>
+<p><strong>17. Idempotency</strong></p>
+<p>本项目落点：spec 内容哈希作幂等键 + 唯一索引 + 锁 + 终态先到先赢。</p>
+<p><span class="tag t-know">面试知识</span>：fencing token、幂等表 TTL、&quot;幂等键冲突但请求体不同应返回 409 而不是静默复用&quot;（本项目是&quot;同键同体才复用&quot;，逻辑等价，但没显式测异体冲突）。</p>
+<h2 id="07-ai-knowledge-map-h6">D. 评测与数据 <a class="anchor" href="#07-ai-knowledge-map-h6">#</a></h2>
+<p><strong>18. 检索 vs 生成分别评估</strong></p>
+<p>要素：检索层用 Recall@k / Precision@k / Hit Rate / MRR（金标=应该命中的文档集合），生成层用 faithfulness / answer relevance / citation correctness。混在一起看&quot;端到端准不准&quot;会导致改了检索却看不见收益。</p>
+<p>本项目落点：<strong>没有向量检索</strong>（<span class="tag t-fact">代码事实</span>），但我有等价分层：<code>localized/strict/coverage</code> 评定位、<code>resolved</code> 评结果（见 <code>05</code> §4-5）。</p>
+<p><span class="tag t-know">面试知识</span>：RAGAS 的三个指标（faithfulness / answer relevance / context relevance）；MRR 计算 = 首个正确结果排名的倒数取平均。被问公式时要能写出来。</p>
+<p><strong>19. Chunking / Hybrid / BM25 / Rerank / Metadata Filter</strong></p>
+<p><span class="tag t-know">面试知识</span>（本项目<strong>全部未实现</strong>，但岗位常问）：chunk 策略（固定长度 vs 语义/AST 边界 vs 父子块）、overlap、BM25 稀疏检索、hybrid（RRF 融合）、rerank（cross-encoder 重排 top-N）、metadata filter（预过滤减少召回噪声）、长文档（map-reduce / refine / 引用聚合）、知识更新（增量索引与版本失效）。</p>
+<p><strong>本项目可对照的说法</strong>：&quot;我用 AST 骨架 + rg 文件级预筛 + Python 逐行了断替代了这一整套，因为代码仓库内定位需要精确行号而不是语义相近片段。<strong>未实现向量语义检索，也未测量语义召回质量</strong>，如果 bug 描述和代码命名对不上，我这层就没有兜底——这正是我要引入 hybrid 检索做对照的原因。&quot;</p>
+<p><strong>20. Benchmark 的可信构建</strong></p>
+<p>要素：样本代表性、GT 来源独立性、指标分母诚实、重复次数与置信区间、dev/hidden 分集、预登记判据、负面结果记录。</p>
+<p>本项目落点：<span class="tag t-fact">代码事实</span> 有<strong>预登记文化</strong>（<code>experiment-preregistration-v2</code>、<code>paid-batch-preregistration</code> 含一次停手负面结果）、控制身份 vs 观测结果分离（<code>compare_experiments.py</code>）、指标版本化（<code>METRICS_VERSION=2</code>，v1 缺陷只作显式重算）、可疑好结果的哨兵（<code>report.py</code>）。<strong>但样本代表性是零分</strong>（3–5 文件合成题 + 回放 embed 答案）。</p>
+<p><strong>21. LLM as Judge</strong></p>
+<p>适用：无法程序化判定的开放输出。风险：位置偏好、冗长偏好、自我偏好、评分漂移、被输出里的&quot;指令&quot;操纵。缓解：成对比较 + 顺序交换、多裁判投票、锚定样例、与人工标注校准一致性、把裁判输出当<strong>信号</strong>不当<strong>判定</strong>。</p>
+<p>本项目落点：<span class="tag t-fact">代码事实</span> <strong>不用 LLM 做判定</strong>；最接近的是 <code>propose_acceptance</code>（模型提验收清单 → 平台真跑基线验证 red/green → 人工审批 → manifest 哈希冻结，<code>app/diagnosis/proposal.py</code>）。被问&quot;为什么不用 LLM judge&quot;时答：&quot;我不想引入一个不可复现的判定源，我的整个判定链都在证明&#x27;结论必须是平台事实&#x27;。但我认为生产上应该把它当<strong>排序信号</strong>用，比如给多个候选补丁排序——那正是 Best-of-N 现在用规则排序的位置。&quot;</p>
+<p><strong>22. Badcase Analysis</strong></p>
+<p>要素：按终止原因分桶（预算/门禁/验证失败/待审/取消）、按阶段定位瓶颈、区分&quot;能力失败&quot;与&quot;平台失败&quot;、每类留一条可复现轨迹。</p>
+<p>本项目落点：<span class="tag t-fact">代码事实</span> 终态本身就分桶（INVALID_TASK / PATCH_REJECTED / VERIFY_FAILED / BUDGET_EXCEEDED / NEEDS_REVIEW / CANCELLED），轨迹逐工具记 <code>duration_ms/error</code>，报告三态显式（已验证/未运行/不确定）。<code>swe-ablation-evidence-2026-10-07.md</code> 是一次真实的瓶颈定位记录。</p>
+<h2 id="07-ai-knowledge-map-h7">E. 服务与工程 <a class="anchor" href="#07-ai-knowledge-map-h7">#</a></h2>
+<p><strong>23. FastAPI 的 async 真相</strong></p>
+<p><code>async def</code> 路由在事件循环上跑；<code>def</code> 路由被丢进 anyio 线程池；同步生成器响应体被 <code>iterate_in_threadpool</code> 包裹（每流占一线程）；依赖注入是 <code>Depends</code>；中间件 vs 路由依赖的鉴权位置差异。</p>
+<p>本项目落点（<span class="tag t-fact">代码事实</span>，见 <code>02</code> M1）：路由全同步、<code>async def</code> 只在 ASGI 管道、并发靠 <code>ThreadPoolExecutor(2)</code>、SSE 是 0.5s 轮询 DB。</p>
+<p><strong>这就是&quot;知道是什么但不一定能解释为什么&quot;的典型条目</strong>，务必吃透这段——被问&quot;async 给你带来了什么&quot;时的满分答案在 <code>03</code> 的服务并发风险。</p>
+<p><strong>24. SSE</strong></p>
+<p><code>text/event-stream</code>、<code>id:</code>/<code>retry:</code>/<code>event:</code> 字段、断线重连用 <code>Last-Event-ID</code>、心跳防代理超时、背压与连接数上限。</p>
+<p>本项目落点：<code>routes.py</code> + <code>events.py</code>，<code>trajectory_events.id</code> 自增号作续传游标（<code>last_event_id</code> 参数）。</p>
+<p><span class="tag t-know">面试知识</span>：WebSocket vs SSE 的取舍（单向进度用 SSE 更合适，鉴权与自动重连是它的优势；双向交互才需要 WS）。</p>
+<p><strong>25. Redis / Qdrant / Docker / CI-CD</strong></p>
+<ul><li>Redis：本项目只有锁（<code>03</code> 的 Redis 风险 已详述）。<span class="tag t-know">面试知识</span>：缓存三大问题（穿透/雪崩/击穿）、<code>SET NX EX</code> + Lua 释放、Redlock 争议、fencing。</li></li><li>Qdrant：<span class="tag t-fact">代码事实</span> <strong>项目里没有</strong>。<span class="tag t-know">面试知识</span>：HNSW vs IVF、cosine vs dot vs euclidean、payload 索引与预过滤、<code>limit/offset</code> 与召回一致性。</li></li><li>Docker：<span class="tag t-fact">代码事实</span> 两个 Dockerfile + compose（api+redis，回环绑定），默认executor镜像依赖有限，题目env可自带依赖镜像；CI build 镜像 + 跑 docker 单测（skipif）；uid 漂移有专门实验（<code>ADR-0002</code>、<code>docker-isolation-notes</code>）。</li></li><li>CI/CD：<span class="tag t-fact">代码事实</span> 单 job ubuntu-24.04 + Python 3.11，lint → 全量 pytest → fake 冒烟 → artifact 上传（<code>if-no-files-found: error</code>）。缺：OS 矩阵、覆盖率、部署步骤、真实模型冒烟。</li></li></ul>
+<p><strong>26. Cost / Latency / Quality 三角</strong></p>
+<p><span class="tag t-know">面试知识</span> + 本项目落点：</p>
+<ul><li>Cost：<code>token_budget</code>、<code>cost_budget_micro_usd</code>（默认 0=不限，是个洞）、<code>pricing.py</code> micro-USD 向上取整、未收录模型 n/a、<strong><code>settled_bill</code> 无来源</strong>（代码自述）。</li></li><li>Latency：逐工具 <code>duration_ms</code>、<code>llm_timeout_seconds=120</code>、<code>task_timeout_seconds=900</code>；<strong>但没有任何 p50/p95 聚合</strong>，因为没指标系统。</li></li><li>Quality：<code>resolved</code>、终止原因分布、双跑一致性。</li></li></ul>
+<p><strong>必背 trade-off 例子</strong>（都在代码里）：① Best-of-N增加候选和成本，质量收益未证明，延迟受并发与工具执行影响，且默认只在 <code>branching_min_token_reserve=30000</code> 富余时才开（<code>config.py</code>）；② 双跑复核提可信度、成本近乎翻倍（<code>verify_double_run</code>）；③ 大输出&quot;先裁剪再落盘 + 可按游标取回&quot;省上下文但增加一次取回延迟（<code>registry.py</code>）；④ 压不动就 <code>context_capacity_exceeded</code> 停下，而不是烧钱反复压缩。</p>
+<hr>
+<h1 id="07-ai-knowledge-map-h8"><span class="pri p-P1">P1</span>（建议掌握，按被问概率排） <a class="anchor" href="#07-ai-knowledge-map-h8">#</a></h1>
+<table><thead><tr><th>条目</th><th>为什么值得</th><th>与项目的连接点</th></tr></thead><tbody><tr><td>Agent 评测方法（轨迹级、pass@k、pass^k）</td><td>Agent 岗高频</td><td>我有终态分桶但没 pass@k；重复批次是缺口</td></tr><tr><td>非确定性回归（噪声地板、k 次重复、置信区间）</td><td>评测岗核心</td><td><code>paid-batch-preregistration</code> 的噪声地板批设计（7 题 × 3 次）可讲</td></tr><tr><td>Prompt/Context 版本与实验管理（manifest、A/B）</td><td>团队实践题</td><td><code>experiment_manifest.py</code> + 控制身份/观测分离</td></tr><tr><td>幂等与副作用（工具层幂等键）</td><td>工程题</td><td><code>RECOVERY_POLICY</code>，承认没做工具层幂等</td></tr><tr><td>流式输出的 tool_call 增量拼装</td><td>追问 async 时会到</td><td>我没做流式，能讲为什么不做</td></tr><tr><td>Embedding 选型与评测（MTEB、领域微调、成本）</td><td>RAG 题</td><td>我没用，但能说&quot;什么条件下必须用&quot;</td></tr><tr><td>长文档 / 聚合型问答（map-reduce、refine）</td><td>RAG 题</td><td>对应&quot;我的骨架按目录聚合&quot;这个相似设计</td></tr><tr><td>观测：OTel GenAI 语义约定、trace 关联</td><td>生产化必问</td><td>我没有，但轨迹自增 id 可作 correlation key</td></tr><tr><td>成本归因（per-user/per-task）</td><td>商业意识</td><td>账本按 task/stage/round 已归因，缺 principal</td></tr><tr><td>数据合规与 DLP</td><td>生产化</td><td>输出不脱敏是已知洞（<code>06</code> <span class="pri p-P1">P1</span>-4）</td></tr><tr><td>依赖注入与测试替身设计</td><td>工程题</td><td><code>create_app(db_path, runs_root, bugs_root)</code> 工厂 + FakeLLM + 临时 git 靶仓</td></tr><tr><td>pytest 高级用法（fixture scope、autouse、钩子、标记治理）</td><td>测试岗</td><td><code>conftest.py</code> 的 <code>_basetemp_outside_repo</code>、外部登记表打标、&quot;跑了≥5s 没登记&quot;告警</td></tr></tbody></table>
+<h1 id="07-ai-knowledge-map-h9"><span class="pri p-P2">P2</span>（以后补） <a class="anchor" href="#07-ai-knowledge-map-h9">#</a></h1>
+<p>微调/RAG 之外的训练类（LoRA、蒸馏）、推理引擎与显存、模型对齐与安全评估、多模态、离线评测集自动化构建、K8s/HPA、Service Mesh、形式化验证与差分测试、SAST/SCA 集成、gVisor/Kata 细节、Redlock 与分布式共识。</p>
+<hr>
+<h2 id="07-ai-knowledge-map-h10">3 天里的用法 <a class="anchor" href="#07-ai-knowledge-map-h10">#</a></h2>
+<ol><li><strong>先过 <span class="pri p-P0">P0</span> 的 26 条</strong>，每条问自己两个问题：*我能用一句自己的话解释吗？* 和 *我能指到项目里的哪一行，或者能说清&quot;我没做，因为……&quot;吗？* 两个都做不到就标红。</li></li><li><strong>第 19/18/21 条是&quot;本项目没有但岗位爱问&quot;的三条</strong>，属于纯 <span class="tag t-know">面试知识</span>，必须靠背诵而不是靠项目回答——不要把它们伪装成项目实现（任务卡明令禁止）。</li></li><li><strong><span class="pri p-P0">P0</span> 里最容易被项目本身撑住的其实是 6–17 条</strong>（Agent 机制），因为每条都有代码落点。把&quot;有代码落点&quot;的条目优先练熟，性价比最高。</li></li></ol></article><article id="08-interview-questions"><h1 id="08-interview-questions-h1">08 · 项目面试题 <a class="anchor" href="#08-interview-questions-h1">#</a></h1>
+<h2 id="08-interview-questions-h2">Q1 · Agent 还是 Workflow？ <a class="anchor" href="#08-interview-questions-h2">#</a></h2>
+<p>平台控制阶段与验收，模型在阶段内自主选工具。LangGraph 编排 + 阶段内 Agent；模型不决定 verdict。</p>
+<p>追问：plain？→ 单轮替代驱动，共享循环/工具/验收，不具有 graph 的全部交互恢复能力。</p>
+<h2 id="08-interview-questions-h3">Q2 · 为什么 LangGraph？ <a class="anchor" href="#08-interview-questions-h3">#</a></h2>
+<p>显式拓扑、阶段边界与 superstep 检查点。恢复正确性仍由平台候选重验、上下文重建和资源账本保证。</p>
+<p>追问：不用框架？→ 能实现，plain已有不同编排；不因重复就抹平合法功能差异。</p>
+<h2 id="08-interview-questions-h4">Q3 · resolved 怎么算？ <a class="anchor" href="#08-interview-questions-h4">#</a></h2>
+<p>非空补丁、失败集全通过、回归全通过、门禁全过、预算内、未取消；开启双跑时一致。</p>
+<p>graph 另验当前工作区与冻结候选绑定。模型 finish(success=true) 只完成阶段。</p>
+<h2 id="08-interview-questions-h5">Q4 · 怎么防假绿？ <a class="anchor" href="#08-interview-questions-h5">#</a></h2>
+<p>具体 JUnit 身份匹配，拒缺失/歧义/skip；门禁禁止改测试/控制文件、影子模块、越界等已知手段。</p>
+<p>追问：能防所有恶意仓库？→ 不能。预置伪 JUnit 或过拟合仍是边界，指定测试不等于语义正确。</p>
+<h2 id="08-interview-questions-h6">Q5 · crash 后为什么重跑？ <a class="anchor" href="#08-interview-questions-h6">#</a></h2>
+<p>旧 verify 布尔不证明当前字节；candidate 校验 → reset/重应用 → 清旧结论 → 重跑门禁/双集。</p>
+<p>END 只核对既有报告；缺可信身份拒恢复，不冷启动重授预算。</p>
+<h2 id="08-interview-questions-h7">Q6 · 配置漂移怎么防？ <a class="anchor" href="#08-interview-questions-h7">#</a></h2>
+<p>TaskSpec 冻结有效策略，执行使用任务配置副本；pytest显式后端/超时，初始账本按冻结预算建。</p>
+<p>本轮回归把全局改docker/极小预算/关闭双跑，graph/plain真实pytest链仍按受理契约执行。</p>
+<h2 id="08-interview-questions-h8">Q7 · 账本坏了怎么办？ <a class="anchor" href="#08-interview-questions-h8">#</a></h2>
+<p>已有文件读不动不能当“没消费”。标unknown、保留文件、阻止新请求，终局不给resolved。</p>
+<p>未知用量不是零；不能借恢复把历史消费额度再发一次。</p>
+<h2 id="08-interview-questions-h9">Q8 · 幂等键是什么？ <a class="anchor" href="#08-interview-questions-h9">#</a></h2>
+<p>完整 TaskSpec hash，包含源码、具体测试/权限、回放、引擎/臂/模型与有效策略；只复用在途同契约任务。</p>
+<p>数据库生命周期与引擎report分工不同，取消赢终态后自然完成不能覆盖。</p>
+<h2 id="08-interview-questions-h10">Q9 · 检索是不是 RAG？ <a class="anchor" href="#08-interview-questions-h10">#</a></h2>
+<p>AST骨架、符号与字面匹配，rg做文件预筛，Python决定行号。无向量库/embedding/检索质量成绩。</p>
+<p>追问：语义检索值不值得？→ 需要真实样本对照，当前没有量化收益证明。</p>
+<h2 id="08-interview-questions-h11">Q10 · evidence 和 memory 有何区别？ <a class="anchor" href="#08-interview-questions-h11">#</a></h2>
+<p>evidence存原始工具事实并分页取回；memory是平台观测索引与模型引用假设。</p>
+<p>修改会让引用stale，阶段装配幂等；没有跨任务长期记忆。</p>
+<h2 id="08-interview-questions-h12">Q11 · 仓库说明能改权限吗？ <a class="anchor" href="#08-interview-questions-h12">#</a></h2>
+<p>不能。说明来自冻结副本、按目录作用域激活，只指导修复；平台白名单、门禁与验收不读它作授权。</p>
+<p>规则源有部分脱敏，工具输出无通用秘密过滤，不作prompt注入全面防护声明。</p>
+<h2 id="08-interview-questions-h13">Q12 · Docker 是否真的用？ <a class="anchor" href="#08-interview-questions-h13">#</a></h2>
+<p>可选且有执行路径/测试，默认local。pytest容器有网络/内存/CPU限制；诊断命令另有PID/no-new-privileges。</p>
+<p>custom Docker预检只查daemon，不在宿主导入conftest；真实依赖收集由容器baseline确认。</p>
+<h2 id="08-interview-questions-h14">Q13 · local 隔离到什么程度？ <a class="anchor" href="#08-interview-questions-h14">#</a></h2>
+<p>物理目录副本和工具路径限制；测试/复现脚本仍共享宿主权限，不能称进程沙箱。</p>
+<p>compose socket有宿主控制边界；官方题目镜像和简单pytest执行器镜像的依赖能力不同。</p>
+<h2 id="08-interview-questions-h15">Q14 · 预算能保证绝不超账单？ <a class="anchor" href="#08-interview-questions-h15">#</a></h2>
+<p>不能。原子预留控制已用/在途/未知；usage和价表估算micro-USD，端点估计误差与实际账单另说。</p>
+<p>返回usage先结算再处理工具，超额不能静默resolved，保留已完成验证证据。</p>
+<h2 id="08-interview-questions-h16">Q15 · 子 Agent 会不会跑飞？ <a class="anchor" href="#08-interview-questions-h16">#</a></h2>
+<p>默认关闭，三角色、单层、工具集合固定，独立会话与父预算切分；没有delegate递归，不能覆盖父验收。</p>
+<p>独立fake脚本缺失明确未配置，不偷用父游标、不暗调真实模型。</p>
+<h2 id="08-interview-questions-h17">Q16 · 真实模型跑过吗？ <a class="anchor" href="#08-interview-questions-h17">#</a></h2>
+<p>有早期快照和历史SWE/消融/重复实验，证据强度不同；含负结果与停手。</p>
+<p>当前升级没补跑。见05，不能说“从未执行”，也不能报官方成绩或泛化修复率。</p>
+<h2 id="08-interview-questions-h18">Q17 · FakeLLM 掩盖什么？ <a class="anchor" href="#08-interview-questions-h18">#</a></h2>
+<p>回放含答案；legacy计划模式给预制文本，会掩盖真实模型协议遵循、规划与检索效果。</p>
+<p>strict协议测试验证控制契约，真实模型能力仍需要受限实验。</p>
+<h2 id="08-interview-questions-h19">Q18 · Redis/SQLite 能多实例吗？ <a class="anchor" href="#08-interview-questions-h19">#</a></h2>
+<p>Redis只做任务锁，SQLite线程锁/单连接按单进程原型设计；没有可靠多实例领取与吞吐证据。</p>
+<p>启动Redis连接失败可回内存，运行中故障另有失败边界，不能称分布式队列。</p>
+<h2 id="08-interview-questions-h20">Q19 · 本轮删了什么？ <a class="anchor" href="#08-interview-questions-h20">#</a></h2>
+<p>无执行调用的_matches_requested wrapper与ErrorResponse；身份判定仍调用共享case_matches，ADR锚点指真实路径。</p>
+<p>reset_workspace在plain可达、fold_output有历史脚本调用、legacy_v1是显式契约，所以保留。</p>
+<h2 id="08-interview-questions-h21">Q20 · 如何审查 AI 改动？ <a class="anchor" href="#08-interview-questions-h21">#</a></h2>
+<p>先追完整调用链与失败路径，再对规范/测试/文档；拒放松门禁或改期望凑绿。</p>
+<p>日常verify.ps1快速定向，失败只复现相关项；完整回归交CI。结果附收据，不编造参与比例或固定通过数。</p></article><article id="09-interview-script"><h1 id="09-interview-script-h1">09 · 面试表达稿 <a class="anchor" href="#09-interview-script-h1">#</a></h1>
+<h2 id="09-interview-script-h2">核心价值 <a class="anchor" href="#09-interview-script-h2">#</a></h2>
+<p>“这个项目的价值是让平台判定可追溯：模型提出补丁，平台通过门禁、真实测试、</p>
+<p>完整身份与资源账本验收，模型的 finish 不能直接写 resolved。恢复遇到写阶段重新应用候选并重验。”</p>
+<h2 id="09-interview-script-h3">为什么 LangGraph <a class="anchor" href="#09-interview-script-h3">#</a></h2>
+<p>“图提供阶段拓扑和 superstep 检查点，工具循环由平台手写并被两引擎复用。</p>
+<p>模型在阶段内自主行动；平台控制阶段路由、能力边界与最终验收。</p>
+<p>plain 单轮驱动用于替代编排与部分评测，graph 有多轮候选/交互/恢复，两者功能不等价。”</p>
+<h2 id="09-interview-script-h4">有效性与不足 <a class="anchor" href="#09-interview-script-h4">#</a></h2>
+<p>“离线 FakeLLM 含参考答案，只证明控制链。真实 SWE/两臂消融确有历史记录，</p>
+<p>有限样本、选择偏差、抽样回归和早期跨引擎口径限制都保留，后续还有负结果。</p>
+<p>当前升级没有重新实跑，所以不报官方成绩，也不把历史解决率当当前版本收益。”</p>
+<p>“默认 local 不是沙箱，SQLite 服务按单进程原型设计，费用也是价表估计而非账单。</p>
+<p>全绿可以过拟合，平台规则不能证明语义等价或防住任意恶意仓库。”</p>
+<h2 id="09-interview-script-h5">本轮真实修复 <a class="anchor" href="#09-interview-script-h5">#</a></h2>
+<p>“审查发现受理 TaskSpec 虽冻结配置，初始账本与 pytest 路由仍读当前全局配置。</p>
+<p>修复为任务配置副本与显式后端/超时传递，并用 graph/plain 真实 pytest 链验证配置漂移。</p>
+<p>Docker custom 预检原来仍会宿主 collect，现在按受理后端查 daemon，避免宿主导入 conftest。</p>
+<p>删除两个无执行调用的遗留定义，更新文档锚点到真正的身份判定。没有放松门禁或测试期望。”</p>
+<h2 id="09-interview-script-h6">AI Coding <a class="anchor" href="#09-interview-script-h6">#</a></h2>
+<p>如实说明 AI 协作，不用 commit/行数推断生成比例。应能现场讲清调用方、契约、失败路径与测试证据。</p>
+<p>不能掌握的代码应明确说需要核对，不能把过度自信或固定测试数量当工程能力。</p></article><article id="10-claim-check"><h1 id="10-claim-check-h1">10 · 简历表述核对 <a class="anchor" href="#10-claim-check-h1">#</a></h1>
+<table><thead><tr><th>主张</th><th>当前可支持表述</th><th>限制</th></tr></thead><tbody><tr><td>Agent 平台</td><td>实现 Python/pytest 仓库的诊断、补丁与平台独立验收原型</td><td>无生产用户/可靠性承诺</td></tr><tr><td>LangGraph</td><td>显式阶段拓扑、条件边、检查点，阶段内共享模型工具循环</td><td>平台实现恢复重验，框架不自动保证正确性</td></tr><tr><td>验收护栏</td><td>非空补丁、双集身份、门禁、资源、取消合取；graph候选绑定</td><td>不能证明所有恶意输入都被防住或语义等价</td></tr><tr><td>恢复</td><td>graph候选重应用/重验、账本与会话绑定、拒缺身份</td><td>不声明 exactly-once 或多实例可靠恢复</td></tr><tr><td>Docker</td><td>可选容器执行，pytest与诊断命令限制不同</td><td>默认local、socket部署边界，非生产沙箱声明</td></tr><tr><td>幂等/存储</td><td>完整契约hash幂等、SQLite事务终态、轨迹持久化、可选Redis锁</td><td>单进程原型，非分布式队列</td></tr><tr><td>上下文</td><td>AST/字面/符号检索，有界回执/原文证据，平台观测记忆</td><td>无向量RAG、长期记忆或检索质量分数</td></tr><tr><td>评测</td><td>自建回放、版本化指标、历史真实SWE/消融与负结果记录</td><td>fake含答案，样本受限，当前升级未复跑，非官方成绩</td></tr></tbody></table>
+<p>建议 bullet：</p>
+<ul><li>实现 PatchPilot 诊断与补丁验证原型，将模型动作限制为阶段工具集合，以平台独立 pytest/JUnit 验证与共享合取规则判定修复。</li></li><li>实现 graph 候选工件与恢复重验，持久化会话、证据和资源账本；对配置漂移、取消与已知攻击场景补回归护栏。</li></li><li>建立版本化评测与实验身份记录，区分离线答案回放、有限真实 SWE 实验和未验证局限，不宣称官方解决率。</li></li></ul>
+<p>不要写“准确率xx%”“生产级隔离”“并发提升xx倍”“官方SWE成绩”或固定当前CI通过数，除非有对应完整证据。</p></article><article id="11-cheatsheet"><h1 id="11-cheatsheet-h1">11 · 面试速记 <a class="anchor" href="#11-cheatsheet-h1">#</a></h1>
+<h2 id="11-cheatsheet-h2">一句话 <a class="anchor" href="#11-cheatsheet-h2">#</a></h2>
+<p>PatchPilot 是 Python/pytest 仓库的测试失败诊断与补丁验证原型，重点是平台独立验收和可追溯证据。</p>
+<h2 id="11-cheatsheet-h3">执行链 <a class="anchor" href="#11-cheatsheet-h3">#</a></h2>
+<p>TaskSpec/hash → 输入冻结/预检 → 线程池 → graph 阶段（内部共享 plain_loop）→</p>
+<p>检索/证据/记忆 → 计划/块补丁 → 门禁/Git → pytest/JUnit → acceptance → report/SQLite。</p>
+<p>issue-only 经诊断提议、平台基线复核、可信批准后才能修复。</p>
+<p>plain 是单轮驱动，graph 支持多轮候选、交互与恢复；共用验收不等于功能等价。</p>
+<h2 id="11-cheatsheet-h4">必须会讲 <a class="anchor" href="#11-cheatsheet-h4">#</a></h2>
+<ul><li>resolved：非空补丁、失败集全绿、回归全绿、门禁全过、预算内、未取消；双跑启用时一致。graph 另验候选 hash。</li></li><li>恢复：checkpoint 定位置，loop/session/memory 带上下文，candidate 带补丁，ledger 带消耗；写阶段重验，无身份不冷启动。</li></li><li>资源：已用 + 在途 + 未知持有，回复先结算；费用是估计，不承诺真实账单上限。</li></li><li>上下文：AST/字面检索，无向量库；有界回执与原文分页；平台观测不等于模型假设；无跨任务记忆。</li></li><li>仓库说明：上下文指导，不进权限面。候选写入口 apply_patch；scratch/记忆/问答另有持久写入。</li></li><li>隔离：默认 local，不是沙箱；pytest Docker 有网络/内存/CPU限制，诊断 Docker 另有 PID/no-new-privileges。</li></li><li>幂等：完整 TaskSpec hash，只复用在途同契约任务；Redis 只做锁，SQLite 单进程原型，不宣称多实例可靠领取。</li></li><li>子任务：默认关闭、有界单层角色委派，独立会话与父预算，不能覆盖父验收。</li></li></ul>
+<h2 id="11-cheatsheet-h5">证据与局限 <a class="anchor" href="#11-cheatsheet-h5">#</a></h2>
+<p>离线 FakeLLM 含参考答案，验证控制链不代表修复率。历史真实 SWE/消融已执行并留有记录，</p>
+<p>有选择偏差、抽样回归、早期两臂跨引擎和负结果；当前版本未重新实跑，也无官方成绩。</p>
+<p>全绿不证明语义等价，可有过拟合。测试总数、代码行数和 CI 状态不背固定数字，引用具体收据与提交。</p>
+<h2 id="11-cheatsheet-h6">本轮清理 <a class="anchor" href="#11-cheatsheet-h6">#</a></h2>
+<p>删除无调用的 _matches_requested wrapper 与 ErrorResponse；修复受理后端/超时/账本/模型身份漂移、VERIFY后终局越时，</p>
+<p>Docker custom 预检不再宿主 collect；修正文档。reset_workspace/legacy_v1/fold_output 保留有调用或历史契约用途。</p>
+<p>日常 verify.ps1、最多自动选六份测试、90 秒；完整回归待 CI。</p></article><article id="12-3day-plan"><h1 id="12-3day-plan-h1">12 · 三天准备安排 <a class="anchor" href="#12-3day-plan-h1">#</a></h1>
+<h2 id="12-3day-plan-h2">Day 1 · 讲清真实链路 <a class="anchor" href="#12-3day-plan-h2">#</a></h2>
+<p>读00、01、02，画出受理→graph/plain→工具→候选→pytest→acceptance→持久化。</p>
+<p>结合04精读共享验收、身份匹配、恢复与账本；用当前符号搜索，不背行号。</p>
+<p>目标：能解释模型声明为何不等于平台事实、两引擎在哪里共用与分叉。</p>
+<h2 id="12-3day-plan-h3">Day 2 · 证据与风险 <a class="anchor" href="#12-3day-plan-h3">#</a></h2>
+<p>读03、05、06、07。区分FakeLLM、真实工具执行、历史真实实验、当前未验证能力。</p>
+<p>过08问答，重点是Docker两条路径、预算未知、候选恢复、幂等与SWE官方边界。</p>
+<p>目标：每条主张都有代码/测试或具体实验材料，局限能主动说清。</p>
+<h2 id="12-3day-plan-h4">Day 3 · 练表达 <a class="anchor" href="#12-3day-plan-h4">#</a></h2>
+<p>用09/10核对简历，再做13三轮模拟。答不出来就回源码核对，不能靠固定测试数/代码行数撑场。</p>
+<p>面试前读11速记：非空补丁/双集/门禁/预算/取消、graph候选绑定、恢复重验、默认local、有限历史实验。</p>
+<p>开发验证只按VALIDATION跑verify.ps1，不为面试准备重跑全库或付费批次。</p></article><article id="13-mock-interview"><h1 id="13-mock-interview-h1">13 · 三轮模拟面试 <a class="anchor" href="#13-mock-interview-h1">#</a></h1>
+<h2 id="13-mock-interview-h2">第一轮 · 业务与架构 <a class="anchor" href="#13-mock-interview-h2">#</a></h2>
+<details class="qa" id="13-mock-interview-h3"><summary>问：用一分钟介绍。</summary>
+<p>答：Python/pytest仓库的诊断与补丁验证原型；模型提议，平台门禁/测试/预算验收。graph编排、阶段内Agent。</p>
+<p>不能把生产可用、官方跑分或fake修复率放进开场。</p>
+</details>
+<details class="qa" id="13-mock-interview-h4"><summary>问：一次请求走到结果？</summary>
+<p>答：TaskSpec/hash幂等→custom输入冻结/预检→线程池→graph阶段→检索/证据→计划/块补丁→</p>
+<p>门禁/Git→pytest完整身份→acceptance→report/SQLite。issue-only先提清单、复核、可信批准。</p>
+</details>
+<details class="qa" id="13-mock-interview-h5"><summary>问：为什么双引擎？</summary>
+<p>答：plain单轮替代驱动与graph分阶段多轮编排，共用工具循环和验收；graph交互/候选恢复未在plain实现。</p>
+<p>不把不同功能强行说成完全等价，也不把共享loop删成历史教学代码。</p>
+</details>
+<details class="qa" id="13-mock-interview-h6"><summary>问：Docker边界？</summary>
+<p>答：默认local共享宿主权限；pytest Docker与诊断Docker参数不同，后者另有PID/no-new-privileges。</p>
+<p>Docker预检不宿主collect；官方题目镜像不等于官方评测harness。</p>
+</details>
+<h2 id="13-mock-interview-h7">第二轮 · 判定与失败 <a class="anchor" href="#13-mock-interview-h7">#</a></h2>
+<details class="qa" id="13-mock-interview-h8"><summary>问：finish说成功就成功？</summary>
+<p>答：不是。非空补丁、双集、门禁、资源、取消合取；graph再验候选hash和当前attempt。</p>
+</details>
+<details class="qa" id="13-mock-interview-h9"><summary>问：崩在verify后怎么恢复？</summary>
+<p>答：校验候选/契约/源/基线/资源，复位并重应用，清旧结论，从apply重跑门禁与验证；缺身份待审。</p>
+</details>
+<details class="qa" id="13-mock-interview-h10"><summary>问：账本损坏？</summary>
+<p>答：保留原文件、标unknown、不重新发额度；新请求拒绝，不能resolved。本轮加强了这条回归。</p>
+</details>
+<details class="qa" id="13-mock-interview-h11"><summary>问：测试全绿有什么漏洞？</summary>
+<p>答：指定测试可被过拟合，恶意基线可能伪造JUnit；双跑不能证明语义正确或覆盖所有flaky。</p>
+</details>
+<details class="qa" id="13-mock-interview-h12"><summary>问：预算和账单一样吗？</summary>
+<p>答：不是。预留/结算/未知持有可审计，usage乘价表是估计；不宣传provider账单绝对上限。</p>
+</details>
+<h2 id="13-mock-interview-h13">第三轮 · 证据与真实性 <a class="anchor" href="#13-mock-interview-h13">#</a></h2>
+<details class="qa" id="13-mock-interview-h14"><summary>问：真实模型到底跑没跑？</summary>
+<p>答：有历史SWE与消融/重复实验及负结果；早期快照缺身份，最早两臂跨引擎、样本偏、回归抽样。</p>
+<p>当前升级未补跑，不作官方成绩或当前修复率主张。</p>
+</details>
+<details class="qa" id="13-mock-interview-h15"><summary>问：FakeLLM能证明什么？</summary>
+<p>答：回放含答案，能验证编排和已覆盖护栏；真实Git/pytest验证工具接线，不能验证模型规划/检索/修复效果。</p>
+</details>
+<details class="qa" id="13-mock-interview-h16"><summary>问：本轮清理为什么可信？</summary>
+<p>答：追调用方后才删wrapper/schema；保留plain可达的reset_workspace和历史脚本用的fold_output。</p>
+<p>用真实graph/plain pytest链核对冻结配置，而不是只看ctx字段；保留门禁和测试身份语义。</p>
+</details>
+<details class="qa" id="13-mock-interview-h17"><summary>问：代码是不是自己全写的？</summary>
+<p>答：如实说明AI协作。Git署名/行数不能推断比例；现场讲自己掌握的契约、失败路径和实际测试收据。</p>
+</details>
+<details class="qa" id="13-mock-interview-h18"><summary>问：后续怎么生产化？</summary>
+<p>答：先针对真实用户/仓库验证效果与隔离，按证据改worker/存储/秘密管理/负载能力。</p>
+<p>这些是未来扩展，未实现就不写成现有能力。本轮完成校准后停止新增功能。</p>
+</details></article></main>
+<script>
+const q=document.getElementById('q'),count=document.getElementById('count');
+const arts=[...document.querySelectorAll('article')];
+const cards=[...document.querySelectorAll('details')];
+let auto=[];
+function search(){
+  const t=q.value.trim().toLowerCase();let n=0;
+  arts.forEach(a=>{const hit=!t||a.textContent.toLowerCase().includes(t);
+    a.classList.toggle('hide',!hit);if(hit)n++;});
+  count.textContent=t?`可见 ${n} / ${arts.length} 篇`:'';
+  if(t){auto=cards.filter(d=>!d.open&&d.textContent.toLowerCase().includes(t));
+    auto.forEach(d=>d.open=true);}
+  else{auto.forEach(d=>d.open=false);auto=[];}
+}
+q.addEventListener('input',search);
+document.addEventListener('keydown',e=>{
+  if(e.key==='/'&&document.activeElement!==q){e.preventDefault();q.focus();}});
+const set=v=>cards.forEach(d=>d.open=v);
+document.getElementById('open').onclick=()=>set(true);
+document.getElementById('close').onclick=()=>set(false);
+document.getElementById('p0').onclick=()=>{
+  set(false);
+  document.querySelectorAll('details.qa').forEach(d=>{
+    if(/P0|最重要|生死|核心/.test(d.querySelector('summary').textContent))d.open=true;});
+};
+document.getElementById('menu').onclick=()=>document.body.classList.toggle('nav-open');
+const links=[...document.querySelectorAll('nav a')];
+const byId=new Map(links.map(a=>[a.getAttribute('href').slice(1),a]));
+const seen=new Set();
+const io=new IntersectionObserver(es=>{
+  es.forEach(e=>e.isIntersecting?seen.add(e.target.id):seen.delete(e.target.id));
+  const cur=arts.find(a=>seen.has(a.id));
+  if(!cur)return;
+  links.forEach(a=>a.classList.remove('on'));
+  byId.get(cur.id)?.classList.add('on');
+},{rootMargin:'0px 0px -70% 0px'});
+arts.forEach(a=>io.observe(a));
+</script></body></html>

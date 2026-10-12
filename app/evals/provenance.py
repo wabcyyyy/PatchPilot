@@ -354,14 +354,14 @@ def prompt_identity() -> dict[str, Any]:
     return {"prompts_sha256": prompt_set_hash()[:16]}
 
 
-def container_identity() -> dict[str, Any]:
+def container_identity(settings: Any | None = None) -> dict[str, Any]:
     """容器身份:镜像引用 + 本机 daemon 报出的 digest。
 
     只查本地 Docker 元数据,**不联网、不拉取镜像**;daemon 不可用或查不到时如实记
     `digest_status=unavailable`(与"检查通过"区分)。local 后端整段标 not_applicable,
     绝不把宿主执行读成"同一个容器环境"(§7 G09 的同一条口径)。
     """
-    settings = get_settings()
+    settings = settings if settings is not None else get_settings()
     image = settings.docker_image
     if settings.execution_backend != "docker":
         return {
@@ -406,9 +406,11 @@ def model_identity(model_provider: str, model_name: str) -> dict[str, Any]:
     }
 
 
-def protocol_identity(arm: str, policy: Any | None = None) -> dict[str, Any]:
+def protocol_identity(
+    arm: str, policy: Any | None = None, settings: Any | None = None
+) -> dict[str, Any]:
     """请求/工具协议与策略指纹:两臂比较时除登记变量外必须逐字段相同。"""
-    settings = get_settings()
+    settings = settings if settings is not None else get_settings()
     described = None
     policy_hash = None
     if policy is not None:
@@ -450,9 +452,9 @@ def protocol_identity(arm: str, policy: Any | None = None) -> dict[str, Any]:
     }
 
 
-def config_snapshot() -> dict[str, Any]:
+def config_snapshot(settings: Any | None = None) -> dict[str, Any]:
     """批次取证用的配置白名单快照(E2/P3-11):只收影响复现与判定的键。"""
-    settings = get_settings()
+    settings = settings if settings is not None else get_settings()
     return {key: getattr(settings, key) for key in SNAPSHOT_KEYS}
 
 
@@ -476,6 +478,7 @@ def build_provenance(
     arm: str = "agent",
     max_turns: int | None = None,
     policy: Any | None = None,
+    settings: Any | None = None,
 ) -> dict[str, Any]:
     """任务开始时取证:同样配置能否复跑,取决于这里的字段是否被记录。
 
@@ -495,7 +498,7 @@ def build_provenance(
     全部去敏:没有 key、没有 Authorization、没有 query token、没有思维链原文、
     没有本机绝对路径。
     """
-    settings = get_settings()
+    settings = settings if settings is not None else get_settings()
     return {
         "git_commit": git_commit(),
         "model_provider": model_provider,
@@ -512,7 +515,7 @@ def build_provenance(
         "generated_at": datetime.now(UTC).isoformat(timespec="milliseconds"),
         # E2:配置快照与任务起始时间——复现口径从"散落的平级字段"收敛为
         # 一份白名单字典,started_at 与批次 manifest 的 started_at 同口径
-        "config_snapshot": config_snapshot(),
+        "config_snapshot": config_snapshot(settings),
         "started_at": datetime.now(UTC).isoformat(timespec="milliseconds"),
         "worktree_dirty": worktree_dirty(),
         "dirty_fingerprint": dirty_fingerprint(),
@@ -520,9 +523,9 @@ def build_provenance(
         "provenance_schema_version": PROVENANCE_SCHEMA_VERSION,
         "model_identity": model_identity(model_provider, model_name),
         "endpoint_identity": endpoint_identity(settings.llm_base_url),
-        "protocol_identity": protocol_identity(arm, policy),
+        "protocol_identity": protocol_identity(arm, policy, settings),
         "pricing_identity": pricing_identity(),
-        "container_identity": container_identity(),
+        "container_identity": container_identity(settings),
         "budget_identity": {
             "budget_mode": settings.budget_mode,
             "token_budget": settings.token_budget,

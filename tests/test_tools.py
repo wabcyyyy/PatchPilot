@@ -1,4 +1,4 @@
-"""M3 工具层测试:七个工具的边界校验与轨迹记录。"""
+"""工具边界校验、失败分类与轨迹记录。"""
 
 from __future__ import annotations
 
@@ -235,6 +235,21 @@ def test_registry_unknown_tool_and_bad_args(task_ctx: ToolContext) -> None:
 
     bad_args = execute(task_ctx, "read_file", {"offset": 3})  # 缺 path
     assert not bad_args.ok and "bad arguments" in bad_args.error
+
+
+def test_handler_type_error_is_not_argument_binding_failure(
+    task_ctx: ToolContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.tools.base import ToolResult
+    from app.tools.registry import REGISTRY
+
+    def broken_handler(ctx: ToolContext, path: str) -> ToolResult:
+        raise TypeError("internal handler failure")
+
+    monkeypatch.setattr(REGISTRY["read_file"], "handler", broken_handler)
+    result = execute(task_ctx, "read_file", {"path": "src/dateparse.py"})
+    assert not result.ok
+    assert result.error == "TypeError: internal handler failure"
 
 
 def test_trajectory_jsonl_format(task_ctx: ToolContext) -> None:

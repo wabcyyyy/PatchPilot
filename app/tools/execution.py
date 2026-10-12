@@ -44,6 +44,7 @@ def run_tests(ctx: ToolContext, test_set: str = "all") -> ToolResult:
         report_path=junit_path,
         timeout_seconds=ctx.test_timeout_seconds,
         env=ctx.env,
+        execution_backend=ctx.execution_backend or None,
     )
     return ToolResult(
         ok=True,

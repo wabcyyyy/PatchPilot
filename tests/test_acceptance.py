@@ -6,6 +6,8 @@ graph 的 finish 节点与 plain 的判定段调用同一个 final_acceptance;
 
 from __future__ import annotations
 
+import pytest
+
 from app.graph.acceptance import (
     VALIDATION_INCONCLUSIVE,
     VALIDATION_PASSED,
@@ -36,6 +38,19 @@ def test_all_green_within_budget_resolves() -> None:
     assert decision.gate_status == "passed"
     assert decision.resource_status == WITHIN_BUDGET
     assert decision.reasons == []
+
+
+def test_deadline_expired_after_verification_cannot_resolve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """VERIFY已绿后、终局前越过deadline,也不能伪装资源合规。"""
+    monkeypatch.setattr("app.graph.acceptance.time.time", lambda: 100.0)
+    decision = final_acceptance(ledger=_within_ledger(), deadline_epoch=99.0, **_green_kwargs())
+    assert not decision.resolved
+    assert decision.validation_status == VALIDATION_PASSED
+    assert decision.gate_status == "passed"
+    assert decision.resource_status == "exhausted"
+    assert "task deadline passed before final acceptance" in decision.reasons
 
 
 def test_verification_passed_but_budget_exceeded_never_resolves() -> None:

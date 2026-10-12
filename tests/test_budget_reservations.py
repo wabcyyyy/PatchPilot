@@ -332,14 +332,30 @@ def test_ledger_file_is_reused_by_the_same_task(tmp_path: Path) -> None:
     assert again.resource_status == WITHIN_BUDGET
 
 
-def test_corrupt_ledger_state_falls_back_to_fresh(tmp_path: Path) -> None:
-    """坏快照不许把任务拖崩:读不动就当没有,恢复不可用但不误判额度。"""
+def test_corrupt_ledger_state_cannot_regrant_or_certify(tmp_path: Path) -> None:
+    """坏快照保留未知消费,不当成新任务重授额度;读取失败不伪造实际用量。"""
     (tmp_path / "ledger_state.json").write_text("{not json", encoding="utf-8")
     ledger = ledger_from_settings(
         task_id="T", settings=_settings(token_budget=1000), run_dir=tmp_path
     )
     assert ledger.tokens_used == 0
     assert load_ledger_state(tmp_path) is None
+    assert ledger.resource_status == UNKNOWN
+    with pytest.raises(BudgetError, match="persisted ledger unreadable"):
+        ledger.reserve(call_id="untrusted", request_tokens=100, stage="PROPOSE_PATCH")
+    from app.graph.acceptance import final_acceptance
+
+    decision = final_acceptance(
+        verify_failed_ok=True,
+        verify_regression_ok=True,
+        verify_ran=True,
+        gate_ok=True,
+        gate_ran=True,
+        diff_non_empty=True,
+        ledger=ledger,
+    )
+    assert not decision.resolved
+    assert (tmp_path / "ledger_state.json").read_text(encoding="utf-8") == "{not json"
 
 
 def test_report_summary_is_redacted_and_consistent() -> None:

@@ -236,19 +236,6 @@ def attach_missing_report_cause(report: PytestReport, run: TestRunResult, *, sub
     report.failed_cases[0].traceback = f"{header}\n{tail[-budget:]}"
 
 
-def _matches_requested(file_attr: str, classname: str, case_name: str, requested: str) -> bool:
-    """junit 的 testcase 是否对应请求的 node id(S01/F3 起委托共享解析器)。
-
-    完整身份语义(文件 + 类链 + 函数 + 参数化)见 app/adapters/test_identity.py;
-    请求 id 解析不了(非具体 node id)一律不匹配——旧实现"只对 file+方法名、
-    丢类链"的假通过正是本函数的缺陷现场。
-    """
-    identity = parse_node_id(requested)
-    if identity is None:
-        return False
-    return case_matches(identity, file_attr, classname, case_name)
-
-
 def _case_id(case: ET.Element) -> str:
     classname = case.get("classname", "")
     name = case.get("name", "")
@@ -289,6 +276,7 @@ def run_pytest(
     extra_args: list[str] | None = None,
     *,
     env: BugEnv | None = None,
+    execution_backend: str | None = None,
 ) -> tuple[PytestReport, TestRunResult]:
     """执行 pytest 并解析报告;报告缺失/超时都反映在返回值里。
 
@@ -302,7 +290,10 @@ def run_pytest(
     settings = get_settings()
     timeout = timeout_seconds or settings.test_timeout_seconds
     junit = report_path or (Path(cwd) / ".patchpilot_junit.xml")
-    if settings.execution_backend == "docker":
+    backend = execution_backend if execution_backend is not None else settings.execution_backend
+    if backend not in {"local", "docker"}:
+        raise ExecError(f"unknown execution_backend: {backend!r}")
+    if backend == "docker":
         if env is not None and not env.is_container:
             raise ExecError("bug declares a host env.python but execution_backend='docker'")
         return _run_pytest_in_container(

@@ -212,3 +212,80 @@ def test_graph_run_uses_frozen_policy_under_environment_drift(
     assert summary["profile_name"] == "repair_v2"
     assert summary["window"]["capacity_tokens"] == 32000  # 冻结值,不是 16000
     assert summary["window"]["adopted_tokens"] == accepted_window["adopted_tokens"]
+
+
+@pytest.mark.parametrize("engine", ["graph", "plain"])
+def test_accepted_execution_and_ledger_survive_config_drift(
+    engine: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """真实 pytest 链:冻结 local/双跑/额度,全局改 docker/关双跑/不足额度仍用契约。"""
+    from app.adapters.pytest_adapter import run_pytest
+    from app.evals.driver import run_task
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "execution_backend", "local")
+    monkeypatch.setattr(settings, "token_budget", 200_000)
+    monkeypatch.setattr(settings, "test_timeout_seconds", 37)
+    monkeypatch.setattr(settings, "verify_double_run", True)
+    monkeypatch.setattr(settings, "task_timeout_seconds", 900)
+    bug = load_bug("BUG-001", BUG_ROOT)
+    script = load_replay_script(bug, kind=engine)
+    spec = build_task_spec(
+        bug, engine=engine, arm="agent", model_provider="fake-replay", replay=script, max_turns=20
+    )
+    run_dir = tmp_path / engine
+    run_dir.mkdir()
+    write_task_spec_file(run_dir, spec)
+    monkeypatch.setattr(settings, "execution_backend", "docker")
+    monkeypatch.setattr(settings, "token_budget", 1)
+    monkeypatch.setattr(settings, "test_timeout_seconds", 1)
+    monkeypatch.setattr(settings, "task_timeout_seconds", 1)
+    monkeypatch.setattr(settings, "verify_double_run", False)
+    runs: list[str] = []
+
+    def checked_pytest(*args: object, **kwargs: object) -> tuple:
+        assert kwargs["execution_backend"] == "local"
+        assert kwargs["timeout_seconds"] == 37
+        runs.append(Path(args[3]).name)
+        return run_pytest(*args, **kwargs)
+
+    module = "app.graph.nodes" if engine == "graph" else "app.evals.driver"
+    monkeypatch.setattr(f"{module}.run_pytest", checked_pytest)
+    monkeypatch.setattr(
+        "app.executor.docker_runner.docker_available",
+        lambda: pytest.fail("frozen local task must not probe Docker"),
+    )
+    runner = run_task_graph if engine == "graph" else run_task
+    result = runner(bug, FakeLLM(script), runs_root=tmp_path, run_dir=run_dir)
+    assert result.verdict == "resolved", (result.status, result.error)
+    assert result.resources["limits"]["token_limit"] == 200_000
+    assert result.provenance["execution_backend"] == "local"
+    assert result.provenance["config_snapshot"]["test_timeout_seconds"] == 37
+    assert result.provenance["budget_identity"]["token_budget"] == 200_000
+    assert result.provenance["container_identity"]["digest_status"] == "not_applicable"
+    assert {"verify-failed-rerun.xml", "verify-regression-rerun.xml"} <= set(runs)
+    assert settings.execution_backend == "docker"
+
+
+def test_unreadable_plain_contract_is_rejected(tmp_path: Path) -> None:
+    from app.evals.driver import run_task
+
+    (tmp_path / "task_spec.json").write_text("{broken", encoding="utf-8")
+    with pytest.raises(TaskError, match="accepted task_spec unreadable"):
+        run_task(load_bug("BUG-001", BUG_ROOT), FakeLLM([]), runs_root=tmp_path, run_dir=tmp_path)
+
+
+def test_graph_finish_checks_its_current_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    nodes = _make_nodes(tmp_path)
+    nodes.deadline_epoch = 99.0
+    monkeypatch.setattr("app.graph.acceptance.time.time", lambda: 100.0)
+    monkeypatch.setattr(
+        "app.graph.nodes.working_tree_diff",
+        lambda _: SimpleNamespace(is_empty=False, diff_text="candidate"),
+    )
+    final = nodes.finish({"round_no": 1, "verify_failed_ok": True, "verify_regression_ok": True})
+    assert final["status"] == "BUDGET_EXCEEDED"
+    assert final["validation_status"] == "passed"
+    assert final["resource_status"] == "exhausted"

@@ -64,7 +64,7 @@ def run_task_graph(
       apply 门禁 / verify 双测试集 / E3 双跑一致性 / 最终 verdict 全部在本次续跑里
       真实执行一遍(测试按轨迹事件计数钉住这一条);
     ③token 与轮次不双计:累计量随快照与检查点带回,阶段轮次上限不重授。
-    无可续位置(无检查点/无快照且图已终态)时如实回退冷启动,并记 resume_unavailable。
+    无可信可续位置时结构化拒绝,不冷启动重授额度;已终态仅核对并读取报告。
     """
     # P3-3 整改:第四入口(run_task_graph)此前零守卫——与 driver.run_task 同口径,
     # 真实模型(llm_enabled=True 且非 fake-replay)缺 model_name 时在物化任何
@@ -101,20 +101,11 @@ def run_task_graph(
         arm=arm,
     )
     # 批次溯源:与 plain 引擎同口径,任务开始即取证
-    result.provenance = build_provenance(
-        result.model_provider, model_name, "graph", arm, max_turns=max_turns, policy=policy
-    )
-    result.provenance["arm"] = arm
-    result.provenance["experiment_policy"] = policy.describe()
     tracker = Tracker(run_dir / "trajectory.jsonl", task_id=task_id, sink=tracker_sink)
     started = time.monotonic()
     # S02b:deadline 在**执行线程启动**时建立(排队不计),墙钟持久化进 state——
     # 恢复沿用原值的剩余时间,停机间隔计入,不重授 900s
-    deadline_epoch = (
-        time.time() + get_settings().task_timeout_seconds
-        if get_settings().task_timeout_seconds > 0
-        else None
-    )
+    execution_started_epoch = time.time()
     # G11:绝对寿命上限同样在受理时建立并进 state——用户等待可以顺延 deadline,
     # 但不能把任务寿命拖过这条线;恢复从 state 读回原值,不重授。
     lifetime = get_settings().task_absolute_lifetime_seconds
@@ -124,6 +115,31 @@ def run_task_graph(
     nodes: TaskNodes | None = None  # 异常路径也要能读到账本(S02:资源状态不写 0)
 
     try:
+        from app.task_spec import TaskSpec, settings_for_policy
+
+        spec_file = run_dir / "task_spec.json"
+        accepted_spec = TaskSpec.read_file(spec_file) if spec_file.exists() else None
+        settings = settings_for_policy(
+            get_settings(), accepted_spec.effective_policy if accepted_spec else None
+        )
+        if accepted_spec is not None:
+            max_turns = accepted_spec.max_turns
+            max_rounds = accepted_spec.max_rounds
+        deadline_epoch = (
+            execution_started_epoch + settings.task_timeout_seconds
+            if settings.task_timeout_seconds > 0
+            else None
+        )
+        result.provenance = build_provenance(
+            result.model_provider,
+            model_name,
+            "graph",
+            arm,
+            max_turns=max_turns,
+            policy=policy,
+            settings=settings,
+        )
+        result.provenance["experiment_policy"] = policy.describe()
         nodes = TaskNodes(
             bug=bug,
             model=model,
@@ -146,6 +162,7 @@ def run_task_graph(
             on_waiting=on_waiting,
             # G11:ask_user 的等待通道(同 G10 的口径:不传 = headless 不等待)
             interaction=interaction,
+            frozen_policy=accepted_spec.effective_policy if accepted_spec else None,
         )
         checkpointer = (
             make_sqlite_checkpointer(run_dir / "checkpoints.sqlite") if use_checkpoint else None
@@ -178,7 +195,7 @@ def run_task_graph(
             task_spec = build_task_spec(
                 bug,
                 engine="graph",
-                arm="agent",
+                arm=arm,
                 model_provider=getattr(model, "provider", "unknown"),
                 model_name=model_name,
                 max_turns=max_turns,

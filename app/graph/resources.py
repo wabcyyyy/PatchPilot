@@ -247,6 +247,8 @@ class ResourceLedger:
 
     def _check_room_locked(self, *, tokens: int, cost: int | None, stage: str) -> None:
         """额度检查(必须在锁内调用)。已用 + 在途预留 + 本次预留 才是完整基数。"""
+        if "ledger_state_unreadable" in self.anomalies:
+            raise BudgetError(self.stop_reason or "persisted ledger unreadable; refusing new quota")
         if self._tokens_gated() and self.token_limit > 0:
             committed = self.tokens_used + self.unknown_held_tokens + self._reserved_tokens()
             if committed + tokens > self.token_limit:
@@ -848,7 +850,7 @@ def ledger_from_settings(
             if price_model and not ledger.price_model:
                 ledger.price_model = price_model
             return ledger
-    return ResourceLedger(
+    ledger = ResourceLedger(
         task_id=task_id,
         token_limit=int(getattr(settings, "token_budget", 0) or 0),
         output_reserve=int(getattr(settings, "llm_max_tokens", 0) or 0),
@@ -862,6 +864,12 @@ def ledger_from_settings(
         # G13:子任务份额冻结进账本(受理时确定,恢复沿用旧值,不改运行中的任务)
         subtask_budget_share=float(getattr(settings, "subtask_budget_share", 0.0) or 0.0),
     )
+    if state_path is not None and state_path.is_file():
+        # 损坏/不支持的持久账本不是“尚未消费”:保留文件,不重授未知的历史额度。
+        ledger.resource_status = UNKNOWN
+        ledger.stop_reason = "persisted ledger unreadable; refusing new quota"
+        ledger.anomalies.append("ledger_state_unreadable")
+    return ledger
 
 
 def load_ledger_state(run_dir: Path) -> dict[str, Any] | None:

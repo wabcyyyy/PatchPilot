@@ -92,12 +92,6 @@ class TaskListOut(BaseModel):
     tasks: list[TaskOut]
 
 
-class ErrorResponse(BaseModel):
-    code: str
-    message: str
-    task_id: str | None = None
-
-
 class AcceptanceApproveIn(BaseModel):
     """POST /tasks/{id}/acceptance 的批准入参(G10):绑定提议身份与版本。"""
 

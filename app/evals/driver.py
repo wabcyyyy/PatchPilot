@@ -1,7 +1,6 @@
 """单任务驱动器:从 Bug 描述到最终报告的完整闭环(plain 引擎)。
 
-M5 的 LangGraph 状态机会复用本模块的基线/验证逻辑;
-判定规则唯一出处:4.3 的四个条件缺一不可。
+graph 与 plain 保留不同编排,复用工具循环、pytest 适配器和严格 final_acceptance。
 """
 
 from __future__ import annotations
@@ -201,26 +200,15 @@ def run_task(
     # 批次溯源:任务开始即取证,后续任何崩溃路径的 report.json 都带复现口径。
     # 策略登记面(experiment_policy)只在 graph 引擎被真实消费(S10a 的两臂都在 graph),
     # plain 路径不伪造一份"看起来注册过"的策略,protocol_identity 记 None。
-    result.provenance = build_provenance(
-        result.model_provider, model_name, engine, arm, max_turns=max_turns
-    )
     tracker = Tracker(run_dir / "trajectory.jsonl", task_id=task_id, sink=tracker_sink)
     started = time.monotonic()
     # S02b:任务级墙钟截止时刻,执行线程启动时建立(排队不计);plain 验证段
     # 从此与 graph 同口径——每次 run_pytest 前后复查,剩余时间不足不启动下一次
-    deadline_epoch = (
-        time.time() + settings.task_timeout_seconds if settings.task_timeout_seconds > 0 else None
-    )
+    execution_started_epoch = time.time()
     ctx: ToolContext | None = None  # materialize 失败时 finally 仍可安全引用
     # S02/F1:任务级资源账本(与 graph 引擎同一套 ResourceLedger)
     from app.graph.resources import ledger_from_settings
 
-    ledger = ledger_from_settings(
-        task_id=task_id,
-        settings=settings,
-        price_model=model_name or str(getattr(settings, "llm_model", "") or ""),
-        run_dir=run_dir,
-    )
     # G07:plain 引擎与 graph 共用同一份**冻结的**运行 profile。同一个 profile 名字在两条
     # 路上必须给出同一组数字(软窗口/尾部钉住/容量判据),否则"换 profile"就成了看引擎才
     # 生效的话;消融臂换 profile 也就是换这一份读数。
@@ -230,17 +218,31 @@ def run_task(
     frozen_policy: dict[str, Any] | None = None
     spec_file = run_dir / "task_spec.json"
     if spec_file.is_file():
-        from app.task_spec import TaskSpec
+        from app.task_spec import TaskSpec, settings_for_policy
 
         try:
-            frozen_policy = TaskSpec.read_file(spec_file).effective_policy
-        except (ValueError, OSError):
-            frozen_policy = None
-    runtime = TaskRuntime.build(settings)
-    if frozen_policy:
-        frozen_runtime = TaskRuntime.from_frozen(frozen_policy)
-        if frozen_runtime is not None:
-            runtime = frozen_runtime
+            accepted = TaskSpec.read_file(spec_file)
+        except (ValueError, OSError) as exc:
+            raise TaskError(f"accepted task_spec unreadable: {exc}") from exc
+        frozen_policy = accepted.effective_policy
+        settings = settings_for_policy(settings, frozen_policy)
+        max_turns = accepted.max_turns
+    runtime = TaskRuntime.from_frozen(frozen_policy) or TaskRuntime.build(settings)
+    ledger = ledger_from_settings(
+        task_id=task_id,
+        settings=settings,
+        price_model=model_name or str(getattr(settings, "llm_model", "") or ""),
+        run_dir=run_dir,
+    )
+    deadline_epoch = (
+        execution_started_epoch + settings.task_timeout_seconds
+        if settings.task_timeout_seconds > 0
+        else None
+    )
+
+    result.provenance = build_provenance(
+        result.model_provider, model_name, engine, arm, max_turns=max_turns, settings=settings
+    )
 
     def _policy_value(key: str) -> Any:
         """与 graph 侧 TaskNodes._policy_value 同一口径:冻结策略优先,Settings 兜底。"""
@@ -287,6 +289,8 @@ def run_task(
             max_search_results=int(_policy_value("max_search_results")),
             memory=memory,
             session=session,
+            execution_backend=settings.execution_backend,
+            cancel_event=cancel_event,
         )
         tracker.record(
             tool="create_workspace",
@@ -311,6 +315,8 @@ def run_task(
             bug.failed_tests,
             report_dir / "baseline-failed.xml",
             env=ctx.env,
+            timeout_seconds=ctx.test_timeout_seconds,
+            execution_backend=ctx.execution_backend or None,
         )
         regression_report, _ = run_pytest(
             ctx.python_exe,
@@ -318,6 +324,8 @@ def run_task(
             bug.regression_tests,
             report_dir / "baseline-regression.xml",
             env=ctx.env,
+            timeout_seconds=ctx.test_timeout_seconds,
+            execution_backend=ctx.execution_backend or None,
         )
         result.baseline_failed = failed_report.failed + failed_report.errors
         result.baseline_regression_ok = regression_report.all_passed
@@ -353,6 +361,7 @@ def run_task(
             deadline_epoch=deadline_epoch,
             cancel_event=cancel_event,
             ledger=ledger,
+            token_budget=settings.token_budget,
             **runtime.loop_settings(),
         )
         result.turns = outcome.turns
@@ -372,6 +381,8 @@ def run_task(
             bug.failed_tests,
             report_dir / "verify-failed.xml",
             env=ctx.env,
+            timeout_seconds=ctx.test_timeout_seconds,
+            execution_backend=ctx.execution_backend or None,
         )
         result.verify_failed_ok = verify_failed.all_passed
         if (overrun := _time_overrun()) is not None:
@@ -383,6 +394,8 @@ def run_task(
             bug.regression_tests,
             report_dir / "verify-regression.xml",
             env=ctx.env,
+            timeout_seconds=ctx.test_timeout_seconds,
+            execution_backend=ctx.execution_backend or None,
         )
         result.verify_regression_ok = verify_regression.all_passed
         if (overrun := _time_overrun()) is not None:
@@ -405,6 +418,8 @@ def run_task(
                 bug.failed_tests,
                 report_dir / "verify-failed-rerun.xml",
                 env=ctx.env,
+                timeout_seconds=ctx.test_timeout_seconds,
+                execution_backend=ctx.execution_backend or None,
             )
             rerun_regression, _ = run_pytest(
                 ctx.python_exe,
@@ -412,6 +427,8 @@ def run_task(
                 bug.regression_tests,
                 report_dir / "verify-regression-rerun.xml",
                 env=ctx.env,
+                timeout_seconds=ctx.test_timeout_seconds,
+                execution_backend=ctx.execution_backend or None,
             )
             if (overrun := _time_overrun()) is not None:
                 _deadline_terminal(overrun)
@@ -452,6 +469,7 @@ def run_task(
             double_run_inconsistent=bool(mismatch),
             cancelled=bool(cancel_event is not None and cancel_event.is_set()),
             ledger=ledger,
+            deadline_epoch=deadline_epoch,
         )
         result.validation_status = decision.validation_status
         result.gate_status = decision.gate_status

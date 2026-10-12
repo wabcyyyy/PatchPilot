@@ -1,11 +1,8 @@
 # PatchPilot 项目企划书
 
-> 数字口径注记(2026-09-25,E8):本文为历史文档,文中出现的测试用例数、题目数等计数**以 README 与 `pytest -q` 实测为准**,不随开发进度更新。
+本文维护项目范围和当前架构概要。升级行为以 [当前 SPEC](PatchPilot修复Agent升级SPEC-2026-10-10.md) 与对应 ADR 为准；源码与测试用于验证接线，不能用历史规划证明当前能力。
 
-> 本文是 PatchPilot 的**规范定义唯一事实源**(状态机、门禁规则、数据模型、评测口径),覆盖项目定位、
-> 架构设计、状态机、工具协议、数据模型、阶段规划与评测方案。
-> 学习路线、动手练习与自查标准见《PatchPilot学习计划》;两者按周交替推进。
-> 早期初稿《项目初步企划书与学习建议》已拆分为上述两份并退役(历史见 git)。
+第 10 节起的阶段计划、旧评测目标与简历草案保留为早期规划背景，不作为完成证据。实际实验见 `work-notes/` 的带日期记录，开发验证见根目录 VALIDATION.md。
 
 ## 1. 项目定位
 
@@ -39,10 +36,10 @@ PatchPilot:面向研发流程的开发者 Agent,重点是仓库理解、命令�
 
 用户提交:
 
-- 一个本地 Git 仓库或指定 commit;
+- 一个平台任务集 bug_id 或可访问的本地仓库目录；HTTP 未提供任意 commit checkout;
 - 一段 Bug/Issue 描述;
-- 测试命令或项目适配器;
-- 最大修复轮数和执行资源限制。
+- repair 模式的具体失败/回归 node IDs，或 issue-only 诊断后批准的清单；不受理自由测试命令;
+- 请求 profile 与最大修复轮数；执行预算由受理配置冻结，任意权限/金额扩张需新契约。
 
 系统返回:
 
@@ -70,7 +67,7 @@ PatchPilot:面向研发流程的开发者 Agent,重点是仓库理解、命令�
 └───────┬─────────────────┘
         │
 ┌───────▼─────────────────┐
-│ 工具层(7 个 Agent 工具) │ 每次调用记录轨迹
+│ 工具层(注册表与阶段能力集合) │ 每次调用记录轨迹
 └───────┬─────────────────┘
         │
 ┌───────▼─────────────────┐
@@ -97,116 +94,90 @@ PatchPilot:面向研发流程的开发者 Agent,重点是仓库理解、命令�
 关键设计决策:
 
 - **状态机先行**:先定义状态与转移规则(见第 4 节),再写节点代码;
-- **工具最小集**:第一版只保留 7 个工具,之后按真实失败案例增补;
-- **判定规则显式化**:`resolved` 必须同时满足四个条件(见 4.3),不允许"返回码为 0 即成功"。
+- **工具最小集**:以 registry 的注册表为准，各阶段只暴露对应能力集合;
+- **判定规则显式化**:`resolved` 必须满足共享 acceptance 的合取条件(见 4.3),不允许"返回码为 0 即成功"。
 
 ## 4. 核心状态机
 
-### 4.1 状态定义
+### 4.1 当前 graph 执行链
 
-| 状态 | 含义 |
-|---|---|
-| CREATED | 任务已创建,参数待校验 |
-| BASELINE | 固定 commit,运行目标测试,记录"失败基线" |
-| LOCALIZE | 分析 Issue/错误日志,检索并阅读相关代码 |
-| PROPOSE_PATCH | 生成 unified diff 补丁 |
-| APPLY_PATCH | 校验补丁(格式/范围/权限)并应用到隔离工作区 |
-| VERIFY | 执行原失败测试与回归测试 |
-| FINISHED | 正常结束(修复成功) |
-| INVALID_TASK | 仓库、测试命令或任务参数不合法 |
-| PATCH_REJECTED | 补丁格式错误、修改范围超限或修改了测试文件 |
-| VERIFY_FAILED | 测试仍失败或引入回归 |
-| BUDGET_EXCEEDED | 超过修复轮数、执行时间或资源预算 |
-| NEEDS_REVIEW | 无法自动判断,转人工审核 |
+`prepare → baseline → localize → plan → propose → apply → verify → finish`。
+issue-only 任务跳过初始 baseline，在 localize 后插入 diagnose：提出具体失败/回归测试 →
+平台在输入副本上复核红/绿基线 → trusted_user 批准冻结清单 → plan。
 
-### 4.2 转移表
+门禁拒绝或验证失败经 rollback 保全现场、复位、消耗一次候选轮次，再回 plan；预算耗尽停止。
+未知用量、双跑不一致、缺可信恢复身份等转 needs_review。服务生命周期另有 QUEUED/RUNNING/
+WAITING_INPUT/CANCELLED；图 stage 不等于数据库 lifecycle status。
+权威拓扑见 `app/graph/builder.py`，路由见 TaskNodes，服务终态见 Repository。
 
-| 当前状态 | 事件 | 下一状态 | 动作 |
-|---|---|---|---|
-| CREATED | 参数校验通过 | BASELINE | 固定 commit、打快照 |
-| CREATED | 校验失败 | INVALID_TASK | 记录原因,结束 |
-| BASELINE | 目标测试失败现象确认 | LOCALIZE | 保存失败签名 |
-| BASELINE | 目标测试全部通过 | INVALID_TASK | 无失败可修,任务无效 |
-| LOCALIZE | 定位到候选代码 | PROPOSE_PATCH | 记录定位结果 |
-| PROPOSE_PATCH | 生成补丁 | APPLY_PATCH | 提交 diff 校验 |
-| APPLY_PATCH | 校验并应用成功 | VERIFY | — |
-| APPLY_PATCH | 格式/范围/权限违规 | PATCH_REJECTED | 记录违规详情;轮数未超 → 回 PROPOSE_PATCH 重试 |
-| VERIFY | 原失败测试 + 回归全过 | FINISHED | 按 4.3 判定为 resolved |
-| VERIFY | 原失败测试仍失败 | PROPOSE_PATCH | 轮数 +1;超限 → BUDGET_EXCEEDED |
-| VERIFY | 引入新失败(回归) | PROPOSE_PATCH | 先回滚本轮补丁;超限 → BUDGET_EXCEEDED |
-| 任意 | 轮数/时间/token 超预算 | BUDGET_EXCEEDED | 保留现场,结束 |
-| 任意 | 无法自动判断 | NEEDS_REVIEW | 生成人工复核建议 |
+plain 是单轮基线 → 共享工具循环 → 独立平台验证 → 共享验收，不包含 graph 的多轮候选、
+诊断审批与自动恢复编排。LangGraph 提供阶段拓扑与 superstep checkpoint；实际工具循环、
+资源计量和恢复重验由平台实现，不能仅凭 checkpointer 宣称恢复正确。
 
-循环只发生在 PROPOSE_PATCH ↔ APPLY_PATCH ↔ VERIFY 之间,由预算(最大轮数、时间、token)约束。
+### 4.2 修复判定规则
 
-### 4.3 修复判定规则
+`resolved` = 当前补丁非空 ∧ 原失败测试全通过 ∧ 回归测试全通过 ∧ 门禁全通过
+∧ 资源 within_budget ∧ 未取消。双跑开启时必须身份集合与通过结果一致。
+共享唯一实现为 `app/graph/acceptance.py`；模型 finish 只是阶段声明。
 
-`resolved` 必须同时满足:
+graph 另外核对当前工作区 diff 与冻结候选 hash 一致，每次验证刷新 verification_attempt_id；
+写阶段恢复从候选重应用并重跑门禁/测试，绝不复用旧成功布尔。
+plain 复用严格合取验收，但不声明拥有 graph 的候选工件恢复链。
 
-1. 基线中失败的目标测试全部转为通过;
-2. 回归测试集(PASS_TO_PASS)全部保持通过;
-3. 补丁通过全部质量门禁(未修改测试文件、未越权、未超范围,见第 9 节);
-4. 未触碰资源预算上限。
+### 4.3 执行与资源边界
 
-条件不满足时的状态映射:条件 1/2 不满足 → VERIFY_FAILED;条件 3 不满足 → PATCH_REJECTED;条件 4 不满足 → BUDGET_EXCEEDED;其余无法自动判断的情况 → NEEDS_REVIEW。
+TaskSpec 冻结输入、具体 node IDs、回放、引擎、实验臂、模型身份与有效策略。
+受理后启动使用任务配置副本；恢复优先读原账本、deadline 和候选，不能重授额度。
+local 是默认执行后端，目录副本不构成进程沙箱；Docker pytest 带网络/内存/CPU 限制，
+诊断命令 Docker 另带 PID 限额和 no-new-privileges。Docker custom 预检不在宿主导入目标测试；
+它只查 daemon，真实收集/依赖与基线由容器执行确认。
 
 ## 5. Agent 工具协议
 
-第一版只提供 7 个必要工具:
+完整注册表在 `app/tools/registry.py`：list_files/search_code/find_symbol/describe_file/read_file/
+read_evidence/apply_patch/run_tests/write_repro/run_command/git_diff/reset_workspace/update_memory/
+propose_acceptance/ask_user/delegate；finish 是循环完成协议工具，另计。
+阶段 schema 与执行能力同源，注册并不意味着每阶段可用。
 
-| 工具 | 输入 | 输出 | 边界与限制 |
-|---|---|---|---|
-| `list_files` | 目录路径(可选 glob) | 文件列表 | 仅限仓库根内;忽略 `.git` 等目录 |
-| `search_code` | 关键词、文件过滤 | 匹配行与位置 | 结果条数上限;只搜文本文件 |
-| `read_file` | 路径、行范围 | 文件内容片段 | 单次读取行数上限;拒绝二进制文件 |
-| `apply_patch` | unified diff | 应用结果 | 先 `git apply --check` 校验;拒绝触碰测试文件与越权路径 |
-| `run_tests` | 测试命令(白名单内) | 测试报告解析结果 | 仅白名单命令;容器内执行;超时上限 |
-| `git_diff` | — | 当前工作区 diff | 只读 |
-| `reset_workspace` | — | 恢复结果 | 只能恢复到任务开始时的快照 |
+apply_patch 接收块锚定协议，平台编译为 unified diff；不让模型计算行号。
+run_tests 只接受预定义 test_set；run_command 只接受冻结 profile 与受限参数，不接受自由 shell。
+write_repro 写任务 scratch，update_memory 只登记带引用假设；它们不构成候选补丁写入口。
 
-每次工具调用记录一条 trajectory 事件(输入、输出、耗时、错误、请求 ID),落库格式:
-
-```json
-{
-  "event_id": "uuid",
-  "task_id": "uuid",
-  "round": 2,
-  "state": "PROPOSE_PATCH",
-  "tool": "search_code",
-  "request_id": "uuid",
-  "input": {"keyword": "parse_date"},
-  "output_summary": {"matches": 12, "truncated": false},
-  "duration_ms": 340,
-  "error": null,
-  "timestamp": "2026-09-15T12:00:00Z"
-}
-```
+tool_started/完成回执及模型响应写 JSONL 并实时入 SQLite；有界 JSON 回执附原始 evidence 引用。
+任务 memory 由平台登记真实观测，模型自述不升级为已验证事实。仓库说明只进上下文，
+不扩大工具权限或验收契约。当前行为见 ADR-0012/0013/0015。
 
 ## 6. 数据模型
 
 | 表 | 关键字段 | 说明 |
 |---|---|---|
-| tasks | id, repo_path, commit, issue_text, max_rounds, budget, status, created_at, finished_at | 任务主表 |
+| tasks | id, idem_key, task_spec_json/hash/schema_version, status, stage, last_event_at, run_dir | 任务主表 |
 | trajectory_events | id, task_id, round, state, tool, request_id, input, output_summary, duration_ms, error, timestamp | 按第 5 节格式追加 |
-| patches | id, task_id, round, diff_text, changed_files, gate_result, applied | 每轮补丁与门禁结论 |
+| patches | id, task_id, round, diff_path, changed_files, gate_result, applied | 每轮补丁与门禁结论 |
 
 原设计的 `test_runs` 与 `evaluations` 两表已裁撤:前者零生产读方(每次 pytest
 完整结果落在 run_dir/reports/*.xml,库里只会是空表),后者与 tasks/report.json
 三处分裂(读口径:tasks=服务生命周期真相,report.json=引擎判定取证)。
 沿革与理由见 `app/storage/db.py` 模块注释(P1-5/P3-8 整改)。
 
-SQLite 起步,按仓储层(Repository)封装访问,预留 PostgreSQL 迁移空间。
+重复轨迹迁移另保留 trajectory_events_duplicates 归档表；旧 test_runs/evaluations 表不会作为当前读写事实源。SQLite WAL + 单连接线程锁，按单进程原型部署，不声明多实例领取安全。
 
 ## 7. API 设计
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/api/tasks` | 创建任务,返回 task_id;同 bug_id + engine + model 幂等(未到终态时返回原任务) |
+| POST | `/api/tasks` | 创建任务,返回 task_id;按完整 TaskSpec 哈希幂等(未到终态时返回原任务) |
 | GET | `/api/tasks/{task_id}` | 查询状态与进度(当前状态、轮数、耗时) |
 | GET | `/api/tasks/{task_id}/trajectory` | 分页返回轨迹事件 |
 | GET | `/api/tasks/{task_id}/report` | 下载最终报告(JSON/Markdown) |
 | POST | `/api/tasks/{task_id}/cancel` | 取消任务,保留现场 |
 | GET | `/api/health` | 健康检查 |
+| GET | `/api/tasks` | 列举任务 |
+| GET | `/api/capabilities` | 可受理策略；one_shot 如实标记评测 CLI 专用 |
+| POST | `/api/tasks/{task_id}/acceptance` | 批准冻结验收清单 |
+| POST | `/api/tasks/{task_id}/messages` | 回答或纠偏，不能扩张冻结权限 |
+| GET | `/api/tasks/{task_id}/question` | 当前问题与输入版本 |
+| GET | `/api/tasks/{task_id}/events` | SSE，以事件 ID 续传 |
 
 约束:任务执行走后台任务,不在 HTTP 请求里同步跑完;错误统一为 `{code, message, task_id}` 结构。
 
@@ -218,7 +189,7 @@ patchpilot/
 ├── app/
 │   ├── api/          # FastAPI 路由与 Pydantic Schema
 │   ├── graph/        # LangGraph 状态、节点、条件边
-│   ├── tools/        # 七个 Agent 工具
+│   ├── tools/        # 注册工具、阶段能力与轨迹
 │   ├── executor/     # subprocess / Docker 测试执行
 │   ├── gitops/       # 快照、diff、应用补丁、回滚
 │   ├── adapters/     # pytest 适配器(预留 maven/jest)
@@ -239,16 +210,20 @@ patchpilot/
 3. **路径门禁**:所有修改路径在仓库根内,无 `..` 穿越,无绝对路径;
 4. **范围门禁**:修改文件数不超过上限(建议 5),新增文件需显式声明;
 5. **命令门禁**:测试命令在白名单内,禁止 shell 字符串拼接;
-6. **资源门禁**:轮数、单轮时间、总 token 均在预算内;
+6. **资源门禁**:候选轮数、任务deadline、累计token/调用数及显式费用模式等按冻结策略检查;
 7. **影子门禁**(2026-09-20 审计新增):新增文件不得与解释器/工具链顶层模块
    同名(pytest/stdlib 等)——否则 `python -m pytest` 的 sys.path[0]=工作区
    会让影子包伪造测试报告,架空判定层。
 
-执行隔离:每次 VERIFY 在复制出的临时工作区 + 临时容器中执行,容器加 `--network=none`、内存/CPU 限额、`--rm` 用后即删;主工作区在验证过程中保持只读。
+执行隔离：默认local，在独立目录工作区运行pytest子进程，不是进程沙箱。
+选Docker时测试挂载当前工作区并写外部reports目录，带网络/内存/CPU限额、--rm；
+不是只读挂载，测试本身可能写工作区。受控诊断命令在另外的诊断副本运行，Docker另带PID/提权限制。
 
-失败处理:VERIFY 失败 → 回滚本轮补丁再进入下一轮;任务无论以何种状态结束,都保留快照、轨迹和报告。(P3-12 整改,2026-09-26:保留承诺如实化为两档——**取证集**(快照/轨迹/报告/junit)永久保留;**可弃集**(FINISHED 任务的工作区副本与 checkpoint)由终态回收器回收(app/api/recycle.py),失败/取消/NEEDS_REVIEW 现场不回收。「全部永久」与满负荷外推 3-10GB/日 的无界增长在数学上不可同时成立,审计 R3-Q3。)
+失败处理：失败候选保全现场后回滚，回plan修订；报告/diff/轨迹/JUnit保留。
+成功任务可回收workspace与checkpoint，失败/取消/待审现场保留；输入副本也属回收策略中的工件，
+不宣称所有快照永久保存。实际可弃集见 app/api/recycle.py。
 
-## 10. 阶段规划
+## 10. 早期阶段规划（历史背景，以下不作当前完成证据）
 
 ### 阶段一:理解 mini-SWE-agent(第 1—3 周,前置学习模块 L3)
 

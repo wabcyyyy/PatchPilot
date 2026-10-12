@@ -109,3 +109,29 @@ def test_preflight_business_assertion_failure_is_not_preflights_business(tmp_pat
         timeout_seconds=60,
     )
     assert report.ok is True
+
+
+@pytest.mark.parametrize("available", [True, False])
+def test_docker_preflight_without_env_never_imports_host_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, available: bool
+) -> None:
+    """自定义仓库无 env.image 时,声明 Docker 也不能先在宿主执行 conftest。"""
+    ws = _repo(tmp_path / "docker")
+    monkeypatch.setattr("app.executor.docker_runner.docker_available", lambda: available)
+    monkeypatch.setattr(
+        "app.api.preflight.run_tests",
+        lambda *a, **kw: pytest.fail("Docker preflight must not run host pytest"),
+    )
+    kwargs = {
+        "python_exe": sys.executable,
+        "workspace": ws,
+        "failed_tests": _ids(),
+        "regression_tests": _ids(),
+        "execution_backend": "docker",
+    }
+    if not available:
+        with pytest.raises(InvalidRequestError, match="docker daemon is unavailable"):
+            run_preflight(**kwargs)
+    else:
+        report = run_preflight(**kwargs)
+        assert [(c.name, c.ok) for c in report.checks] == [("docker", True)]

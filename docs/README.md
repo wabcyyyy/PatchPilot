@@ -6,7 +6,7 @@ docs 顶层保留长期规范、设计与当前升级规格。当前交接、审
 
 | 要做什么 | 文档 | 使用边界 |
 |---|---|---|
-| 升级为专注代码修复的精简 coding agent | [修复 Agent 升级 SPEC](PatchPilot修复Agent升级SPEC-2026-10-10.md) | 分批实施中；状态与收据见执行进度 |
+| 核对修复 Agent 升级范围 | [修复 Agent 升级 SPEC](PatchPilot修复Agent升级SPEC-2026-10-10.md) | B6/G16离线批已收口；G15可选、G17在线批未启动，状态与收据见执行进度 |
 | 让新对话接续升级 | [升级交接提示](work-notes/PatchPilot升级交接Prompt-2026-10-10.md) | 从当前进度继续；B0 模板仅供初始启动 |
 | 理解本次升级的依据 | [2026-10-10 Agent 评审](work-notes/agent-readiness-review-2026-10-10.md) | 对应审查时的源码和历史运行，不能代替后续验证 |
 
@@ -23,6 +23,11 @@ docs 顶层保留长期规范、设计与当前升级规格。当前交接、审
 | [历史实验预登记 v2](archive/experiment-preregistration-v2-2026-10-08.md) | 当时实验设计；文档存在不构成付费授权 |
 
 当前产品行为以源码、对应版本的规范/ADR 和可复核证据共同确认。新升级 SPEC 描述目标行为；旧审查和计划中的“待修/完成”都是当时状态，不能直接作为当前结论。
+
+当前执行链与已确认漂移见 [2026-10-12 实现校准](work-notes/realignment-2026-10-12.md)。
+面试材料从 [interview-guide](interview-guide/README.md) 进入。
+当前验收/恢复按 ADR-0009/0010；回执/记忆按 ADR-0012/0013；容量/profile 与仓库说明按
+ADR-0014/0015；Agent 升级范围按当前升级 SPEC。企划书保留范围与概要，原阶段规划不作为当前完成证据。
 
 ## 目录分工
 

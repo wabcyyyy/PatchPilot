@@ -1878,3 +1878,12 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
   每卡快档 + 定向,批次退出 / push 前一次全量)。
 - **结果**:快档 `-m "not slow"` 680 passed / 31 skipped,1:29;本地全量 `-m "not stress"`
   842 passed / 31 skipped,20:30(前值 23:05;+2 例为登记表自检)。
+
+
+## 2026-10-12 · 历史漂移清理与真实实现校准
+
+从完整调用链核对当前SPEC/ADR、测试与面试材料，保留已有dirty和历史证据。
+修复受理后配置/报告身份漂移、Docker预检宿主执行、损坏账本重授额度、终局deadline窗口、工具TypeError误分类；
+删除无调用私有wrapper/响应schema；README/企划书/索引/interview-guide按实现校准并重建HTML。
+不新增功能、不付费、不本地全量。提交为本卡所在fix(realignment)，完整审查/遗留地图与测试收据见
+`docs/work-notes/realignment-2026-10-12.md`；最终快速收据`.validation/20261012-135906-ff7df0ee.json`（105项），文档/生成器补检收据`.validation/20261012-140231-0101364f.json`（10项）；本地相关检查通过，完整回归交CI。

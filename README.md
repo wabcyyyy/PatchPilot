@@ -5,7 +5,7 @@
 给定一个本地 Git 仓库和一段 Bug 描述,PatchPilot Agent 自动检索相关代码、生成补丁、
 在隔离工作区执行测试,并按显式判定规则给出结论:
 
-> `resolved` = 原失败测试全部转通过 **且** 回归测试全部保持通过 **且** 补丁通过全部质量门禁 **且** 未超资源预算。
+> `resolved` = 补丁非空 **且** 原失败测试全部转通过 **且** 回归测试全部保持通过 **且** 补丁通过全部质量门禁 **且** 未超资源预算 **且** 未取消。graph 还核对冻结候选与当前工作区一致；开启双跑时须两次一致。
 
 参考 SWE-agent 的工具循环设计与 SWE-bench 的评测判定思路,独立实现的工程子集;
 不声称复刻完整 SWE-agent,不承诺 SWE-bench 跑分。
@@ -18,9 +18,9 @@
   每次调用记录完整轨迹(JSONL + SQLite);
 - **七项质量门禁**:格式 / 禁改测试文件 / 路径越界 / 修改范围 / 影子模块 / 命令白名单 / 资源预算,
   附 10 个攻击样例(`bugs/attacks/`)验证拦截;
-- **双执行引擎**:plain(教学用单循环)与 graph(状态机),共享工具与提示;
+- **双执行引擎**:plain 单轮驱动与 graph 分阶段、多候选状态机，共享模型工具循环、工具、pytest 适配器与终局验收；候选工件、审批/澄清与自动恢复编排在 graph 路径。两者不声明功能等价;
 - **服务化**:FastAPI 七个端点 + SQLite 持久化 + Redis 任务锁(可退化内存锁)+ 幂等 + 崩溃恢复;
-- **容器隔离**:临时容器执行测试(`--network=none`、内存/CPU 限额、`--rm`),
+- **容器执行后端（默认 local）**:pytest 临时容器带 `--network=none`、内存/CPU 限额、`--rm`；受控诊断命令另加 PID 限额与 `no-new-privileges`，
   5 项隔离实验见 `docs/docker-isolation-notes.md`;
 - **自建评测集**:正式集 35 题(28 题简单/中等 + 7 题 hard,BUG-029..035),
   另有候选 1 道待审(`bugs/candidates/`),
@@ -81,12 +81,10 @@
 # Python 3.11+
 python -m pip install -r requirements.txt -r requirements-dev.txt
 
-# 运行测试(全离线,模型交互用 FakeLLM 回放)
-# 临时根落点不许在仓库内(防线见 tests/conftest.py);Windows 本机系统临时目录的
-# pytest 根 ACL 已坏(PM-004),本地要显式传仓库外落点,CI 用默认值即可
-pytest -q -m "not slow" --basetemp=D:/tmp/pt     # 快档:日常开发 / 每卡提交前
-pytest -q -m "not stress" --basetemp=D:/tmp/pt   # 本地全量:批次退出 / push 前
-pytest -q                                        # CI 全集(含 stress 并发冒烟)
+# 日常快速验证（改动文件静态检查 + 少量相关测试；90 秒预算；收据自动保存）
+powershell -NoProfile -ExecutionPolicy Bypass -File verify.ps1
+# 本地全量仅在明确要求时：./verify.ps1 -Full；完整回归默认交 CI。
+# pytest 临时目录由验证入口放在仓库外，详见 VALIDATION.md。
 
 # 回放模式跑一个完整修复任务(验证平台闭环)
 python -m app.evals.run_single --bug BUG-001 --model fake --engine graph --out runs
@@ -156,7 +154,9 @@ tests/          # 项目自身测试(全离线,模型交互用 FakeLLM 回放;�
 | `docs/README.md` | **docs 索引**:唯一事实源、文件状态、维护约定 |
 | `docs/PatchPilot修复Agent升级SPEC-2026-10-10.md` | 当前升级规格:分批任务与验收 |
 | `docs/work-notes/README.md` | 阶段材料索引:审查、交接、报告和探针 |
-| `docs/PatchPilot项目企划书.md` | 规范源:架构、状态机、门禁、判定规则、评测方案 |
+| `docs/PatchPilot项目企划书.md` | 项目范围与当前架构概要；早期规划另标历史，升级行为以当前 SPEC/ADR 为准 |
+| `docs/work-notes/realignment-2026-10-12.md` | 本轮真实链路审查、遗留分类、修复范围及验证收据 |
+| `docs/interview-guide/README.md` | 对应当前实现的面试材料及证据边界 |
 | `docs/design.md` | 设计决策与已知边界 |
 | `docs/threat-model.md` | 威胁模型:风险清单、缓解与"明确不防"清单 |
 | `docs/work-notes/audit-2026-09-19.md` | 全量自检:死代码/冗余架构、安全与逻辑漏洞、承诺落地核查,按 P0–P3 分级 |

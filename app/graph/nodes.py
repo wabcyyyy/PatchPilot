@@ -60,6 +60,7 @@ from app.prompts import (
     build_plan_prompt,
     plan_block_for_propose,
 )
+from app.task_spec import settings_for_policy
 from app.tools.base import ToolContext
 from app.tools.output_filter import refine_traceback
 from app.tools.registry import FINISH_TOOL
@@ -244,11 +245,13 @@ class TaskNodes:
             from app.evals.experiment_policy import agent_policy
 
             self.policy = agent_policy()
-        settings = get_settings()
+        settings = settings_for_policy(get_settings(), self.frozen_policy)
         if self.runtime is None:
             # G07:profile 在节点构造时就冻结(与账本"恢复优先读回"同一思路)。此后改环境
             # 变量、或并发跑另一份 profile 的任务,都不改写已经在跑的这一份。
-            self.runtime = TaskRuntime.build(settings)
+            self.runtime = TaskRuntime.from_frozen(self.frozen_policy) or TaskRuntime.build(
+                settings
+            )
         if self.ledger is None:
             # getattr 兜底:测试替身(部分字段的 SimpleNamespace settings)落在"无预算"一侧,
             # 与本文件 _persistent_context 的既有惯例一致。
@@ -383,7 +386,7 @@ class TaskNodes:
         """仓库自带说明只加载一次:它读的是冻结副本,同一任务内这些字节不会变。"""
         if self.instructions is not None:
             return self.instructions
-        settings = get_settings()
+        settings = settings_for_policy(get_settings(), self.frozen_policy)
         enabled = bool(getattr(settings, "repo_instructions_enabled", False))
         if enabled:
             loaded = load_instructions(
@@ -616,6 +619,8 @@ class TaskNodes:
             self.bug.failed_tests,
             self.report_dir / "baseline-failed.xml",
             env=self.ctx.env,
+            timeout_seconds=self.ctx.test_timeout_seconds,
+            execution_backend=self.ctx.execution_backend or None,
         )
         regression_report, _ = run_pytest(
             self.ctx.python_exe,
@@ -623,6 +628,8 @@ class TaskNodes:
             self.bug.regression_tests,
             self.report_dir / "baseline-regression.xml",
             env=self.ctx.env,
+            timeout_seconds=self.ctx.test_timeout_seconds,
+            execution_backend=self.ctx.execution_backend or None,
         )
         signature = (
             failed_report.failed_cases[0].signature if failed_report.failed_cases else "(none)"
@@ -676,7 +683,7 @@ class TaskNodes:
         getattr 兜底让只构造部分字段的调用方与测试桩落在"关闭"一侧,
         此时 extra_system 与本改动前逐字一致(回归钉子见 tests/test_repo_map.py)。
         """
-        settings = get_settings()
+        settings = settings_for_policy(get_settings(), self.frozen_policy)
         if not getattr(settings, "repo_map_enabled", False):
             return ""
         return repo_map_for_workspace(
@@ -921,8 +928,9 @@ class TaskNodes:
                 failed_tests=list(proposal.failed_tests),
                 regression_tests=list(proposal.regression_tests),
                 work_dir=run_dir / "acceptance",
-                timeout_seconds=get_settings().test_timeout_seconds,
+                timeout_seconds=self.ctx.test_timeout_seconds,
                 env=self.ctx.env,
+                execution_backend=self.ctx.execution_backend or None,
             )
             proposal.baseline = check.as_dict()
             # 提议先落盘再等待:批准方(另一线程/端点)必须能读到内容 hash 与校验读数
@@ -1539,6 +1547,8 @@ class TaskNodes:
             self.bug.failed_tests,
             self.report_dir / "verify-failed.xml",
             env=self.ctx.env,
+            timeout_seconds=self.ctx.test_timeout_seconds,
+            execution_backend=self.ctx.execution_backend or None,
         )
         if (overrun := self._deadline_overrun()) is not None:
             return {
@@ -1554,6 +1564,8 @@ class TaskNodes:
             self.bug.regression_tests,
             self.report_dir / "verify-regression.xml",
             env=self.ctx.env,
+            timeout_seconds=self.ctx.test_timeout_seconds,
+            execution_backend=self.ctx.execution_backend or None,
         )
         update: dict[str, Any] = {
             "verify_failed_ok": failed_report.all_passed,
@@ -1621,6 +1633,8 @@ class TaskNodes:
                 self.bug.failed_tests,
                 self.report_dir / "verify-failed-rerun.xml",
                 env=self.ctx.env,
+                timeout_seconds=self.ctx.test_timeout_seconds,
+                execution_backend=self.ctx.execution_backend or None,
             )
             rerun_regression, _ = run_pytest(
                 self.ctx.python_exe,
@@ -1628,6 +1642,8 @@ class TaskNodes:
                 self.bug.regression_tests,
                 self.report_dir / "verify-regression-rerun.xml",
                 env=self.ctx.env,
+                timeout_seconds=self.ctx.test_timeout_seconds,
+                execution_backend=self.ctx.execution_backend or None,
             )
             # S02b(spec 必测"最后复核越时"):最后一次 rerun 之后也要复查——
             # 复核期间越过截止时刻,已有测试证据保留,但资源终态明确、不得 resolved
@@ -1710,11 +1726,13 @@ class TaskNodes:
         """
         assert self.ledger is not None
         diff = working_tree_diff(self.workspace)
+        self._sync_wait_pause_deadline()
         decision = acceptance_from_state(
             state,
             ledger=self.ledger,
             diff_non_empty=not diff.is_empty,
             cancelled=bool(self.cancel_event is not None and self.cancel_event.is_set()),
+            deadline_epoch=self.deadline_epoch,
         )
         # G14 候选绑定:终局只认"当前工作区 == 冻结候选"。apply 冻结后的任何额外改动
         # (恢复漂移/落盘篡改/补丁消失)都不得把旧候选的验证结论套到新代码上。
@@ -1783,7 +1801,7 @@ class TaskNodes:
         剩余轮数 ≥ 2、token 余量够付一次双倍 propose。任一不满足就继续单线——
         特别是 `branch_model_factory is None`:调用方不注入即整体降级为 V1 行为。
         """
-        settings = get_settings()
+        settings = settings_for_policy(get_settings(), self.frozen_policy)
         if not getattr(self.policy, "allow_branching", True):
             return False  # S10a:对照臂禁分支(登记差异,不是额外 best-of-N)
         if not self._policy_value("adaptive_branching_enabled"):
@@ -1810,7 +1828,6 @@ class TaskNodes:
         复制更简单也没有跨工作区耦合。
         """
         assert self.ctx is not None
-        settings = get_settings()
         cand_ws = self.report_dir / f"workspace-cand{index}"
         cand_reports = self.report_dir / f"cand{index}"
         cand_reports.mkdir(parents=True, exist_ok=True)
@@ -1831,6 +1848,8 @@ class TaskNodes:
             max_patch_files=self.ctx.max_patch_files,
             test_timeout_seconds=self.ctx.test_timeout_seconds,
             forbid_test_files=self.ctx.forbid_test_files,
+            execution_backend=self.ctx.execution_backend,
+            cancel_event=self.cancel_event,
         )
         rounds = state["round_no"] + 1
         note = ""
@@ -1941,16 +1960,18 @@ class TaskNodes:
             cand_ws,
             self.bug.failed_tests,
             cand_reports / "branch-failed.xml",
-            timeout_seconds=settings.test_timeout_seconds,
+            timeout_seconds=cand_ctx.test_timeout_seconds,
             env=cand_ctx.env,
+            execution_backend=cand_ctx.execution_backend or None,
         )
         regression_report, _ = run_pytest(
             cand_ctx.python_exe,
             cand_ws,
             self.bug.regression_tests,
             cand_reports / "branch-regression.xml",
-            timeout_seconds=settings.test_timeout_seconds,
+            timeout_seconds=cand_ctx.test_timeout_seconds,
             env=cand_ctx.env,
+            execution_backend=cand_ctx.execution_backend or None,
         )
         # 候选阶段不做 E3 双跑:双跑复核属于主流程的 resolved 判定,择优阶段
         # 多一倍 pytest 开销换来的只是"同一伪绿再验一次",与择优目的无关

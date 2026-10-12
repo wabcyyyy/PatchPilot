@@ -17,6 +17,7 @@ plain 驱动器都遵守 Settings.verify_double_run——比较臂不允许少�
 from __future__ import annotations
 
 import hashlib
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -85,6 +86,7 @@ def final_acceptance(
     double_run_inconsistent: bool = False,
     cancelled: bool = False,
     ledger: ResourceLedger | None = None,
+    deadline_epoch: float | None = None,
 ) -> AcceptanceDecision:
     """终局共享验收。任何一条不满足都不是 resolved,并给出原因清单。
 
@@ -98,6 +100,10 @@ def final_acceptance(
     status = ledger.snapshot() if ledger is not None else {}
     resource_status = str(status.get("resource_status", "unknown"))
     reasons: list[str] = []
+    if deadline_epoch is not None and time.time() > deadline_epoch:
+        if resource_status == "within_budget":
+            resource_status = "exhausted"
+        reasons.append("task deadline passed before final acceptance")
     validation = VALIDATION_FAILED
     if not verify_ran:
         validation = VALIDATION_NOT_RUN
@@ -146,6 +152,7 @@ def acceptance_from_state(
     ledger: ResourceLedger | None,
     diff_non_empty: bool,
     cancelled: bool = False,
+    deadline_epoch: float | None = None,
 ) -> AcceptanceDecision:
     """graph finish 节点的入口:state 中的 verify/门禁结论 + 当前工作区事实。
 
@@ -166,6 +173,7 @@ def acceptance_from_state(
         diff_non_empty=diff_non_empty,
         cancelled=cancelled,
         ledger=ledger,
+        deadline_epoch=deadline_epoch,
     )
     # 任务总额的权威读数:账本在任务启动时按 Settings 固化(token_limit),
     # 恢复/后续验收都认它;无账本时才退回当前 Settings
