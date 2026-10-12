@@ -21,7 +21,10 @@ from pathlib import Path
 from typing import Any
 
 from app.adapters.pytest_adapter import run_pytest
+from app.agent.runtime import TaskRuntime
+from app.agent.session import SessionState
 from app.config import get_settings
+from app.context.task_memory import TaskMemory, load_memory_state
 from app.errors import BudgetError, TaskCancelled, TaskError
 from app.evals.bugset import BugTask
 from app.evals.pricing import estimate_cost
@@ -95,10 +98,16 @@ class TaskResult:
     validation_status: str = "not_run"  # not_run|passed|failed|inconclusive
     gate_status: str = "not_run"  # not_run|passed|rejected|inconclusive
     resource_status: str = "unknown"  # within_budget|exhausted|exceeded|unknown
+    # G03:账本摘要(预算模式、各维度上限/已用/在途预留/未知持有/费用来源标签)。
+    # 旧报告没这个键,读方一律 .get() 取值,不冒充"合规"或"已结算"。
+    resources: dict[str, Any] = field(default_factory=dict)
     # S03(ADR-0009 §4):成功绑定当前候选与当前验证尝试的证据链
     candidate_id: str = ""
     candidate_hash: str = ""
     verification_attempt_id: str = ""
+    # G13:子任务贡献摘要(role/subtask_id/ok/termination/计量/候选引用/错误)。
+    # 报告逐条列出,不以"线程池存在"充当完成证据(SPEC G13 退出条件)。
+    subtasks: list[dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -176,7 +185,9 @@ def run_task(
         arm=arm,
         run_dir=str(run_dir),
     )
-    # 批次溯源:任务开始即取证,后续任何崩溃路径的 report.json 都带复现口径
+    # 批次溯源:任务开始即取证,后续任何崩溃路径的 report.json 都带复现口径。
+    # 策略登记面(experiment_policy)只在 graph 引擎被真实消费(S10a 的两臂都在 graph),
+    # plain 路径不伪造一份"看起来注册过"的策略,protocol_identity 记 None。
     result.provenance = build_provenance(
         result.model_provider, model_name, engine, arm, max_turns=max_turns
     )
@@ -189,11 +200,18 @@ def run_task(
     )
     ctx: ToolContext | None = None  # materialize 失败时 finally 仍可安全引用
     # S02/F1:任务级资源账本(与 graph 引擎同一套 ResourceLedger)
-    from app.graph.resources import ResourceLedger
+    from app.graph.resources import ledger_from_settings
 
-    ledger = ResourceLedger(
-        task_id=task_id, token_limit=settings.token_budget, output_reserve=settings.llm_max_tokens
+    ledger = ledger_from_settings(
+        task_id=task_id,
+        settings=settings,
+        price_model=model_name or str(getattr(settings, "llm_model", "") or ""),
+        run_dir=run_dir,
     )
+    # G07:plain 引擎与 graph 共用同一份**冻结的**运行 profile。同一个 profile 名字在两条
+    # 路上必须给出同一组数字(软窗口/尾部钉住/容量判据),否则"换 profile"就成了看引擎才
+    # 生效的话;消融臂换 profile 也就是换这一份读数。
+    runtime = TaskRuntime.build(settings)
 
     def _time_overrun() -> str | None:
         if deadline_epoch is not None and time.time() > deadline_epoch:
@@ -210,6 +228,14 @@ def run_task(
         # CREATED → BASELINE:bug 仓库是纯工作树,运行时物化为 git 仓库并固定基线 commit
         ws_dir = run_dir / "workspace"
         baseline_commit = materialize_repo(bug.repo_dir, ws_dir, extra_commit=False)
+        # G06:plain 引擎与 graph 同一口径 —— 会话身份与任务记忆由 ctx 带给工具层。
+        # 恢复时优先读回 run_dir 里那一份(观测是崩溃前真实发生过的,不是重新推断)。
+        memory = None
+        session = None
+        if getattr(settings, "task_memory_enabled", False):
+            memory = load_memory_state(run_dir) or TaskMemory(task_id)
+            session = SessionState(task_id, memory.session_id)
+            memory.session_id = session.session_id
         ctx = ToolContext(
             task_id=task_id,
             workspace=ws_dir,
@@ -224,11 +250,21 @@ def run_task(
             # P1-4 整改:资源上限此前只落在硬编码默认值上,settings 改了不生效
             max_read_lines=settings.max_read_lines,
             max_search_results=settings.max_search_results,
+            memory=memory,
+            session=session,
         )
         tracker.record(
             tool="create_workspace",
             state="BASELINE",
             input_payload={"baseline": baseline_commit[:12]},
+        )
+        # 与 graph 同一件事(见 nodes.prepare 的同名事件):plain/one-shot 臂也要在轨迹里
+        # 留下"这一跑用的是哪套窗口/轮数/容量口径",否则两臂对照少一边读数。
+        tracker.record(
+            tool="runtime_profile",
+            state="BASELINE",
+            input_payload={"profile_name": runtime.profile_name},
+            output_summary=runtime.as_dict(),
         )
 
         if deadline_epoch is not None and time.time() > deadline_epoch:
@@ -282,6 +318,7 @@ def run_task(
             deadline_epoch=deadline_epoch,
             cancel_event=cancel_event,
             ledger=ledger,
+            **runtime.loop_settings(),
         )
         result.turns = outcome.turns
         result.tokens_used = outcome.tokens_used
@@ -436,6 +473,10 @@ def run_task(
         result.cost_usd = estimate_cost(
             result.model_name, result.tokens_prompt, result.tokens_completion
         )
+        # G03:账本摘要是资源维度的权威读数(与 cost_usd 那条历史 float 约值并存,不互相替代)
+        from app.graph.resources import report_summary
+
+        result.resources = report_summary(ledger)
         _write_report(result, run_dir)
         log.info(
             "task %s -> %s/%s (%sms)", task_id, result.status, result.verdict, result.duration_ms

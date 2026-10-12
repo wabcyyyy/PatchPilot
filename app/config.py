@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 4096  # 单次 completion 输出上限;0 = 不限制
     llm_timeout_seconds: float = 120  # 单次请求超时(SDK 默认 600s,过长会拖垮任务)
     llm_max_retries: int = 1
+    # G07:平台显式重试的**额外**物理尝试次数(每次都单独计量,见 TransportRetryPolicy)。
+    # 默认 0 = 与引入该字段之前逐字相同(一次就交差,重试完全由 SDK 上界决定)。非 0 只允许
+    # 在 llm_max_retries=0 时使用:两层重试同时开就看不见真实发出次数,用量无法对账,
+    # 所以构造处直接拒绝而不是"取一个最大值"。
+    llm_platform_retries: int = 0
     llm_thinking: str = ""  # 思考模式:空 = 服务端默认;disabled = 关闭;low/high/max = 强度
 
     @field_validator("llm_thinking")
@@ -93,6 +98,58 @@ class Settings(BaseSettings):
             raise ValueError(f"token_estimate_factor must be in (0, 5], got {value}")
         return value
 
+    # ---------- G03:预算模式与其他维度(默认值 = 既有行为逐字不变) ----------
+    # 四类资源互不替代(§5):单请求容量 / 累计计算量 / 资金 / 运行限制。
+    # 默认 tokens 模式 = legacy_v1 的那道 token 闸;切 cost/hybrid 必须显式冻结价格与金额,
+    # 缺价格时**受理拒绝**(app/task_spec.py 的 validate_budget_policy),不自动联网查价、
+    # 也不静默变成无限预算。
+    budget_mode: str = "tokens"  # tokens | cost | hybrid
+    cost_budget_micro_usd: int = 0  # 现金上限,最小货币单位(1 USD = 1_000_000);0=不设
+    max_model_calls: int = 0  # 任务级模型调用数上限;0=不限制
+    # 端点**声明**的单请求硬容量(来源须由运维显式给出,不由模型名推断);
+    # 0 = 未声明:不做容量检查,也不宣称支持过大窗口。
+    model_context_tokens: int = 0
+    capacity_margin_tokens: int = 1024  # 容量余量:协议开销与估算误差
+    # ---------- G07:能力声明的来源与形状(见 app/llm/profiles.py) ----------
+    # 这个数字是"谁说的"。空 = unverified(无来源),此时容量只能落在保守档 16k,
+    # 申报更大一律拒绝 —— SPEC §5 禁止把未验证的端点写成"支持 128k/1M"。
+    # 合法值:operator_config | provider_docs | probed | unverified | 空。
+    model_capacity_source: str = ""
+    # 能力清单 `name=yes|no` 逗号串(tools / reasoning / cached_usage)。没写的项一律
+    # 记为"未声明"(档案里进 assumed 落盘),不从模型名猜。
+    model_capabilities: str = ""
+    # 端点声明的 completion 输出上限(与"我们请求的 llm_max_tokens"是两个概念:前者是
+    # 能力边界,后者是本次请求的参数;0 = 未声明)。
+    model_declared_output_ceiling: int = 0
+
+    @field_validator("llm_platform_retries")
+    @classmethod
+    def _check_llm_platform_retries(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"llm_platform_retries must be >= 0, got {value}")
+        return value
+
+    @field_validator("model_declared_output_ceiling")
+    @classmethod
+    def _check_declared_output_ceiling(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"model_declared_output_ceiling must be >= 0, got {value}")
+        return value
+
+    @field_validator("budget_mode")
+    @classmethod
+    def _check_budget_mode(cls, value: str) -> str:
+        if value not in {"tokens", "cost", "hybrid"}:
+            raise ValueError(f"budget_mode must be 'tokens', 'cost' or 'hybrid', got {value!r}")
+        return value
+
+    @field_validator("cost_budget_micro_usd", "max_model_calls", "model_context_tokens")
+    @classmethod
+    def _check_non_negative(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"budget limits must be >= 0 (0 = 不限制), got {value}")
+        return value
+
     default_max_rounds: int = 5
     task_timeout_seconds: int = 900
     test_timeout_seconds: int = 120
@@ -113,6 +170,40 @@ class Settings(BaseSettings):
     # 模型可见层输出折叠的工具消息保留头尾行数(原始 junit/stderr 证据不受影响)
     refine_head_lines: int = 40
     refine_tail_lines: int = 15
+    # ---------- G05:工具回执的有界视图与原始证据仓 ----------
+    # 缺陷出处:回执经 json.dumps 后被按**字符**硬切(fold_output 对单行 JSON 只剩 hard_cap
+    # 这条路),切点落在字符串或键值对中间 ⇒ 模型收到结构损坏的 JSON,而丢掉的那段从来没有
+    # 落过盘。现在改成"在数据结构上裁 + 原文落盘可分页取回",这一条是**模型可见视图**的上限。
+    # 默认 8000 = 与旧实现实际生效的那个数一致(不是收紧也不是放宽)。置 0 = 不裁(旧口径的
+    # hard_cap=0),此时超大回执仍合法,只是把整个窗口吃掉。
+    tool_visible_max_chars: int = 8000
+    # 证据仓总开关。关闭后裁剪照做,但**原文取不回来**——这是有信息损失的开关,
+    # 所以默认开,且属复现口径(SNAPSHOT_KEYS)而不是运维豁免。
+    evidence_enabled: bool = True
+    # 单个原始工件的体积上限:超了就不落盘(并在回执里明说 retrievable=false),
+    # 而不是让一个巨型 diff 把磁盘吃穿
+    evidence_max_item_bytes: int = 2_000_000
+    # 一个任务的证据仓总量:满了同样明说,不静默覆盖旧证据
+    evidence_max_total_bytes: int = 64_000_000
+    # read_evidence 单页字节上限(模型可以要更少,要更多只会拿到这一页的天花板)
+    evidence_page_bytes: int = 4000
+
+    @field_validator(
+        "tool_visible_max_chars", "evidence_max_item_bytes", "evidence_max_total_bytes"
+    )
+    @classmethod
+    def _check_non_negative_sizes(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"size limits must be >= 0 (0 = 不限制), got {value}")
+        return value
+
+    @field_validator("evidence_page_bytes")
+    @classmethod
+    def _check_evidence_page_bytes(cls, value: int) -> int:
+        if value < 256:
+            raise ValueError(f"evidence_page_bytes must be >= 256, got {value}")
+        return value
+
     # 自适应 Best-of-N(卡5):默认单线,仅在"同一断言连续 2 轮失败"或"补丁连续 2 次
     # 应用失败"时开一轮 2 候选并行择优,且每任务至多一次。置 false 即回到 V1 单线行为。
     adaptive_branching_enabled: bool = True
@@ -132,6 +223,50 @@ class Settings(BaseSettings):
             raise ValueError(f"localize_budget_share must be in (0, 1], got {value}")
         return value
 
+    # G13 轻量角色委派:子任务(researcher/reviewer/repair_candidate)的总开关与额度。
+    # 默认关闭 = 与引入前逐字一致的单 Agent 行为;graph 引擎 repair_v2 可显式开启。
+    # 这些键直接决定轨迹形状与成本(开不开委派、并发几个、能花多少、用哪个模型),
+    # 故进 SNAPSHOT_KEYS(见 app/evals/provenance.py)——同一题开/关委派不可比。
+    delegation_enabled: bool = False
+    # 最多同时运行几个子执行者(并发上限;legacy Best-of-N 候选并行也受它约束)
+    max_subagent_concurrency: int = 2
+    # 每任务最多委派次数(含 Best-of-N 候选各消耗的一个名额,不叠加两套额度)
+    max_delegations: int = 3
+    # 全部子任务额度合计占任务有效限额的比例(父账本先原子预留,冻结进有效策略)
+    subtask_budget_share: float = 0.25
+    # 单个子任务的轮次上限
+    subtask_max_turns: int = 10
+    # 子任务专用模型(空 = 沿用父模型;身份与价目随任务冻结)
+    subtask_model: str = ""
+
+    # G14 有界停止:同一组失败/同一候选连续无进展多少轮后,不再整体 reset 重试,
+    # 收敛为 NEEDS_REVIEW(不靠增加 max_rounds 绕预算)。0 = 关闭该界限。
+    max_identical_failures: int = 3
+
+    @field_validator("max_identical_failures")
+    @classmethod
+    def _check_max_identical_failures(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"max_identical_failures must be >= 0, got {value}")
+        return value
+
+    @field_validator("subtask_budget_share")
+    @classmethod
+    def _check_subtask_budget_share(cls, value: float) -> float:
+        if not 0.0 < value <= 1.0:
+            raise ValueError(f"subtask_budget_share must be in (0, 1], got {value}")
+        return value
+
+    @field_validator("max_subagent_concurrency", "max_delegations", "subtask_max_turns")
+    @classmethod
+    def _check_subtask_counts(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError(f"subtask counts must be >= 1, got {value}")
+        return value
+
+    # 四个概念互不替代(SPEC §5),键名与 app/agent/runtime.py 的 ContextPolicy 字段一一对应:
+    # `context_window_tokens` = 软压缩目标(工作记忆阈值),`model_context_tokens` = 端点声明的
+    # 单请求硬容量,`token_budget` = 任务累计额度,`llm_max_tokens` = 单次输出上限。
     # 工作记忆软阈值(M1 滑动窗口压缩):该段的 token 估算此前只增不减,
     # 真实多文件题光靠只读调查就把份额烧穿(runs/swe-hard-graph:16-19 轮、
     # 417,894 tok 撞 400k 顶、apply_patch 0 次)。超过此阈值时在 turn 边界压缩旧历史,
@@ -152,6 +287,22 @@ class Settings(BaseSettings):
         if value < 1:
             raise ValueError(f"context_keep_recent_turns must be >= 1, got {value}")
         return value
+
+    # G07 运行 profile:legacy_v1 = 今日逐字(软阈值/钉住轮数/额度/输出上限全部照搬本文件),
+    # repair_v2 = 目标软窗口 64k、尾部钉 12 轮,并且只在端点**声明**的容量允许时采用该目标
+    # (装不下就夹小并留痕)。新默认切换要等 G16 收口,所以默认仍是 legacy_v1:历史批次身份不许
+    # 被这次升级改写。
+    agent_runtime_profile: str = "legacy_v1"
+
+    @field_validator("agent_runtime_profile")
+    @classmethod
+    def _check_agent_runtime_profile(cls, value: str) -> str:
+        normalized = value.strip() or "legacy_v1"
+        if normalized not in {"legacy_v1", "repair_v2"}:
+            raise ValueError(
+                f"agent_runtime_profile must be 'legacy_v1' or 'repair_v2', got {value!r}"
+            )
+        return normalized
 
     # M6 崩溃恢复(A 级:循环工作记忆快照)。缺陷出处:`run_plain_loop` 的 messages/token
     # 计数是函数局部变量,一次 superstep 内跑到第 19 轮崩溃时 SqliteSaver 只有阶段边界的
@@ -249,6 +400,90 @@ class Settings(BaseSettings):
     def _check_max_search_files(cls, value: int) -> int:
         if value < 1:
             raise ValueError(f"max_search_files must be >= 1, got {value}")
+        return value
+
+    # ---------- G06:连续会话与结构化任务记忆 ----------
+    # 缺陷出处:阶段之间只传一段模型自述的 findings 文本,读过的行范围、反例、已排除方向
+    # 全部落在阶段边界之外(付费实跑 runs/swe-hard-graph2/3:PROPOSE 13 次 search / 10 次 read、
+    # apply_patch 0 次 —— 拿着摘要重新调查)。记忆块决定"下一阶段的请求里到底有没有这些证据"。
+    task_memory_enabled: bool = True
+    # 记忆块的字符预算(与 repo_map_max_chars 同族:它改变模型可见上下文本身,不是运维参数)
+    task_memory_max_chars: int = 3000
+
+    @field_validator("task_memory_max_chars")
+    @classmethod
+    def _check_task_memory_max_chars(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"task_memory_max_chars must be >= 0, got {value}")
+        return value
+
+    # ---------- G08:目标仓库自带说明(AGENTS.md 一类)的加载与冻结口径 ----------
+    # 缺陷出处:被诊断仓库里写给 Agent 看的规则从来没进过请求,模型只能靠撞上门禁才知道
+    # "这个仓库不许动 tests/"。开关关掉 ⇒ 装配面与接入之前逐字节相同(零成本对照口径)。
+    repo_instructions_enabled: bool = True
+    # 单份说明的字节档:超了就截断,并在块里明写"还有 N 字节未显示"(不许静默丢约束)
+    repo_instructions_max_file_bytes: int = 16_384
+    # 一个任务能纳入的说明总量:满了就把整份列进"未纳入",块末照样点名报出
+    repo_instructions_max_total_bytes: int = 65_536
+
+    @field_validator("repo_instructions_max_file_bytes", "repo_instructions_max_total_bytes")
+    @classmethod
+    def _check_instruction_sizes(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"repo_instructions size must be >= 0, got {value}")
+        return value
+
+    # ---------- G09:受控命令、复现工件与诊断执行 ----------
+    # 受控命令的回退超时:profile 自带各自的上限,这里只兜底 profile 未给出的情形
+    command_timeout_seconds: int = 120
+    # 单条流的原始输出落盘上限(字节):超出部分如实计数丢弃,回执标注 dropped_bytes,
+    # 模型可见的 tail 在这之后才裁(超过 tail 上限的部分用 evidence_id 分页取回)
+    command_output_max_bytes: int = 2_000_000
+    # 回执里 stdout/stderr 模型可见的 tail 字符数(原文可经 read_evidence 取回)
+    command_tail_chars: int = 2000
+    # scratch 原始输出的总量额度:每轮写入前做一次最旧优先的回收,超限的旧 .raw 让位
+    command_scratch_max_bytes: int = 64_000_000
+    # ---------- G10:issue-only 诊断与验收清单冻结 ----------
+    # diagnose_then_repair 模式下,平台等待 trusted_user 批准验收清单的时长(秒)。
+    # 0 = 不等待(headless 评测口径):立即返回 needs_review 并交付 manifest 提议。
+    # 默认 3600 供交互 CLI/API 使用;到点未批准按 needs_review 收敛,不无限占用线程。
+    acceptance_wait_seconds: int = 3600
+
+    @field_validator("acceptance_wait_seconds")
+    @classmethod
+    def _check_acceptance_wait_seconds(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"acceptance_wait_seconds must be >= 0, got {value}")
+        return value
+
+    # ---------- G11:用户澄清与途中纠偏 ----------
+    # ask_user 的等待窗(秒):0 = headless,不等待、立即以 clarification_required
+    # 收敛(needs_review),问题保留供人工复查。与 acceptance_wait_seconds 同族口径。
+    user_wait_seconds: int = 3600
+    # 任务的**绝对寿命**上限(秒):用户等待不算进执行 deadline(等待结束后按等待时长
+    # 顺延),但顺延不得越过这条绝对上限;0 = 不设绝对上限(等待顺延无界)。
+    # 绝对上限在受理时建立、随 checkpoint 持久化,恢复不重授(与既有 deadline 同一条纪律)。
+    task_absolute_lifetime_seconds: int = 86_400
+
+    @field_validator("user_wait_seconds", "task_absolute_lifetime_seconds")
+    @classmethod
+    def _check_wait_seconds(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"wait/lifetime seconds must be >= 0 (0 = disabled), got {value}")
+        return value
+
+    @field_validator("command_output_max_bytes", "command_scratch_max_bytes")
+    @classmethod
+    def _check_command_sizes(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"command limits must be >= 0 (0 = 不落盘), got {value}")
+        return value
+
+    @field_validator("command_tail_chars")
+    @classmethod
+    def _check_command_tail_chars(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"command_tail_chars must be >= 0, got {value}")
         return value
 
     # PLAN 阶段(M5,范式 LOCALIZE→PLAN→ACT→VERIFY)。缺陷出处(PROGRESS.md D.8/D.11):

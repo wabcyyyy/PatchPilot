@@ -79,12 +79,14 @@ def test_p3_7_false_claims_are_gone() -> None:
     """已对账的假命题文案黑名单:不得在文档/源码中复活。"""
     forbidden: dict[str, list[str]] = {
         # 「checkpoint 带来崩溃恢复」与 checkpoint.py:3-5 自述互斥(R3-Q1)
-        "免费获得节点级恢复": ["docs/adr", "docs/design.md", "docs", "app", "README.md"],
-        "带来崩溃恢复": ["docs/adr", "docs/design.md"],
+        # design.md 已归档到 docs/archive/(docs 分层重组),黑名单作用域跟着换路径,
+        # 否则这两条假命题在新位置复活时无人拦截
+        "免费获得节点级恢复": ["docs/adr", "docs/archive/design.md", "docs", "app", "README.md"],
+        "带来崩溃恢复": ["docs/adr", "docs/archive/design.md"],
         # ATTACK-009 新增后「8 个」未回改,实测 9 个(R3-Q1)
         "攻击样例 8 个拦截": ["docs/threat-model.md"],
         "8 个攻击样例": ["README.md"],
-        "攻击样例(8 个": ["docs/design.md"],
+        "攻击样例(8 个": ["docs/archive/design.md"],
         # 影子门禁是第 7 项,「六项」docstring 过期(R3-Q1)
         "六项门禁": ["app/graph/gates.py", "app/graph/nodes.py"],
         # compose 冒烟无留档运行,「已实测」不成立(R3-Q1)
@@ -113,10 +115,10 @@ def test_p3_7_corrected_claims_are_pinned() -> None:
     adr1 = text("docs/adr/0001-langgraph-编排.md")
     assert "按 superstep 留档" in adr1
     assert "仍由 recover_stale 收敛 NEEDS_REVIEW" in adr1
-    # design.md 第三副本
-    assert "按 superstep 留档" in text("docs/design.md")
+    # design.md 第三副本(文件已归档到 docs/archive/)
+    assert "按 superstep 留档" in text("docs/archive/design.md")
     # 攻击样例 10 个 ×3
-    assert "攻击样例(10 个,全部拦截)" in text("docs/design.md")
+    assert "攻击样例(10 个,全部拦截)" in text("docs/archive/design.md")
     assert "攻击样例 10 个拦截" in text("docs/threat-model.md")
     assert "10 个攻击样例" in text("README.md")
     # 七项门禁 docstring(gates.py 模块头 / nodes.py 的 apply 节点)

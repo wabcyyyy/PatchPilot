@@ -17,9 +17,15 @@ class TaskCreateIn(BaseModel):
     )
     repo_path: str | None = Field(None, description="自定义 Git 仓库路径;与 bug_id 恰好一个")
     issue_text: str | None = Field(None, description="缺陷描述(repo_path 时必填)")
-    failed_tests: list[str] | None = Field(None, description="基线应失败的测试(repo_path 时必填)")
+    failed_tests: list[str] | None = Field(
+        None,
+        description=(
+            "基线应失败的测试;与 regression_tests 成对提供,"
+            "双缺 = issue-only 诊断受理(diagnose_then_repair,仅 graph 引擎)"
+        ),
+    )
     regression_tests: list[str] | None = Field(
-        None, description="基线应通过的回归测试(repo_path 时必填)"
+        None, description="基线应通过的回归测试;与 failed_tests 成对"
     )
     allowed_paths: list[str] | None = Field(
         None, description="补丁白名单;None = 不设白名单(禁改测试文件仍由门禁无条件兜底)"
@@ -36,17 +42,13 @@ class TaskCreateIn(BaseModel):
         if (self.bug_id is None) == (self.repo_path is None):
             raise ValueError("exactly one of bug_id or repo_path is required")
         if self.repo_path is not None:
-            missing = [
-                name
-                for name, value in (
-                    ("issue_text", self.issue_text),
-                    ("failed_tests", self.failed_tests),
-                    ("regression_tests", self.regression_tests),
+            if not self.issue_text:
+                raise ValueError("repo_path task requires issue_text")
+            if bool(self.failed_tests) != bool(self.regression_tests):
+                raise ValueError(
+                    "failed_tests and regression_tests must be provided together;"
+                    " omit both for issue-only (diagnose_then_repair) intake"
                 )
-                if not value
-            ]
-            if missing:
-                raise ValueError(f"repo_path task requires: {', '.join(missing)}")
         return self
 
 
@@ -82,6 +84,62 @@ class ErrorResponse(BaseModel):
     code: str
     message: str
     task_id: str | None = None
+
+
+class AcceptanceApproveIn(BaseModel):
+    """POST /tasks/{id}/acceptance 的批准入参(G10):绑定提议身份与版本。"""
+
+    proposal_id: str = Field(..., description="提议 id(run_dir/acceptance_proposal.json)")
+    content_hash: str = Field(..., description="提议内容 hash——这就是被批准的对象")
+    expected_revision: int = Field(..., ge=0, description="提议 revision,防过期批准")
+
+
+class AcceptanceOut(BaseModel):
+    """批准结果:冻结的清单身份与任务现状。"""
+
+    task_id: str
+    proposal_id: str
+    manifest_hash: str
+    already_frozen: bool = False
+    resumed: bool = False
+    status: str
+
+
+class MessageIn(BaseModel):
+    """POST /tasks/{id}/messages(G11):回答澄清问题或追加途中纠偏。
+
+    answer 必须带 question_id 与 expected_revision(防过期回答);idem_key 供重复
+    提交幂等。文本永远只作为**会话线索**进入任务,不改变测试、权限与预算契约。
+    """
+
+    kind: Literal["answer", "steer"]
+    text: str = Field(..., min_length=1, max_length=4000)
+    question_id: str = Field("", max_length=64, description="answer 必填(run_dir 工件里的 id)")
+    expected_revision: int = Field(0, ge=0, description="answer 必填:提问时的输入版本")
+    idem_key: str = Field("", max_length=100, description="重复提交的幂等键(可选)")
+
+
+class MessageOut(BaseModel):
+    """输入受理结果:是否写入、是否幂等命中、唤醒/重排队与任务现状。"""
+
+    task_id: str
+    kind: str
+    accepted: bool
+    already: bool = False
+    woke_waiter: bool = False
+    resumed: bool = False
+    question_id: str = ""
+    status: str
+
+
+class QuestionOut(BaseModel):
+    """当前未回答问题与输入版本(CLI/API 展示;无问题时 question 为 null)。"""
+
+    task_id: str
+    status: str
+    revision: int
+    question: dict[str, Any] | None = None
+    pending_steers: int = 0
 
 
 class TrajectoryPage(BaseModel):

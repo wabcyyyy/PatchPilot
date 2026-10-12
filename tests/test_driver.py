@@ -186,6 +186,65 @@ def test_provenance_carries_new_traceability_fields() -> None:
         # M6 崩溃恢复:快照开关决定续跑看到的工作记忆,重启开关决定僵尸任务的终态走向
         "loop_snapshot_enabled",
         "resume_on_restart",
+        # G03 预算维度:预算模式/现金上限/调用数上限/声明容量与余量决定"在哪一次请求停手",
+        # 同题跨模式不可比 —— 分类新增键就是这条断言的既有维护动作(见本用例 docstring)
+        "budget_mode",
+        "cost_budget_micro_usd",
+        "max_model_calls",
+        "model_context_tokens",
+        "capacity_margin_tokens",
+        # G04 重分类:这些键决定"模型能看到多少/能写多少/一次请求花多少",不是复现豁免
+        # (SPEC §7 G04:"文本裁剪/输出上限不是复现豁免")。从 EXEMPT 移入,分类仍三选一
+        "llm_max_tokens",
+        "llm_max_retries",
+        "llm_thinking",
+        "max_read_lines",
+        "max_search_results",
+        "max_output_chars",
+        "refine_head_lines",
+        "refine_tail_lines",
+        "docker_image",
+        # G05 有界视图与证据仓:可见上限/能否取回都改变模型那一屏的内容,同上不可豁免
+        "tool_visible_max_chars",
+        "evidence_enabled",
+        "evidence_max_item_bytes",
+        "evidence_max_total_bytes",
+        "evidence_page_bytes",
+        # G06 记忆装配:改的是"下一阶段的请求里有没有上一阶段的观测",同上不可豁免
+        "task_memory_enabled",
+        "task_memory_max_chars",
+        # G07 能力声明与显式重试:容量来源/能力清单/输出上界/平台重试决定"这一发请求能不能
+        # 合法发出、被夹成多大",换一项就是另一种运行条件
+        "model_capacity_source",
+        "model_capabilities",
+        "model_declared_output_ceiling",
+        "llm_platform_retries",
+        "agent_runtime_profile",
+        # G08 仓库说明:进不进请求、占多少字节,同样是模型可见上下文本身
+        "repo_instructions_enabled",
+        "repo_instructions_max_file_bytes",
+        "repo_instructions_max_total_bytes",
+        # G09 受控命令:回退超时/原始输出落盘额度/tail 字符数/scratch 回收额度决定
+        # "一条命令的回执长什么样、原文能不能取回",与 tool_visible_max_chars 同族不可豁免
+        "command_timeout_seconds",
+        "command_output_max_bytes",
+        "command_tail_chars",
+        "command_scratch_max_bytes",
+        # G10 验收等待窗:决定 diagnose 模式"等批准"还是"立即 needs_review"
+        "acceptance_wait_seconds",
+        # G11 用户等待窗与绝对寿命:决定等待中的任务"继续等/结构化 needs_review",
+        # 以及等待顺延能否越过绝对上限——同样改变终态与轨迹形状
+        "user_wait_seconds",
+        "task_absolute_lifetime_seconds",
+        # G13 角色委派:开关/并发/次数/轮次/份额/子模型决定轨迹形状与成本,同题不可比
+        "delegation_enabled",
+        "max_subagent_concurrency",
+        "max_delegations",
+        "subtask_budget_share",
+        "subtask_max_turns",
+        "subtask_model",
+        # G14 有界停止:同失败连续多少轮后收敛 NEEDS_REVIEW,决定轨迹终点,同题不可比
+        "max_identical_failures",
     } == set(SNAPSHOT_KEYS)
     started = datetime.fromisoformat(prov["started_at"])
     assert started.tzinfo is not None

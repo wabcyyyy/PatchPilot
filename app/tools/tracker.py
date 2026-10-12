@@ -19,6 +19,29 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
+# 公开面去敏(G02 的退出条件 / 验收矩阵 T24):轨迹经 API 原样对外
+# (`GET /tasks/{id}/trajectory`),思维链原文与凭据样字段一旦进事件就出不来了。
+# 这里做**按键名**的收口,而不是指望每个写入方各自记得截——上一轮"调用点各自截断
+# summary"已经漏过一次(M16.9 同形缺陷)。
+_REDACTED_STUB = "<redacted>"
+_REDACTED_KEYS = frozenset({"reasoning_content", "api_key", "authorization", "x-api-key"})
+
+
+def _redact(value: object) -> object:
+    """递归替换敏感键的值;结构与非 dict/list 的读数原样保留。"""
+    if isinstance(value, dict):
+        return {
+            key: (
+                _REDACTED_STUB
+                if isinstance(key, str) and key.lower() in _REDACTED_KEYS
+                else _redact(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact(item) for item in value]
+    return value
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds")
@@ -45,8 +68,8 @@ class TrajectoryEvent:
             "state": self.state,
             "tool": self.tool,
             "request_id": self.request_id,
-            "input": self.input,
-            "output_summary": self.output_summary,
+            "input": _redact(self.input),
+            "output_summary": _redact(self.output_summary),
             "duration_ms": self.duration_ms,
             "error": self.error,
             "timestamp": self.timestamp,

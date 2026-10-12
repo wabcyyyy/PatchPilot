@@ -42,12 +42,24 @@ from app.tools.registry import FINISH_TOOL
 # reset_workspace 一并去掉:没有执行反馈时"回滚重来"没有判据,留着只会掩盖消融点。
 # M3 的 find_symbol/describe_file 必须在两臂同时在场:消融变量是"有无测试反馈/有无重试",
 # 不是"有无检索工具",少一边给一边就把对照臂变成残臂(与 WRITE_TOOLS 同步)。
+# G05 的 read_evidence 与 G06 的 update_memory 同理:一个属于"读自己已经拿到的东西",
+# 一个属于"登记自己的假设",两臂都给才不构成新变量
+# (教训登记在案:消融臂私加的未登记限制会把结论污染成实验设计的函数)。
+# G09 登记的不对称:write_repro/run_command **不进**本臂——pytest_selected 会把测试
+# 结果带给对照臂,与"one_shot 禁执行反馈"直接冲突(run_tests 的排除是同一先例)。
+# 做"受控命令"的单变量对照时必须按臂登记,不能当作默认对称能力。
+# G11 登记的不对称评估:ask_user 进两臂(它是"向用户要信息",不是执行反馈,
+# 与 run_tests 的排除不同罪)。但本臂/agent 臂在批处理里都是 headless:模型真提问时
+# 两臂都以 clarification_required 收场——语义对称,不构成新的消融变量。
 ONE_SHOT_TOOLS = [
     "list_files",
     "search_code",
     "find_symbol",
     "describe_file",
     "read_file",
+    "read_evidence",
+    "update_memory",
+    "ask_user",
     "git_diff",
     "apply_patch",
     FINISH_TOOL,
@@ -75,6 +87,10 @@ def one_shot_agent(
     deadline_epoch: float | None = None,
     cancel_event: threading.Event | None = None,
     ledger: ResourceLedger | None = None,
+    context_window_tokens: int | None = None,
+    context_keep_recent_turns: int | None = None,
+    capacity_ceiling_tokens: int = 0,
+    runtime_profile: str = "",
 ) -> LoopOutcome:
     """定位 → 提交补丁;无执行反馈,无第二轮。
 
@@ -83,6 +99,8 @@ def one_shot_agent(
     轮次差会把结论变成实验参数的函数。补丁阶段内仍可因协议/门禁拒绝而自纠多次,
     但模型看到的东西只有 Bug 描述 + 定位阶段自己写下的结论,永远看不到测试结果。
     ledger(S02/F1)与默认臂同源:两臂共用任务级账本,对照才可比。
+    上下文四个参数(G07)同样原样转给两次循环:两臂必须跑在同一份冻结的运行 profile 上,
+    这一臂少接一边就等于给对照臂偷偷换了软窗口与容量判据。
     """
     localize = run_plain_loop(
         ctx,
@@ -98,6 +116,10 @@ def one_shot_agent(
         token_budget=_budget_for(0),
         cancel_event=cancel_event,
         ledger=ledger,
+        context_window_tokens=context_window_tokens,
+        context_keep_recent_turns=context_keep_recent_turns,
+        capacity_ceiling_tokens=capacity_ceiling_tokens,
+        runtime_profile=runtime_profile,
     )
 
     prompt = ONE_SHOT_PROPOSE_PROMPT.format(
@@ -116,6 +138,10 @@ def one_shot_agent(
             token_budget=_budget_for(localize.tokens_used),
             cancel_event=cancel_event,
             ledger=ledger,
+            context_window_tokens=context_window_tokens,
+            context_keep_recent_turns=context_keep_recent_turns,
+            capacity_ceiling_tokens=capacity_ceiling_tokens,
+            runtime_profile=runtime_profile,
         )
     except BudgetError as exc:
         # N-11 同源:补丁阶段超预算时,定位阶段已烧的用量必须记回任务级账本,

@@ -202,14 +202,15 @@ class Repository:
         return [_task_out(r) for r in rows]
 
     def list_stale_running(self) -> list[dict[str, Any]]:
-        """RUNNING/QUEUED 的整行(M6 启动恢复的读方)。
+        """RUNNING/QUEUED/WAITING_INPUT 的整行(M6 启动恢复的读方;G10 起含等待批准的
+        issue-only 任务——等待也是可恢复态,不能当僵尸判死)。
 
         恢复要按行决定去向(有可用快照 → 重新入队续跑;没有 → 判死),所以需要的不只是
         idem_key。只读方法,不改状态——写仍集中在 `recover_stale_running`。
         """
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM tasks WHERE status IN ('RUNNING','QUEUED')"
+                "SELECT * FROM tasks WHERE status IN ('RUNNING','QUEUED','WAITING_INPUT')"
             ).fetchall()
         return [_task_out(r) for r in rows if r is not None]
 
@@ -230,13 +231,14 @@ class Repository:
             params = tuple(excluded)
         with self._lock, self._conn:
             rows = self._conn.execute(
-                "SELECT idem_key FROM tasks WHERE status IN ('RUNNING','QUEUED')" + clause,
+                "SELECT idem_key FROM tasks"
+                " WHERE status IN ('RUNNING','QUEUED','WAITING_INPUT')" + clause,
                 params,
             ).fetchall()
             stale_keys = [r["idem_key"] for r in rows if r["idem_key"]]
             self._conn.execute(
                 "UPDATE tasks SET status='NEEDS_REVIEW', finished_at=?"
-                " WHERE status IN ('RUNNING','QUEUED')" + clause,
+                " WHERE status IN ('RUNNING','QUEUED','WAITING_INPUT')" + clause,
                 (_now(), *params),
             )
         if stale_keys:
@@ -309,6 +311,23 @@ class Repository:
                 "SELECT * FROM trajectory_events WHERE task_id = ? ORDER BY id LIMIT ? OFFSET ?",
                 (task_id, limit, offset),
             ).fetchall()
+        return self._decode_event_rows(rows)
+
+    def events_since(self, task_id: str, after_id: int, limit: int = 200) -> list[dict[str, Any]]:
+        """自增 id > after_id 的事件行(G12 事件流的增量读方;与轨迹同一张表、同一组事实)。
+
+        行里带自增 `id`——SSE 的 `id:` 与 Last-Event-ID 续传就靠它;
+        `after_id=0` 从头读,与 get_trajectory(offset=0) 同源。
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM trajectory_events WHERE task_id = ? AND id > ? ORDER BY id LIMIT ?",
+                (task_id, max(int(after_id or 0), 0), limit),
+            ).fetchall()
+        return self._decode_event_rows(rows)
+
+    @staticmethod
+    def _decode_event_rows(rows: Sequence[sqlite3.Row]) -> list[dict[str, Any]]:
         out = []
         for r in rows:
             item = dict(r)

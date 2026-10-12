@@ -101,8 +101,15 @@ def test_full_repair_loop_via_fake_llm(ctx: ToolContext) -> None:
     llm_events = [e for e in events if e["tool"] == "llm"]
     assert len(llm_events) == outcome.turns
     assert llm_events[0]["state"] == "LOOP"
-    tools_used = [e["tool"] for e in events if e["tool"] != "llm"]
+    # G12 起每次真实工具执行前后各有一条事件(tool_started 与执行回执):本断言钉的是
+    # **真实工具调用**的顺序与收尾,配对事件(与 llm 同类)从这列里排除,断言强度不变。
+    tools_used = [e["tool"] for e in events if e["tool"] not in ("llm", "tool_started")]
     assert tools_used[0] == "search_code" and tools_used[-1] == "finish"
+    started = [e for e in events if e["tool"] == "tool_started"]
+    # finish 是循环自己消费的伪工具(不进 registry.execute),故配对到真实工具为止
+    assert [e["input"]["tool"] for e in started] == [t for t in tools_used if t != "finish"], (
+        "每次真实工具执行都必须先有 started"
+    )
     assert events[-1]["output_summary"]["patch_applied"] is True
 
 

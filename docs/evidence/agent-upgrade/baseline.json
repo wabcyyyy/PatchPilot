@@ -1,0 +1,146 @@
+{
+  "card": "G00",
+  "batch": "B0",
+  "spec": "docs/PatchPilot修复Agent升级SPEC-2026-10-10.md",
+  "recorded_at_local": "2026-10-10T20:35:24+08:00",
+  "cwd": "D:/wcy/project/PatchPilot",
+  "git": {
+    "branch": "master",
+    "head_at_handoff": "876ff6fedd0a2e04b04bb489e05e2073ab5ea485",
+    "detached_head": false,
+    "new_branch_created": false,
+    "reason_no_new_branch": "交接提示只在 detached HEAD 时要求新建 codex/repair-agent-b0;当前在 master 且工作树带着上一轮的 55 项未提交文档改动,用户裁定本批就在 master 上做、文档先单独提交。",
+    "commits_in_this_batch": [
+      {
+        "sha": "7b2a92c",
+        "what": "docs(归档): 上一轮评审/SPEC 与历史文档按体裁分层归档(用户未提交成果原样入库,非本批实现)"
+      },
+      {
+        "sha": "6842099",
+        "what": "fix(docs): 归档重组后文档锚点指到新路径,恢复被漏掉的两条 P3-7 拦截面(存量修复)"
+      }
+    ],
+    "head_measured_for_baseline": "6842099a110741e8ffdf20c66072f9782dfb23d4",
+    "dirty_files_at_handoff": {
+      "count": 55,
+      "shape": "M AGENTS.md/PROGRESS.md/README.md/TODO.md/app/evals/report.py/scripts/*3/tests/test_report.py/docs/README.md/docs/adr/0007+0009/docs/threat-model.md/docs/archive/2*;D 18 份 docs 根文档;?? 新 SPEC + docs/archive/* + docs/work-notes/*",
+      "disposition": "全部为上一轮文档分层重组的连带改动,已逐路径原样提交在 7b2a92c,无一项被丢弃或改写"
+    }
+  },
+  "environment": {
+    "interpreter": "D:/wcy/project/PatchPilot/.venv/Scripts/python.exe",
+    "python": "3.14.2",
+    "platform": "Windows-11-10.0.26300-SP0(x64)",
+    "pip_in_venv": false,
+    "note_pip": "venv 内没有 pip 模块(由 uv 管理),依赖读数用 importlib.metadata 取;`python -m pip show` 在这台机器上必然空返回,别当缺依赖",
+    "packages": {
+      "pytest": "9.1.1",
+      "ruff": "0.16.7",
+      "pydantic": "2.13.5",
+      "pydantic-settings": "2.15.0",
+      "langgraph": "1.2.11",
+      "langgraph-checkpoint-sqlite": "3.1.1",
+      "openai": "3.14.0",
+      "fastapi": "0.141.1",
+      "redis": "8.1.0",
+      "qdrant-client": "MISSING"
+    },
+    "ripgrep_on_path": true,
+    "note_ripgrep": "rg 来自 Qoder 插件目录并在 PATH 上;CI(ubuntu)没有 rg。检索遍历域在两机上形状不同,跨机数字不可比(AGENTS/TODO M11.8.2 已记)",
+    "basetemp_used": "D:/tmp/pt-upgrade-b0-baseline(仓库外,会话实测可写)",
+    "external_writable_example_from_handoff": "D:/tmp/pt-upgrade-b0(实测可写,已用)"
+  },
+  "checks": {
+    "ruff_check": {
+      "command": ".venv/Scripts/ruff.exe check .",
+      "result": "All checks passed!",
+      "exit_code": 0
+    },
+    "ruff_format_check": {
+      "command": ".venv/Scripts/ruff.exe format --check .",
+      "result": "233 files already formatted",
+      "exit_code": 0
+    },
+    "full_pytest": {
+      "command": ".venv/Scripts/pytest.exe -q --basetemp=D:/tmp/pt-upgrade-b0-baseline",
+      "terminal_line": "880 passed, 4 skipped, 4 warnings in 1562.30s (0:26:02)",
+      "exit_code": 0,
+      "log": "D:/tmp/pt-upgrade-b0-baseline.log(仓库外;控制台按 GBK 码页输出,读数用二进制解码取)",
+      "note": "后台任务的 exit 0 不作结论,只认这份自重定向日志的终态行"
+    }
+  },
+  "failure_classification": {
+    "product_failures_at_measured_head": 0,
+    "product_failures_found_before_repair": [
+      {
+        "test": "tests/test_docs_anchors.py::test_adr_declared_anchors_hold",
+        "reason": "docs/design.md 与 docs/docker-isolation-notes.md 被移进 docs/archive/ 后,ADR 的 file:line 锚点仍指旧路径",
+        "reading_before": "2 failed, 4 passed",
+        "reading_after": "6 passed"
+      },
+      {
+        "test": "tests/test_docs_anchors.py::test_p3_7_corrected_claims_are_pinned",
+        "reason": "同上(_read(\"docs/design.md\") FileNotFound)",
+        "reading_before": "2 failed, 4 passed",
+        "reading_after": "6 passed"
+      }
+    ],
+    "coverage_loss_found_and_repaired": "P3-7 假命题黑名单的两条作用域(\"带来崩溃恢复\"、\"攻击样例(8 个\")指向了已不存在的路径——等于这两道防复发拦截被静默取消,不是测试红不红的问题;修复只换路径,期望子串与被钉句子一字未动",
+    "environment_skips": [
+      "tests/test_input_snapshot.py:67 — 本机 Windows 没有创建符号链接的权限",
+      "tests/test_locks.py:49 — redis://localhost:6379/0 无可用 Redis 服务",
+      "tests/test_locks.py:68 — 同上",
+      "tests/test_search_tools.py:746 — 本机 Windows 没有创建符号链接的权限"
+    ],
+    "not_run_in_this_batch": [
+      "真实模型/在线端点探针/付费批(G17,未授权)",
+      "Docker 后端集成(本机 Docker Desktop 不执行 unix 属主校验,oracle 是 CI)",
+      "graph35 / fake35 批次对照回放(G01 后按需要跑定向回放,不改判定口径)"
+    ]
+  },
+  "review_findings_reverified_on_this_code": {
+    "R1_plan_protocol": {
+      "still_present_before_g01": true,
+      "evidence": "docs/evidence/agent-upgrade/probe-before-g01.json → offline_probes.plan_plain_text",
+      "reading": {"calls": 3, "error": "agent loop exceeded max_turns=3"},
+      "code_anchor": "app/graph/plain_loop.py:399 纯文本 continue;只有 :420 的 finish 才 return;app/prompts.py:99 却要求\"不要调用工具\""
+    },
+    "R2_visible_schema_vs_phase": {
+      "still_present_before_g01": true,
+      "evidence": "docs/evidence/agent-upgrade/probe-before-g01.json → plan_visible_schema_count",
+      "reading": 10,
+      "code_anchor": "app/graph/plain_loop.py:337 model.complete(messages, tool_schemas()) 不传 allowed_tools",
+      "extra": "reset_workspace 注册在案但从未进任何阶段白名单(READ_TOOLS/WRITE_TOOLS/ONE_SHOT_TOOLS/两臂 policy 实测均无),此前每阶段都对模型可见且必然被挡回"
+    },
+    "limited_branch_wiring": {
+      "still_true": true,
+      "reading": "branch_model_factory 在 app/graph/nodes.py 与 app/graph/runner.py 在场,app/api/service.py 无该名字 ⇒ API 任务不触发 Best-of-N(G13 的范围)"
+    },
+    "s_series_capabilities_present": [
+      "app/task_spec.py(规范化 TaskSpec + SHA256)",
+      "app/graph/acceptance.py(共享终局验收)",
+      "app/adapters/test_identity.py(完整测试身份)",
+      "app/gitops/input_snapshot.py(输入冻结)",
+      "app/api/preflight.py(受理预检)",
+      "app/graph/resources.py(ResourceLedger)",
+      "app/graph/resume.py + app/graph/loop_state.py(两级恢复)",
+      "app/graph/candidate.py(候选冻结)",
+      "app/evals/experiment_policy.py(agent/one_shot 同引擎两臂)"
+    ],
+    "not_re_implemented": "旧 S00–S11 的卡全部按\"已落地\"处理,本批不重做;SPEC §2 的\"实际接线由 G00 复核\"就是上面这份清单"
+  },
+  "untracked_artifacts_identified_and_preserved": [
+    "docs/work-notes/agent-readiness-review-2026-10-10.md(评审正文)",
+    "docs/work-notes/audit_agent_review_20261010.py(离线探针)",
+    "docs/work-notes/2026-10-10-agent-review-probes.json(探针输出,历史基线 d1bf0aa 那次)",
+    "docs/PatchPilot修复Agent升级SPEC-2026-10-10.md(SPEC)",
+    "docs/work-notes/PatchPilot升级交接Prompt-2026-10-10.md(交接提示)"
+  ],
+  "costs_and_external_actions": {
+    "real_llm_calls": 0,
+    "paid_batch_runs": 0,
+    "git_push": 0,
+    "network": "无(探针的 SDK 请求由 mock 替代)",
+    "deleted_history_or_evidence": 0
+  }
+}

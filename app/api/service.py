@@ -23,17 +23,34 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from app.agent.control import (
+    KIND_ANSWER,
+    KIND_STEER,
+    ApprovalRegistry,
+    InteractionChannel,
+    InteractionIntegrityError,
+    InteractionStore,
+    QuestionRegistry,
+)
 from app.api.cancellation import CancelRegistry
 from app.api.preflight import run_preflight
 from app.api.recycle import recycle_run_dir
 from app.config import get_settings
-from app.errors import InvalidRequestError, PatchPilotError, TaskCancelled, TaskError
+from app.errors import (
+    ConflictError,
+    InvalidRequestError,
+    PatchPilotError,
+    TaskCancelled,
+    TaskError,
+)
 from app.evals.bugset import BUGS_ROOT, BugTask, build_custom_bug, load_bug, load_replay_script
 from app.gitops.input_snapshot import SNAPSHOT_DIRNAME, freeze_input
 from app.logctx import request_id_var, reset_task_context, set_task_context
 from app.storage.locks import BaseLock, build_lock
 from app.storage.repository import TERMINAL_STATUSES, Repository
 from app.task_spec import (
+    MODE_DIAGNOSE_THEN_REPAIR,
+    MODE_REPAIR,
     SCHEMA_VERSION,
     TaskSpec,
     build_task_spec,
@@ -91,6 +108,11 @@ class TaskService:
         self.bugs_root = Path(bugs_root)
         self.lock = lock or build_lock(redis_url or get_settings().redis_url)
         self._cancels = CancelRegistry()
+        # G10:验收批准的等待登记(同进程内唯一唤醒通道;CLI/HTTP 批准经服务方法
+        # 冻结 manifest 后唤醒对应任务的等待线程)
+        self._approvals = ApprovalRegistry()
+        # G11:ask_user 的回答等待登记(与批准登记同构;回答落盘后经它唤醒等待线程)
+        self._questions = QuestionRegistry()
         # E4:并发上限配置化——显式传参优先(既有调用方行为不变),
         # 未传时读 Settings.task_max_workers(默认 2,行为向后兼容)
         resolved_workers = (
@@ -138,7 +160,10 @@ class TaskService:
         """创建任务;返回 (任务, 是否本次新建)。
 
         幂等键 = bug_id + engine + model,同键任务未到终态时返回 (原任务, False)。
+        G10:repo_path 且双测试集皆空 = issue-only 受理(diagnose_then_repair 模式,
+        仅 graph 引擎);失败/回归集必须经诊断提议与 trusted_user 批准后才冻结生产。
         """
+        mode = MODE_REPAIR
         if repo_path is not None:
             resolved = Path(repo_path).resolve()
             if not resolved.is_dir():
@@ -149,11 +174,20 @@ class TaskService:
                     "custom repo task with model='fake' requires a replay_script;"
                     " provide replay_script or use model='openai'"
                 )
+            failed = list(failed_tests or [])
+            regression = list(regression_tests or [])
+            if not failed and not regression:
+                if engine != "graph":
+                    raise InvalidRequestError(
+                        "issue-only intake (no failed/regression tests) requires engine=graph;"
+                        " the plain engine cannot wait for acceptance approval"
+                    )
+                mode = MODE_DIAGNOSE_THEN_REPAIR
             bug = build_custom_bug(
                 repo_path=resolved,
                 issue_text=issue_text or "",
-                failed_tests=failed_tests or [],
-                regression_tests=regression_tests or [],
+                failed_tests=failed,
+                regression_tests=regression,
                 allowed_paths=allowed_paths,
             )
             # S06:custom 任务的源码身份在受理时绑定(S05a 指纹),冻结副本在
@@ -189,6 +223,7 @@ class TaskService:
             max_rounds=max_rounds if max_rounds is not None else bug.max_rounds,
             replay=replay_for_spec,
             source_snapshot_ref=SNAPSHOT_DIRNAME if repo_path is not None else "",
+            mode=mode,
         )
         idem_key = spec.task_spec_hash
 
@@ -389,20 +424,47 @@ class TaskService:
             real_model_name = settings.llm_model if model_name == "openai" else ""
 
             if engine == "graph":
+                from app.agent.subtasks import branch_model_factory_for, subtask_model_factory_for
                 from app.graph.runner import run_task_graph
 
-                result = run_task_graph(
-                    bug,
-                    model,
-                    runs_root=self.runs_root,
+                # G10:诊断等待接线——批准事件登记 + 等待前把生命周期置 WAITING_INPUT
+                # (非终态条件写;批准后服务写回 RUNNING,超时/取消由终态收敛)
+                approval_event = self._approvals.register(task_id)
+                # G11:ask_user 的等待通道——回答端点经同一服务实例的 QuestionRegistry
+                # 唤醒等待线程;等待窗由 Settings 在**执行启动时**冻结(受理后改环境变量
+                # 不改变这一次运行)。status 先例与批准等待一致:on_waiting 置 WAITING_INPUT。
+                interaction = InteractionChannel(
+                    registry=self._questions,
                     task_id=task_id,
-                    run_dir=run_dir,
-                    model_name=real_model_name,
-                    cancel_event=cancel_event,
-                    resume=resume,
-                    tracker_sink=self._live_event_sink(task_id),
-                    arm="agent",
+                    wait_seconds=get_settings().user_wait_seconds,
+                    on_waiting=lambda: self.repo.set_status_unless_terminal(
+                        task_id, "WAITING_INPUT"
+                    ),
                 )
+                try:
+                    result = run_task_graph(
+                        bug,
+                        model,
+                        runs_root=self.runs_root,
+                        task_id=task_id,
+                        run_dir=run_dir,
+                        model_name=real_model_name,
+                        cancel_event=cancel_event,
+                        resume=resume,
+                        tracker_sink=self._live_event_sink(task_id),
+                        arm="agent",
+                        # G13:分支/委派模型工厂与 CLI 同源(API 此前只接了 runner 默认,
+                        # 未接分支工厂;SPEC G13"修复 API 未接线"在此收口)
+                        branch_model_factory=branch_model_factory_for(bug, model_name, settings),
+                        subtask_model_factory=subtask_model_factory_for(bug, model_name, settings),
+                        approval_event=approval_event,
+                        on_waiting=lambda: self.repo.set_status_unless_terminal(
+                            task_id, "WAITING_INPUT"
+                        ),
+                        interaction=interaction,
+                    )
+                finally:
+                    self._approvals.release(task_id)
             else:
                 from app.evals.driver import run_task
 
@@ -504,6 +566,10 @@ class TaskService:
     def trajectory(self, task_id: str, limit: int, offset: int) -> list[dict[str, Any]]:
         return self.repo.get_trajectory(task_id, limit, offset)
 
+    def events_since(self, task_id: str, after_id: int, limit: int = 200) -> list[dict[str, Any]]:
+        """G12 事件流的增量读方(与轨迹同一张表、同一组事实)。"""
+        return self.repo.events_since(task_id, after_id, limit)
+
     def cancel_task(self, task_id: str) -> dict[str, Any]:
         task = self.repo.get_task(task_id)
         if task is None:
@@ -515,6 +581,209 @@ class TaskService:
         # 状态落库后通知执行线程;中断在下个 turn 边界生效
         self._cancels.request_cancel(task_id)
         return self.repo.get_task(task_id)  # type: ignore[return-value]
+
+    def approve_acceptance(
+        self,
+        task_id: str,
+        *,
+        proposal_id: str,
+        content_hash: str,
+        expected_revision: int,
+    ) -> dict[str, Any]:
+        """G10:trusted_user 批准验收清单——冻结 manifest 并唤醒等待中的执行线程。
+
+        批准是**冻结工件**而不是一条消息:先落盘(幂等/冲突语义全在 freeze_manifest),
+        再唤醒。进程内没有 waiter(崩溃/重启后的遗留等待)时按重新入队恢复,
+        resume 的 diagnose 节点从盘上 manifest 直接续跑,批准不会丢在半路。
+        """
+        row = self.repo.get_task(task_id)
+        if row is None:
+            raise TaskError(f"task not found: {task_id}")
+        status = str(row.get("status") or "")
+        if status in TERMINAL_STATUSES:
+            raise ConflictError(f"task {task_id} already finished ({status})")
+        run_dir = Path(str(row.get("run_dir") or ""))
+        if not run_dir.is_dir():
+            raise TaskError(f"task {task_id}: run_dir missing, acceptance cannot be approved")
+        if self._accepted_mode(run_dir) != MODE_DIAGNOSE_THEN_REPAIR:
+            raise InvalidRequestError(
+                "task is not in diagnose_then_repair mode; its acceptance list was fixed at intake"
+            )
+        from app.diagnosis.proposal import (
+            APPROVED_BY_TRUSTED_USER,
+            ManifestIntegrityError,
+            freeze_manifest,
+            load_proposal,
+        )
+
+        try:
+            on_file = load_proposal(run_dir)
+        except ManifestIntegrityError as exc:
+            raise ConflictError(f"proposal on file failed integrity check: {exc}") from exc
+        if on_file is None:
+            raise InvalidRequestError("no acceptance proposal on file for this task")
+        if on_file.proposal_id != proposal_id:
+            raise ConflictError(
+                f"proposal_id mismatch: submitted {proposal_id[:12]},"
+                f" on-file proposal is {on_file.proposal_id[:12]}"
+            )
+        manifest, already_frozen = freeze_manifest(
+            run_dir,
+            expected_hash=content_hash,
+            expected_revision=expected_revision,
+            approved_by=APPROVED_BY_TRUSTED_USER,
+        )
+        resumed = False
+        if self._approvals.has_waiter(task_id):
+            # 同进程等待线程:冻结先于唤醒(醒来必能读到匹配 manifest)
+            self._approvals.approve(task_id)
+            self.repo.set_status_unless_terminal(task_id, "RUNNING")
+        elif status == "WAITING_INPUT":
+            # 无 waiter 但行仍是等待态(进程曾崩溃/重启):重新入队按检查点恢复
+            resumed = self._requeue_for_resume(row)
+        log.info(
+            "task %s: acceptance approved (%s%s)",
+            task_id,
+            manifest.manifest_hash[:12],
+            ", already frozen" if already_frozen else "",
+        )
+        return {
+            "task_id": task_id,
+            "proposal_id": proposal_id,
+            "manifest_hash": manifest.manifest_hash,
+            "already_frozen": already_frozen,
+            "resumed": resumed,
+            "status": str((self.repo.get_task(task_id) or {}).get("status") or ""),
+        }
+
+    def submit_message(
+        self,
+        task_id: str,
+        *,
+        kind: str,
+        text: str,
+        question_id: str = "",
+        expected_revision: int = 0,
+        idem_key: str = "",
+    ) -> dict[str, Any]:
+        """G11:回答澄清问题(answer)或追加途中纠偏(steer)。
+
+        语义要点(SPEC G11):
+        - 回答只作为**问题工件**的写入(POST /messages),trusted_user 来源由平台赋;
+          模型文字、仓库文件里的"用户已批准"永远不构成输入;
+        - 回答落盘先于唤醒:`resume 通过问题 ID、expected_revision、幂等键消费一次`;
+          无 waiter 且行仍是 WAITING_INPUT(进程曾重启)时按检查点重新入队,
+          循环会在恢复后的同一闸门里消费答案(见 run_plain_loop 的 _interaction_gate);
+        - 终态任务的输入一律拒绝(终态不可复活);纠偏只追加线索,
+          不改变测试、权限与预算(消费端是文本消息,不参与任何判定)。
+        """
+        row = self.repo.get_task(task_id)
+        if row is None:
+            raise TaskError(f"task not found: {task_id}")
+        status = str(row.get("status") or "")
+        if status in TERMINAL_STATUSES:
+            raise ConflictError(
+                f"task {task_id} already finished ({status}); input is refused on terminal tasks"
+            )
+        run_dir = Path(str(row.get("run_dir") or ""))
+        if not run_dir.is_dir():
+            raise TaskError(f"task {task_id}: run_dir missing, input cannot be recorded")
+        store = InteractionStore(run_dir)
+        if kind == KIND_ANSWER:
+            try:
+                question, already = store.submit_answer(
+                    question_id=question_id,
+                    expected_revision=expected_revision,
+                    text=text,
+                    idem_key=idem_key,
+                )
+            except InteractionIntegrityError as exc:
+                raise ConflictError(
+                    f"interaction state on file failed integrity check: {exc}"
+                ) from exc
+            woke = False
+            resumed = False
+            if not already:
+                if self._questions.has_waiter(task_id):
+                    woke = self._questions.answer(task_id, question_id)
+                    if woke:
+                        # 等待线程在同一进程内:批准先落盘(上面),此处只唤醒并回写状态
+                        self.repo.set_status_unless_terminal(task_id, "RUNNING")
+                elif status == "WAITING_INPUT":
+                    # 无 waiter 但行仍是等待态(进程曾崩溃/重启):重新入队按检查点恢复,
+                    # 循环在恢复后的闸门里消费这条答案(与 G10 批准的重启路径同一处置)
+                    resumed = self._requeue_for_resume(row)
+            log.info(
+                "task %s: answer recorded for question %s (already=%s woke=%s resumed=%s)",
+                task_id,
+                question_id[:12],
+                already,
+                woke,
+                resumed,
+            )
+            return {
+                "task_id": task_id,
+                "kind": kind,
+                "accepted": True,
+                "already": already,
+                "woke_waiter": woke,
+                "resumed": resumed,
+                "question_id": str(question.get("question_id") or question_id),
+                "status": str((self.repo.get_task(task_id) or {}).get("status") or ""),
+            }
+        if kind == KIND_STEER:
+            try:
+                already = store.submit_steer(text=text, idem_key=idem_key)
+            except InteractionIntegrityError as exc:
+                raise ConflictError(
+                    f"interaction state on file failed integrity check: {exc}"
+                ) from exc
+            log.info("task %s: steer recorded (already=%s)", task_id, already)
+            return {
+                "task_id": task_id,
+                "kind": kind,
+                "accepted": True,
+                "already": already,
+                "woke_waiter": False,
+                "resumed": False,
+                "question_id": "",
+                "status": status,
+            }
+        raise InvalidRequestError(f"unsupported message kind: {kind!r} (answer | steer)")
+
+    def pending_question(self, task_id: str) -> dict[str, Any]:
+        """G11:当前未回答问题与输入版本(CLI/API 展示用);损坏的工件如实报冲突。"""
+        row = self.repo.get_task(task_id)
+        if row is None:
+            raise TaskError(f"task not found: {task_id}")
+        run_dir = Path(str(row.get("run_dir") or ""))
+        store = InteractionStore(run_dir)
+        try:
+            state = store.read()
+        except InteractionIntegrityError as exc:
+            raise ConflictError(f"interaction state on file failed integrity check: {exc}") from exc
+        open_question = next(
+            (q for q in state.get("questions", []) if q.get("status") == "open"), None
+        )
+        pending_steers = sum(1 for s in state.get("steers", []) if not s.get("consumed_at"))
+        return {
+            "task_id": task_id,
+            "status": str(row.get("status") or ""),
+            "revision": int(state.get("revision", 0)),
+            "question": open_question,
+            "pending_steers": pending_steers,
+        }
+
+    @staticmethod
+    def _accepted_mode(run_dir: Path) -> str:
+        """从受理契约读 mode(run_dir/task_spec.json 是执行与恢复的权威副本)。"""
+        try:
+            spec_path = run_dir / "task_spec.json"
+            if spec_path.is_file():
+                return TaskSpec.read_file(spec_path).mode
+        except (ValueError, OSError):
+            log.warning("task spec unreadable under %s; treating as repair", run_dir)
+        return MODE_REPAIR
 
     def recover_stale(self) -> int:
         """启动恢复:僵尸任务分两路收敛,并同步清掉残留任务锁(N-20 整改)。
@@ -571,6 +840,12 @@ class TaskService:
         # 缺所需输入/资源证据,一律不自动放行(判死路径)。
         if not (run_dir_path / "task_spec.json").is_file():
             return False
+        from app.diagnosis.proposal import PROPOSAL_FILENAME
+
+        if (run_dir_path / PROPOSAL_FILENAME).is_file():
+            # G10:等待批准的 issue-only 任务(checkpoint next=diagnose)——盘上提议
+            # 就是可续位置;冻结与否由 resume 的 diagnose 节点重读 manifest 判定
+            return True
         if (run_dir_path / "candidates").is_dir():
             # 有候选工件:apply/verify/finish 边界崩溃(循环快照已被正常删除),
             # runner 的 revalidate 会按候选重应用并完整重验——值得重新入队

@@ -761,7 +761,7 @@ M11.3 要的是生产影响评估,结果它先推翻了我自己登记的 M11.1:
   "默认 1.0 行为未变",但基线批次每题只烧约 7k tokens,**离任何额度闸都差两个数量级** ——
   跑出来的 0 差异只证明"这条路径没被走到",不证明行为等价。证据是 M17.3 那三条直接对撞
   闸门算术的用例。额度类主张只能来自真实模型语料或显式构造的用例,这条口径与 M15/M16 一致。
-- **M18:下一批付费实验先买噪声,不买分数**(`docs/paid-batch-preregistration-2026-10-08.md`,
+- **M18:下一批付费实验先买噪声,不买分数**(`docs/archive/paid-batch-preregistration-2026-10-08.md`,
   状态未启动)。设计依据全在已入库的证据里:同题两次同参运行死在**不同阶段**
   (`swe-hard-graph2` vs `graph3`),而要检测的效应静态上界只有 6% ⇒ **不知道 σ 之前,
   任何两臂差值都不可解读**。所以 Q0 是 7 题 × 3 次同参重复,判据写死"可判别题数 k≤1 就停止付费";
@@ -869,7 +869,7 @@ M11.3 要的是生产影响评估,结果它先推翻了我自己登记的 M11.1:
 (用户会话目录、.venv 与历史 runs 所在地)执行——两侧 HEAD 逐字同为 `442cd8d`、D 侧工作树
 clean,满足 spec"其他 checkout 先核对代码身份"的前提;新增分支
 `codex/patchpilot-reliability-20261008` 承载全部实施 commit,master 不动,C 侧零写入
-(声明见 docs/spec-s00-baseline-2026-10-08.md §0)。
+(声明见 docs/archive/spec-s00-baseline-2026-10-08.md §0)。
 
 - **全量离线 pytest 基线**(basetemp=D:/tmp/pt-patchpilot-spec-20261008,仓库外):
   首跑 **2 failed / 717 passed / 3 skipped / 1108.5s**。2 个失败全是 `test_docs_anchors`
@@ -1311,9 +1311,9 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
 - **终验**:全量离线 pytest **869 passed + 4 环境 skip**(redis×2、符号链接×2)、
   退出码 0;ruff check/format 全绿(224 files)。最终产物 README/证据文档数字全部
   现算,不用"collected"冒充"passed"。
-- **文档**:`docs/release-evidence-2026-10-08.md`(证据索引:HEAD/commit 序列/命令/
+- **文档**:`docs/archive/release-evidence-2026-10-08.md`(证据索引:HEAD/commit 序列/命令/
   退出码/F1–F8 反转证据/35 题逐题/演示三级验证/恢复边界/未完成项/claim 边界)、
-  `docs/resume-evidence-2026-10-08.md`(三条 bullet,每条锚定实现文件与回归测试,
+  `docs/work-notes/resume-evidence-2026-10-08.md`(三条 bullet,每条锚定实现文件与回归测试,
   使用边界明文);README 功能概览补 S 系列能力段(被钉行零改动)。
 - **claim 边界**:平台 resolved ≠ SWE-bench 官方;本轮零真实模型调用,无修复率数字;
   恢复表述上限=PROPOSE 内部与 verify→finish 边界真进程死亡已实测;双跑只证复核一致性;
@@ -1323,7 +1323,7 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
 
 ## L01/Q0 付费批:预登记程序执行与判据停手(2026-10-09,用户「全部授权」后)
 
-- **程序**:docs/paid-batch-preregistration-2026-10-08.md(判据/题单/分母先于任何付费运行入库,
+- **程序**:docs/archive/paid-batch-preregistration-2026-10-08.md(判据/题单/分母先于任何付费运行入库,
   M18 卡)。fake 同参冒烟 7/7 resolved、登记参数逐字入 provenance、compare_batches 可解析
   ——两轮冒烟(gen1/gen2)都过了才开真实模型。
 - **gen1 中止(停手条件 1 真触发)**:8707 rep1 于 PLAN 段收到端点 400"reasoning_content
@@ -1482,7 +1482,389 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
   现在的形状是模型收到"补丁没让测试通过 + 真实原因",仍会烧轮次去改不是它的问题。
   属判定层归类,按红线先讨论再动。
 
-## 测试分档与提交节奏(2026-10-11)
+## 18. B0(G00+G01):升级批次开工,基线收据 + PLAN 完成协议与工具权限(2026-10-10)
+
+细节写在 `docs/work-notes/agent-upgrade-progress-2026-10-10.md`(升级批次的唯一进度源),这里只记台账级事实。
+
+- **开工身份**:交接 HEAD `876ff6f`,非 detached ⇒ 按交接约定不新建分支;55 项未提交的 docs 分层
+  重组是上一轮成果,原样入库(`7b2a92c`),没有当成本批产出。
+- **立卡即查出两条存量红**:`docs/design.md`/`docker-isolation-notes.md` 移到 `docs/archive/` 后,
+  ADR 锚点与 **P3-7 假命题黑名单作用域**指到了不存在的路径。前者是 `FileNotFoundError`(会红),
+  后者是**静默失去覆盖面**(不会红)——危害更大的一半本来看不见。纯路径修回,子串一字未动(`6842099`)。
+- **基线读数(修好后测)**:`880 passed / 4 skipped`,26:02,ruff check + format 全绿。
+  解释器 Python 3.14.2,venv 里**没有 pip**(uv 管理),`python -m pip show` 必然空返回,别读成缺依赖。
+- **评审的两条 P1 在当前代码上复现成功**(不是照抄历史结论):PLAN 合规纯文本
+  `{calls:3, error:"agent loop exceeded max_turns=3"}`;计划段实际收到 10 个全量 schema。
+- **G01 落地语义**:①`complete_on_text` 单次文本完成契约(默认关,旧循环形状逐字不变);
+  ②不合协议最多一次修正(`MAX_PROTOCOL_REPAIRS=1`),越权工具**不进执行**,仍不合落
+  `plan_invalid` 事件后降级继续,终点集合一字未动;③`tool_schemas(allowed_tools)` 让可见面
+  == 执行面,白名单写了未注册名字当场报错;④`FakeLLM.plan_mode` 分 legacy(免步 + 自动补 finish
+  的历史回放)与 strict(计划请求按普通脚本步,契约由它证)。
+- **附带收益**:`reset_workspace` 注册在案却不在任何阶段白名单里,过去每阶段都对模型可见、
+  每用必被挡一轮 —— 现在它不再出现在模型面前。
+- **收口**:全量 **899 passed / 4 skipped**(880 + 新增 19 条,逐条闭合),skip 集与基线同一组。
+- **仍未证明**(不许对外写成效果):真实模型是否稳定给合规纯文本计划(属 G17)、修正额度 1 是否为
+  最优、`plan_invalid` 降级产物是否可用、续跑时修正计数从 0 重计(A 级快照不存协议状态)。
+
+## 19. B1(G02+G03+G04):计量协议、共享原子预算与实验登记面(2026-10-11)
+
+细节写在 `docs/work-notes/agent-upgrade-progress-2026-10-10.md`;这里只记台账级事实与三处
+"改了判定语义"的地点。三卡 commit:G02 `9661b3f`、G03 `21bf1fd`、G04 `898d662`。
+
+- **G02 的洞是"花了钱看不出来"**:客户端先取 choices 后读 usage,空 choices 与截断补丁这两条
+  路径都把端点**已经返回**的用量随异常一起丢掉,账本只剩 unknown;而 `record_usage` 的默认
+  provider 标签又把回放脚本与字符估算全标成端点真值。现在顺序改成"usage 先于业务解释",
+  解析失败抛带 envelope 的 `ModelResponseError`,循环先入账再收尾;来源只剩
+  provider/estimated/unknown 三种,账本不再有默认 provider。
+- **物理尝试第一次可数**:`AttemptRecord` 每次独立 ID/用量/状态;SDK 隐式重试
+  (`llm_max_retries>0`)对平台不可见 ⇒ 如实记 `retry_owner=sdk_opaque` + 上界,不补造历史用量。
+  平台显式重试(`TransportRetryPolicy`)要求 `llm_max_retries=0`,两层同开在构造处直接拒绝
+  ——同一笔消耗无法对账的开关不能留着。该策略目前**没有生产调用方**(装配点是 G07)。
+- **G03 的洞是"并发与恢复都在重授额度"**:请求前只比"已用",两个各自装得下的并发请求都放行;
+  崩溃时未定的在途预留被释放;恢复后账本全新。现在预留/结算/未知持有一个临界区,
+  账本原子落 `run_dir/ledger_state.json` 并由 `ledger_from_settings()` 在恢复时读回。
+- **一处经用户裁决的终态变更**:恢复遇到 `unknown` 不再能判 resolved(§3.1 的严格语义
+  此前被"账本重置"绕过)。`test_resume.py` 那条既有用例的**断言一字未动**,只把崩溃注入点
+  移到"回复已结算、工具未执行";新语义由 `test_midrequest_crash_resume_cannot_certify` 单独钉。
+- **资源四类第一次分列**:`budget_mode=tokens|cost|hybrid`(默认 tokens ⇒ 既有行为逐字保留)、
+  `max_model_calls`、`model_context_tokens + capacity_margin_tokens`(越过声明容量在请求前拒绝)、
+  `cost_budget_micro_usd`。费用改 micro-USD 整数累计并带 `price_version/price_source/currency/
+  basis` 四个来源标签;"端点 usage 乘价表"仍是**估计账单**,`settled_bill` 只能外部显式入账。
+  在线 cost/hybrid 缺价目或缺金额 ⇒ 受理拒绝,不静默变无限预算。
+- **G04 的洞是把结果当证据**:比较器把 verdict/tokens/rounds/duration 也逐字段比,于是
+  "两臂结果相同"被读成"配置相同",而真实对照(结果本该不同)反而报错;`latest_per_bug` 把同题
+  三次折成一次;窗口/工具上限/thinking 这些键躺在 EXEMPT 里,漂移在比较面上根本不可见。
+  现在控制身份与观测结果分开(T07 接受、T08 拒绝),配对按 `(task_identity, arm, repetition)`
+  **一条不折**,9 个键从 EXEMPT 移入 SNAPSHOT。
+- **实验第一次有一份可 hash 的批定义**:`app/evals/experiment_manifest.py` +
+  `docs/work-notes/experiment-manifest-template-2026-10-11.json`。paid driver 只认
+  `--manifest`,新增**零网络零子进程**的 `--dry-run`;`--phase` 起真实运行一律拒绝,
+  Q0 判据与常量只读保留(本仓库已为"隐式继承旧判据"作废过一次付费实验)。
+- **新增 ADR-0011**:manifest 是唯一的批定义;反方节写明"比较器只能证明控制身份相同,
+  不能证明结果归因于登记变量"。
+- **收口**:ruff check / format 全绿;全量 **1007 passed / 4 skipped / 4 warnings**(899 + 新增 108 条,
+  逐条闭合),skip 仍是同一组 4 条(符号链接 ×2、Redis ×2),无新增 skip、无新增告警类,
+  26:09(耗时差异按本机负载记账,不作回归结论)。
+- **仍未证明/未做**:真实 tokenizer 下预留量的误差(G17)、`served_model` 采集与运行 profile
+  装配(G07)、rep 落进运行产物(G07/G16)、真实端点的 cache 计费口径(G17);
+  G05 以后一张没动。
+
+---
+
+## 20. B2 / G05:工具回执在数据结构上裁,原文落任务证据仓(2026-10-11)
+
+- 开工身份 `72e169e`(B1 批次退出)→ 代码卡 `cdd7cdc`。逐卡语义、**先登记的范围扩张**、
+  限制清单见 `docs/work-notes/agent-upgrade-progress-2026-10-10.md` 的「B2 批次说明」与 G05 节;
+  这里只记批次级读数。
+- **缺陷第一次被实物量出来**(不是推断):本地缓存的真实上游仓库里取 4 份 `read_file` 400 行回执,
+  **3 份超过 8,000 字符可见上限**,旧路径 `json.dumps → fold_output` 把单行 JSON 头尾折叠退化成
+  字符硬切 ⇒ **3/3 生成非法 JSON**,并让 675–8,458 字符**无痕迹消失**(不落盘、不可取回)。
+  收据 `docs/evidence/agent-upgrade/probe-after-g05.json`(`bf63af592b2d64f6`),
+  生成器 `scripts/probe_g05_bounded_view.py`,零模型零网络可重跑。
+- **新的单层协议**:裁在**序列化之前、数据结构之上**(先按行折长字段,仍超限才丢列表尾巴),
+  发出去的一定是合法 JSON,并带 `_bounded`(原字符数/省略行数/丢了几条/**保留的原始行号区间**);
+  原文一律落 `<run_dir>/evidence/<随机 id>.json`,新工具 `read_evidence(evidence_id, cursor,
+  limit_bytes)` 分页取回,逐字节拼回等于原文(实测 `raw_reassembled_all=true`)。
+- **两条边界是设计而不是遗漏**:① 未知 id 与别的任务的 id 得到**同一个** `not registered` 读数,
+  不给"存在但拒读"的旁证;② 落盘超体积/超配额、或证据仓被关闭时,回执里明说
+  `retrievable=false` / `raw_saved=false` —— 任何"裁了但没留"都不许伪装成"没裁"。
+- **引用跨写入会失效**:`ToolContext.workspace_revision` 由 registry 在 `apply_patch` /
+  `reset_workspace` 成功时 +1(写代数只在这一处定义,门禁拒绝不留代数),代数不符的旧回执标
+  `stale` —— 可以取回当时的样子,但不能被读成现在的代码。
+- **撤掉两处私自的裁剪器**:`git_diff` 的 `[:20_000] + "(truncated)"` 与循环层的 `fold_output`
+  调用点。`local_runner._truncate`(执行层取末 20,000 字符)**一行没动** —— 命令类完整输出
+  进证据仓是 G09 `CommandProfile` 的契约,不在本卡越界。
+- **形状只在真裁过时变**:装得下的回执一个键都不加,`test_search_tools.py:764`(read_file 键集合)、
+  `test_tools.py:113/116`(命中项键集合)、`test_trajectory_summary.py:59`(diff 摘要替换)等
+  存量断言全部原样通过。旧断言一条没删、一条没放宽。
+- **两臂对称**:新工具同时进 `READ_TOOLS`/`WRITE_TOOLS`/`ONE_SHOT_TOOLS`,消融变量仍只有
+  "有无执行反馈 / 有无重试"。把取回能力只给一臂就是私加 handicap,这条在 `swe-hard-oneshot`
+  批上花过 777k token 买教训。
+- **5 个新 Settings 键全部归 SNAPSHOT**,`protocol_identity` 补记其中三条(模型可见上限与
+  "能否取回"是复现口径,G04 已定过这条纪律);`test_driver.py` 的 pinned 集按该用例 docstring
+  规定的维护动作补键,一个键也没删。
+- **新增 ADR-0012**:工具回执的有界视图与原始证据仓;反方节明写"一屏从 8,000 字符降到
+  2,174–2,612 字符是**形状变化不是能力提升**",可见行数现在由 `refine_head/tail_lines` 决定,
+  G07 抬软窗口时必须与这两个键一起标定。
+- **收口**:ruff check / format --check 全绿(245 files);全量
+  **1030 passed / 4 skipped / 4 warnings in 38:34**,EXIT=0(读数取自自己重定向的
+  `D:/tmp/pt-upgrade-b2-full.log` 终态行)。数对账:1007 + 本卡新增 23
+  (`--collect-only` 实测 23 collected)= 1030 逐条闭合;skip 仍是**同一组 4 条**
+  (符号链接权限 ×2、Redis 不可用 ×2),无新增 skip、无新增告警类。耗时 38:34 对 B1 的 26:09
+  按本机负载记账,不作回归或改进结论。
+  本卡还纠正了一次自己的锚点自审:第一轮 32 文件大范围回归里唯一失败就是**我几分钟前刚写进
+  ADR-0012 的行号**(加 `line_ranges` 后 output_filter 又漂了 16 行)——机制按设计工作,
+  重钉 4 处(含 ADR-0004 的 `config.py:202→205`)后转绿。
+- **仍未证明/未做**:五个上限未标定(真实批才知道);命令 stdout/stderr 全量落盘属 G09;
+  `scripts/context_replay.py` 一族测量器仍按旧 `fold_output` 重建**历史批**消息(同形即正确),
+  G05 之后的新批要换 `bound_structure`(登记在 G16 收口);证据仓无 GC(满了只拒落新工件);
+  离线全绿不证明修复率、不证明更少重查、不证明省 token。
+- **下一卡**:G06(连续会话与结构化任务记忆)。G05 的 `EvidenceRef` 是它的引用单位;
+  SPEC §5 的"先去重复/替换可取回的大输出"要求 `compact_messages` 的存根带上 `evidence_id`
+  (现在不带),这条刻意留给 G06,不在本卡顺手改。
+
+---
+
+## 21. B2 / G06:连续会话与结构化任务记忆(2026-10-11)
+
+- 开工身份 `6874d90`(G05 文档收口)→ 代码卡 `cd92f00`。逐卡语义、范围扩张、限制清单见
+  `docs/work-notes/agent-upgrade-progress-2026-10-10.md` 的 G06 节。
+- **缺陷有付费现场**:同一题两次独立运行(`runs/swe-hard-graph2`、`graph3`),定位阶段读过目标文件
+  之后,补丁阶段仍然 13 次 search / 10 次 read、`apply_patch` 0 次。当时的归因"暂定 findings 太薄"
+  已被数据推翻(把已查线索拼进去 63→397 字符,重复调查一次没少)——真正缺的是
+  **平台可核对的观测,并且它对新阶段可见**。
+- **观测由平台写,模型只提假设**:每条真实工具回执折成一行事实进 `TaskMemory`
+  (含行范围、是否被裁、失败计数);模型唯一的记忆通道 `update_memory` 只接受
+  `hypothesis|supported|refuted`,写 `verified` 被点名拒绝。渲染三区分开,
+  模型的话不会伪装成事实。
+- **失效看得见**:观测带 `workspace_revision`,`apply_patch`/`reset_workspace` 与 rollback 的
+  复位都会推进代数并把更早的观测标 `stale`(G05 的 `read_evidence` 引用一起带过去)。
+- **配对规则收成一处**:`SessionState.repair_orphans()` 在发送前补齐孤儿 tool_call(显式占位,
+  不伪造成功)并落 `message_pairing_repaired`;此前这条不变量散在四个回填分支里靠自觉。
+- **恢复要认得回哪一条会话**:turn 边界快照绑定 session/记忆 hash,记忆本体在同一边界落
+  `memory_state.json`;`binding_mismatch()` 两侧都有绑定且不一致才拒绝 → 待审。
+  **未绑定的历史快照不算 mismatch**——否则升级前每一份快照一律待审,那是伪造迁移成功。
+- **接线没有破坏既有形状**:`_persistent_context` 保持原表达式与语义(装配过用装配,
+  否则用骨架),`test_repo_map.py` 三条守卫(逐字源码形状、关闭即 `["", ""]`、候选点只带变体提示)
+  原样通过;空记忆不出块,所以 LOCALIZE(第一个阶段)的 system 与接入前逐字节相同。
+- **新增 ADR-0013**:反方节明写"同一阶段内新增观测不会立刻重渲染 system"(幂等换 stable prefix)、
+  "`update_memory` 不进 PLAN"(保 G01 单次文本契约)、"候选 ctx 不共享记忆"(G13 再定共享域)。
+- **收口**:ruff check / format 全绿(252 files);全量三轮 —— 第一轮 **2 failed / 1058 passed**
+  (两条 resume 用例被我自己新加的绑定校验误伤),修掉幂等缺陷后第二轮 **1 failed / 1060 passed**
+  (唯一红是我新增用例顶漂了 ADR-0013 的三条锚点),重钉后第三轮
+  **1061 passed / 4 skipped / 4 warnings,EXIT=0**(= G05 的 1030 + 本卡 31,skip 同一组 4 条);
+  21 处 ADR 锚点重钉 + nodes.py 行索引 700→849(`test_docs_anchors` 6 passed),
+  `test_resume` + `test_resume_crash` + `test_loop_state` 57 passed。
+- **本轮抓到并修掉的自身缺陷(两条)**:① `TaskMemory.set_context()` 无条件升版本,而恢复路径会重放同一份
+  冻结上下文 ⇒ 记忆 hash 与崩溃前不同 ⇒ 新校验把自己的恢复判成 mismatch、任务错误收敛成待审。
+  修法是"内容真的变了才升版本",并由专门一条幂等用例钉住。教训与 G03 同源:
+  **新增一条拒绝路径,必须先用既有通过用例跑一遍**;拒绝面最容易误伤放行路径,
+  而误伤表现为"保守待审"而不是崩溃,不跑全量就看不见。
+  ② 我新增的那条用例让 ADR-0013 自己的三条锚点行号漂移(第二轮全量唯一那条红),重钉后转绿——
+  机制按设计工作,但正确的次序是**动过被锚定的文件就立刻重钉**,不该留给全量去发现。
+- **仍未证明/未做**:记忆块能否真的减少重复调查要靠真实批(G17);
+  `task_memory_max_chars` 与骨架/规则抢窗口的联动标定属 G07;模型摘要(可选、有预算)未实现,
+  确定性摘要就是默认路径;`state.py`/`prompts.py` 本卡未动。
+
+## 22. B2 / G07:模型能力 profile 与 repair_v2 上下文策略(2026-10-11)
+
+- 开工身份 `40fcdf0`(G06 文档收口)→ 代码卡分两张:`G07a` 能力档案与观测面、`G07b` 运行 profile
+  与容量判据。逐卡语义、范围扩张、限制清单见 `docs/work-notes/agent-upgrade-progress-2026-10-10.md`
+  的 G07 节。
+- **缺陷不是"窗口太小",是"没人回答这个数字从哪来"**。改动前配置里只有一个
+  `model_context_tokens=0`,而 `model_context_tokens` / `context_window_tokens` / `token_budget` /
+  `llm_max_tokens` 四个概念挤在两条命名带上;名字里带 128k 一旦被当成依据,平台就会宣称一个
+  从未验证的窗口,保护区超长时循环每轮压一次、每轮再撞一次,直到把额度耗光。
+  SPEC §5 针对的正写着"不得反复压缩直至耗尽预算"。
+- **能力只按声明走**:`capacity_source ∈ {operator_config, provider_docs, probed, unverified}`,
+  没来源就落保守档 16k,**申报比保守档大一律拒绝发起**;有来源却没数字也拒绝(那是一条看着
+  已验证的假声明)。能力清单只认 `tools=yes|reasoning=no|cached_usage=…`,拼错即拒绝 ——
+  坏字符串静默当成"没声明"就会把"不会调工具"读成"应该会"。
+- **观测与声明分家**:端点回报的 `served_model` 挂在逐次响应的 envelope 上,与请求名不同就标
+  `model_identity_drift` 并进轨迹;`provenance.model_identity()` 那个字段仍如实留 `None` ——
+  它是发起前的登记位,不可能知道返回名。
+- **两个 profile 显式在场,默认仍是 legacy_v1**:v1 四个数照搬 Settings 且不做容量比较;
+  v2 目标 64k / 尾部钉 12,实际采用 `min(目标, 声明容量 − 输出预留 − 容量余量)` 并把"被夹过"
+  写进 TaskSpec。SPEC 明写新默认切换要等 G16 收口,所以这条默认由行为用例钉住:
+  默认 profile 下同一道题仍然 `resolved`,读数写明 `capacity_checked=false`。
+- **保护区判据排在压缩之前**:`protected_region()` 给出压不动的那一段(头部约束 + 尾部钉住的
+  回合组,含未完成 tool-call 配对),用 `estimate_request` 量它(与账本同一把尺子),超了就来一次
+  `context_capacity_exceeded` 并落事件 —— 对照臂证明它不是新增的全局闸:同一份历史在足够容量下
+  压缩与收束行为逐字不变。localize/plan 的"份额用尽可降级继续"对这一条不适用。
+- **每任务冻结一份**:profile 在 `TaskNodes.__post_init__` 与 plain 引擎任务起点各建一次,
+  四个阶段与 one-shot 对照臂共用同一份读数;读数落轨迹 `runtime_profile` 事件、落
+  `TaskSpec.effective_policy.runtime_profile`。恢复侧 `LoopSnapshot` 多一个可空字段
+  `runtime_profile`,`binding_mismatch` 认得它 —— 沿用 G06 那条"没绑定不算 mismatch"。
+- **两张卡之外的三个文件已先登记**:`app/llm/usage.py`(served_model 只能挂在响应事实上)、
+  `app/llm/openai_client.py`(采集点与 G02 留下的 `TransportRetryPolicy` 生产装配点,
+  新键 `llm_platform_retries` 默认 0 = 与今日逐字相同)、`app/evals/single_shot.py`
+  (两臂必须收到同一组上下文参数,否则 profile 只对默认臂生效)。
+- **新增 ADR-0014**:反方节明写"64k/12 是拍的起点不是结论"、"保守档 16k 这个数是我拍的"、
+  "未验证端点上开 v2 大概率第一次请求就被拒,这是不宣称支持的代价"、"恢复时 profile 取自当前
+  Settings 而非 spec 那份(拒绝面兜在快照绑定这一侧,按受理重建登记给 G16)"、
+  "G05 要的三项联动标定没做:抬窗口只改了软阈值,单条回执仍由 `refine_*` 决定行数"。
+- **收口**:`ruff check` 全绿、`ruff format --check` 256 files;G07a 定向 328 passed/1 failed
+  (唯一红是 14 条既有锚点漂移),G07b 定向 406 passed/1 failed,全量一轮
+  **1101 passed / 4 skipped / 4 warnings,EXIT=0**(= G06 的 1061 + 本卡 40,skip 同一组 4 条);
+  36 处 ADR 锚点重钉 + ADR-0014 新增 13 条(共 113 条),`test_docs_anchors` 里 nodes.py 行索引
+  848→869。
+- **本轮抓到并修掉的自身缺陷(三条)**:① G07a 的窗口算术我先写错成"64k 容量装得下 64k 目标",
+  用例逼出来的正确答案是要扣输出预留与余量(128k 才装得下)—— 判据按 SPEC 的字面重写;
+  ② 锚点重钉脚本第一次跑把 9 篇 ADR 的 CRLF 全改成 LF(1:1 行 churn 14 条真改动混进 800 条噪声),
+  回滚后用 `newline=''` 重做并逐篇核对 numstat;③ 我新写的 `binding_mismatch` 用例把
+  "没有不一致"误读成"没有读数",断言收窄到 `mismatched` 才绿。
+- **仍未证明/未做**:64k/12 对真实端点是否最优要靠 G17 探针;`refine_*`、`task_memory_max_chars`、
+  `repo_map_max_chars` 与新窗口的配比未标定;`served_model` 只有逐次观测没有批级汇总(G16);
+  REST 受理面没有 profile 字段(今天按臂 env 或显式传实例)。
+
+## 23. B2 / G08:目标仓库规则与作用域装配(2026-10-11)
+
+- 开工身份 `1fdef4b`(G07 文档收口)→ 代码卡一张 + 文档卡一张。逐卡语义、范围扩张、限制清单见
+  `docs/work-notes/agent-upgrade-progress-2026-10-10.md` 的 G08 节。
+- **缺陷是"规矩从来没进过请求"**:被诊断仓库里写给 Agent 看的 `AGENTS.md`
+  ("不许动 tests/""这类改动要带回归""保持 None 语义")平台一个字都不认识,
+  模型只能靠**撞上门禁**才知道规矩,而撞上门禁的代价是一轮真实请求加一次废补丁。
+- **只读输入,不是可执行授权**(T13):新层只产出 `extra_system` 的一段文本;工具 schema 来自
+  注册表 + 阶段白名单、门禁来自 `paths.py`、验收来自 `acceptance.py`,三条路径都不 import 这一层。
+  用例分别钉住:规则里点名 `run_shell` 不会出现在可见 schema 里,且"有说明/无说明"两次
+  `tool_schemas(READ_TOOLS)` 逐字节相同。
+- **边界零新增实现**:越界判定复用 `relpath_within`、忽略集合复用 `SKIP_DIRS`(含 `.git`)、
+  二进制拒绝复用 `looks_like_text`、符号链接一律拒绝且不跟随。SPEC 点名的
+  `paths.py`/`base.py`/`registry.py`/`files.py` 本卡**一行未改** —— 出现第二份边界实现才是风险。
+- **作用域按平台观测进场**:根说明开局就在;目录说明要等 G06 的记忆里有该目录内的**真实观测路径**
+  才进场。行为证据:根/`src`/`tests` 三份同时在场的题,LOCALIZE 第一次请求只有根,定位读过
+  `src/dateparse.py` ⇒ 计划段带上 `src` 那一份,`tests` 那份仍然不在场。
+- **超限不许静默丢**:单文件超 16 KiB ⇒ 截断 + 块里写"另有 N 字节未显示" + 退回完整行首
+  (裁在行中间等于给模型半条指令);总量超 64 KiB ⇒ 整份不纳入并点名"未纳入的说明:路径(原因)";
+  同目录两份说明取 AGENTS.md,落选那份也报出原因。
+- **凭据行在渲染前打码,身份仍按原始字节**:装配文本会进 `loop_state.json` 与轨迹,而轨迹经
+  `GET /tasks/{id}/trajectory` 原样对外(T24)。哈希/`digest()` 用原始字节 ⇒ 打码不改运行身份。
+- **每份说明四件读数**(相对路径 / sha256 / 作用域 / 裁剪)进 `repo_instructions_loaded` 事件,
+  每任务恰好一次;读数里没有宿主绝对路径(用例断言之)。
+- **运行身份没造新机制**:说明文件本身就在 S06 冻结副本里 ⇒ 源里加一份 `AGENTS.md`
+  就改 `source_snapshot_hash`,副本里改一字节就改说明 `digest()`(`test_input_snapshot` 新增用例)。
+- **越界一条也没放过**:说明里写 `C:/Users/me/.aws/credentials` 时文本原样在场,
+  但 `relpath_within(...)` 仍返回 None;`.git/`、`node_modules/`、含 NUL 的"说明"都进不来。
+- **新增 ADR-0015**:反方节明写"只认两个文件名是选择不是通用能力"、"没碰过的目录规则永不在场
+  (把全仓注入换成漏约束)"、"同目录只取一份确实会丢一份内容"、"64 KiB 默认档未标定,
+  三个字符档缺一个统一分配器"、"plain/one-shot 不接这一层 ⇒ 两臂对照是未登记差异"。
+- **收口**:G08 首轮全量 **2 failed / 1121 passed / 5 skipped(2089s)** —— 两条红都落在文档账簿
+  (nodes.py 的"七项门禁"行索引 869→914、10 处 ADR 锚点漂移),重钉后锚点测试 6 passed;
+  **B2 批尾全量 1123 passed / 5 skipped / 4 warnings(1861s),无失败**。
+  skip 由 4 变 **5**,新增那条与既有两条同因(本机无创建符号链接权限,CI 上真跑);
+  闭合账:G07 的 1105 条 + 本卡 23 条 = 1128 条 = 1123 + 5,一轮内对上。`ruff check/format` 全绿。
+- **本轮我自己复犯的一条纪律**:G07 记下的教训是"动过被锚定的文件就**立刻**重钉,不该留给全量
+  去发现",这次仍然先把全量起起来再重钉 ⇒ 多花一轮 34 分钟的全量才看见两条本该立刻红的账簿。
+  机制按设计工作(它就该红),次序是我没按登记执行。
+
+## 24. B3 / G09:受控命令、复现工件与容器生命周期(2026-10-11)
+
+- **本卡是补登**:代码在 `d2d9e19` 落地时没写进度,新会话按 B3 授权在落地提交上复跑收据;
+  逐条语义、范围扩张与限制见 `docs/work-notes/agent-upgrade-progress-2026-10-10.md` G09 节。
+- **run_command 不是 shell**:模型只给 `profile_id + 参数`,argv 由平台构造;参数逐段语义校验
+  (选项注入 / shell 元字符 / 越界路径 / 未登记 repro 全拒),argv hash 与 profile 集 digest
+  进报告面。五个 MVP profile 是唯一装配面,`python -c` / 任意 `python -m` 不在白名单。
+- **没有宿主 fallback**:缺 Docker / 缺依赖如实 `environment_not_ready`;通用诊断命令只走
+  容器(网络关 / 零 env 透传 / 非 root / 资源上限);cancel 只杀本任务进程树或按名容器,
+  禁全局 prune。对应 T14 与 SPEC §3 的信任边界。
+- **执行层原文落盘补上 G05 的缺口**:stdout/stderr 在截取模型可见 tail 前先落盘(超额如实
+  计数 `dropped_bytes`),超 tail 的原文用 `read_evidence` 分页取回——G05 登记的"只留 tail
+  即不可恢复"在执行层闭环。
+- **容器实测证据**:`probe-after-g09-docker.json` 8 场景全 verified(含 cancel 3.4s / exit 137 /
+  工作区零残留 / 宿主密钥不透传 / 网络关)。**该实测只在上一会话做过一次,本次未复跑**,引用时
+  不冒充本次读数。
+- **收据(复跑 @`d2d9e19`)**:`ruff check` 全过;`ruff format --check` 266 文件;
+  定向 `test_command_profiles(27)+test_command_lifecycle(10)+test_docs_anchors(6)` =
+  **43 passed / 3.36s**。本机为新 clone 重建 .venv(Python 3.14.1 / pytest 9.1.1 / ruff 0.17.0;
+  上一会话 3.14.2 / 0.16.7,差异如实登记)。**全量:未运行**(定向通过,批次全量待运行)。
+
+## 25. B3 / G10:issue-only 受理、验收清单提议与 trusted_user 冻结(2026-10-11)
+
+- 半成品快照 `3d68e31`(仅过 whitespace 检查)→ 本会话接续完工,落地 `1b6fdec`;
+  逐条语义、范围扩张、测试修出的存量缺口与限制见进度文件 G10 节。
+- **提议 ≠ 可信清单**:工具只落提议;**平台**在未修改的快照副本上重跑红/绿基线
+  (具体 node id + 共享身份匹配;无关失败/收集错误/前提不成立分列),trusted_user 经
+  `POST /tasks/{id}/acceptance` 批准后才冻结。批准前 apply_patch 由**工具层**拒绝。
+- **冻结工件是唯一放行凭据**:manifest_hash 与提议 content_hash 同源;重复批准幂等、
+  不同 hash 冲突、磁盘篡改读取即拒;终态后批准 409。
+- **WAITING_INPUT 是可恢复生命周期**:启动恢复纳入、盘上提议即续跑位置、无 waiter
+  时重新入队;等待中取消 0.25s 收敛;headless(窗口 0)needs_review + 提议保留。
+- **模式进契约**:`mode=repair|diagnose_then_repair`(diagnose 仅 graph;repair 双集
+  非空成为构建兜底;旧契约缺 mode 按 repair 读且身份同源,repair 哈希不含 mode)。
+- **测试修出的存量缺口(本卡全修)**:builder 缺 prepare→localize/localize→diagnose
+  边映射(实测 KeyError)、from_json_dict 误把缺省 mode 判死、junit 形态与请求形态的
+  字面差、manifest 重算字段错位、状态字面量 failure≠failed、CLI 全局参数位置。
+- **收据 @`1b6fdec`**:ruff check/format 全绿;ADR 锚点审计 0 漂移(重钉 15 处,子串
+  未动);定向 68 passed / 4:11(e2e 批准→resolved 在内);回归子集 88 passed / 6:05。
+  **全量:未运行**(批尾统一执行)。新 clone 重建 .venv(3.14.1/pytest 9.1.1/ruff 0.17.0),
+  basetemp 落 `C:\Users\Administrator\.cache\pt\patchpilot\...`(D:/tmp 沙箱写入不稳)。
+- **B3 批次退出(2026-10-11)**:ruff/format/锚点全绿;全量
+  **1157 passed, 9 skipped, 1 warning in 1386.12s(23:06)**(exit 0;收据身份 `d3cf0c3`,
+  日志 `.cache/pt/patchpilot/b3_exit.log`)。skip = 4×docker(本机守护进程不可用)+2×redis
+  +3×符号链接,无一为消红而加;收集差集 @`695f773`→本提交 = **+50 / -0**(G09 37 + G10 13),
+  当前 1166 = 1157 + 9 闭合。**跨会话恒定差 12 条**(旧会话 1105/1128 vs 今日同提交
+  1093/1116)机制未定位,按"不混用口径"登记,留 G16 复核。
+- **下一批**:B4(G11–G12;依赖见 SPEC §6,需用户授权后起)。
+
+## 26. B4 / G11:ask_user、持久等待与途中纠偏(2026-10-11)
+
+- 用户在会话里授权起 B4;G11 落地 `01143da`(代码+测试+锚点同步一个提交),
+  完整语义表、范围扩张理由、行为证据与限制见进度文件 G11 节(单一进度源)。
+- **等待是盘上工件,不是内存事件**:`run_dir/interaction_state.json`(InteractionStore)
+  一次只允许一个未回答问题;回答必须带提问时的 `expected_revision`,过期/不同内容冲突、
+  同 idem 或逐字相同幂等;消费恰好一次并把输入版本 +1;损坏即拒且不覆盖。
+- **唤醒通道与 G10 批准同构**:QuestionRegistry 登记时带 qid(对不上不误唤醒);
+  `InteractionChannel` 的顺序 = register → notify(WAITING_INPUT)→ wait → release;
+  `None` = headless(问题照落盘,循环以 `clarification_required` 结构化收场)。
+- **闸门在 turn 边界**:消费纠偏/回答为 user 消息进**实际请求**;等待期零模型请求
+  (用例量过:0.6s 窗口里 `model.seen` 不变);模板明写"不改变测试集、权限与预算",
+  门禁/预算/权限三条路径都不读这层(负例:"忽略所有门禁" 的任务照常 resolved)。
+- **等待与 deadline**:等待时长结束后从执行 deadline 顺延(增量恰好一次,钳在
+  绝对寿命 `task_absolute_lifetime_seconds` 内);顺延随 loop_state 快照持久化,
+  恢复取 state 与快照较大者;`absolute_deadline_epoch` 进 state,恢复不重授。
+- **API/CLI**:`POST /tasks/{id}/messages`(answer|steer;终态 409;无 waiter 且行仍
+  WAITING_INPUT → 重新入队)、`GET /tasks/{id}/question`;CLI 新增
+  answer/steer/cancel/question,status 等待时补回答命令提示。
+- **收据 @`01143da`**:ruff/format 全绿;定向 20 passed(13+7);回归 169+98+40 passed;
+  ADR 锚点 23 处重钉、0 漂移;README 工具清单 14→15。**全量:未运行**(批尾统一)。
+- **点名判断/限制**:回答与纠偏不进 TaskMemory(只是会话消息);单进程唤醒(与 G10 同
+  前提);"等待期进程被杀由新进程回答"完整进程级场景未测;等待窗 3600/寿命 86400 是
+  工程起点,无真实读数;顺延只覆盖 deadline 不覆盖 max_turns。
+
+## 27. B4 / G12:SSE 事件流、取消收敛上报与工具恢复语义(2026-10-11)
+
+- G12 落地 `354d838`;完整语义表、范围扩张理由、行为证据与限制见进度文件 G12 节。
+- **SSE 是轨迹表的有类型视图**:`GET /tasks/{id}/events`(tool_started/tool_finished/
+  usage/waiting/candidate/progress/task_status);有未读事件先冲事件、最后以 terminal
+  状态帧收口;`id:` = 事件行自增 id,`?last_event_id=`/`Last-Event-ID` 只收其后事件,
+  重连不重复;心跳 `: ping`;事件 event_id 全部可在 trajectory API 里对上(同一组事实)。
+- **tool_started 与恢复策略**:`registry.execute` 执行前记 started;`RECOVERY_POLICY`
+  与注册表同宽强制(safe_replay/state_check/no_rerun);孤儿占位回执按策略补措辞
+  ("check git_diff"/"do not blindly rerun"),`repair_orphans(recovery=None)` 逐字不变。
+- **tool_call 状态机**:planned→running→completed;崩溃卡中间 ⇒ 恢复 unknown;
+  快照新增 `tool_calls` 尾部;恢复 `restore_calls` + unknown 标记 + 措辞
+  ("不许盲目重跑"落进真实请求,run_command 没有被重跑,轨迹记账)。
+- **取消收敛如实上报**:受控命令新增 `kill_latency_ms` 与 `cancellation_pending`
+  (检测到取消→确认退出 >5s 即 pending;正常取消 False 有实测);在途取消的晚到
+  回复只计量不入动作(TaskCancelled + 快照留存);终态行不可被 cancel 覆盖。
+- **未动**:`app/llm/`(transport)与 `api/cancellation.py`——timeout 是明确上界、
+  同步调用不可中止 provider 计算(如实声明),取消通道沿用 G09 起的协作式中断,
+  加假 stream 接口不诚实;token delta 同理不做。
+- **收据 @`354d838`**:ruff/format 全绿;定向 15 passed(test_event_stream 5 +
+  test_inflight_cancel 3 + test_tool_recovery 7;提交信息里的分项笔误以进度文件为准);
+  回归 131+134+58 passed;ADR 锚点 16 处重钉、0 漂移。**全量:未运行**(批尾统一)。
+- **旧断言处理**:`test_plain_loop` 的轨迹顺序断言按 G12 语义维护(排除 llm 与
+  tool_started,另加 started 配对断言,强度未降);其余一条未删未放宽。
+- **点名判断/限制**:真实流式断连无端到端演练;事件流是 0.5s 轮询视图;unknown 只进
+  占位回执,报告无汇总;取消计时的起点是"检测到取消"(≤256ms 轮询窗)而非用户点击;
+  离线只证协议,不证"看得到进度会更快纠偏"(G17)。
+
+## 28. B4 批次退出(G11–G12,2026-10-11)
+
+收据身份 `354d838`(工作树 clean;此后只改文档)。详细对账见进度文件的「B4 批次退出」节。
+
+- **全量(最终)**:`1198 passed, 3 skipped, 1 warning in 1776.86s(29:36)`,exit 0
+  (日志 `.cache/pt/patchpilot/b4_exit2.log`)。数对账:B3 收集 1166 = 1157 + 9;
+  B4 新增 35 条(test_user_control 13 / test_waiting_input 7 / test_event_stream 5 /
+  test_inflight_cancel 3 / test_tool_recovery 7)⇒ 1201 = 1198 + 3 逐条闭合。
+- **skip 9 → 3**:docker×4 与 redis×2 的环境条件在本机恢复(守护进程与服务可达),
+  从 skip 转为真跑并通过;剩余 3 条是符号链接权限(Windows 本机,CI 上真跑),
+  无一为消红而加。
+- **第一次全量的 3 条失败是环境失败**:`test_docker.py` rc=125 —— 守护进程可达但本机
+  **缺 `patchpilot-executor:latest` 镜像**(新 clone 后未重建)。处置 = 按
+  `docker/executor.Dockerfile` 重建镜像(image sha256 `fa31c0a500ef84b3…`),
+  复跑 test_docker → **4 passed(真实容器)**;随后**整批重跑**取得最终收据。
+  未动任何源码/测试/配置;第一次读数保留对照。
+- **退出条件逐条有读数**:等待输入/纠偏(G11:回答唤醒 e2e 至 resolved、等待期零模型请求、
+  409 谱系、等待态取消 <1.5s、重入只消费一次);事件流(G12:与轨迹同表同事实、续传、
+  终态收口、CLI 同一组帧);取消与恢复(G12:晚到回复只计量不入动作、命令延迟与
+  `cancellation_pending` 如实上报、planned/running/completed/unknown 与"不许盲目重跑"措辞)。
+- **未证明清单**:效果类主张全部待 G17;真实流式断连无进程级演练;token delta 未做;
+  "等待期进程被杀由新进程回答/批准"完整场景未测;`tool_started` 使轨迹行数近翻倍,
+  体积影响未量;本机 Docker/Redis 可达性只是环境状态,不承诺 CI/他机。
+- **下一批**:B5(G13–G14:轻量角色委派;候选检查点与可控局部进展),需另行授权才起。
+
+## 29. 测试分档与锚点去行号(2026-10-11,master 侧;合并本分支前完成)
 
 - **为什么**:本机全量 23:05(841 passed),其中 124 个端到端用例(单条 ≥2s)占约 1280s;
   而规则要求每个 commit 前跑全量,S11 之后 27 个 commit 里 `app/` 只动了 147 行、文档 1422 行,
@@ -1492,6 +1874,7 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
   ablation 与 live_progress 里场景相同的两对用例改为 module 级夹具共用一次运行(断言未改);
   ADR 锚点去掉行号、改为"文件含期望子串",旧写法与格式不合规条目当场报错(反向验证过:带行号 2 failed、
   失效子串 1 failed),顺带把 ADR-0010 一条此前被静默跳过的畸形锚点改为受检;
-  AGENTS.md 改提交规范(每 commit 快档,每卡收尾一次全量)并新增「记账与文档」规则。
+  AGENTS.md 改提交规范并新增「记账与文档」规则(合并时与本分支「开发验证节奏」并为一套:
+  每卡快档 + 定向,批次退出 / push 前一次全量)。
 - **结果**:快档 `-m "not slow"` 680 passed / 31 skipped,1:29;本地全量 `-m "not stress"`
   842 passed / 31 skipped,20:30(前值 23:05;+2 例为登记表自检)。

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
 import time
@@ -16,7 +17,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from app.adapters.pytest_adapter import run_pytest
+from app.agent.runtime import CONTEXT_CAPACITY_EXCEEDED, TaskRuntime
 from app.config import get_settings
+from app.context.repo_instructions import RepoInstructions, load_instructions
 from app.context.repo_map import repo_map_for_workspace
 from app.errors import BudgetError, TaskCancelled, TaskError
 from app.gitops.differ import working_tree_diff
@@ -24,16 +27,28 @@ from app.gitops.patcher import apply_patch as git_apply_patch
 
 if TYPE_CHECKING:  # 复盘 R-2:兑现 AGENTS"全量类型标注",运行时零导入成本
     from app.evals.bugset import BugTask
+from app.agent.session import SessionState
+from app.context.assembler import ContextAssembler
+from app.context.task_memory import TaskMemory, load_memory_state, save_memory_state
 from app.gitops.testing import materialize_repo
-from app.graph.acceptance import acceptance_from_state, double_run_mismatch
+from app.graph.acceptance import (
+    VALIDATION_FAILED,
+    VALIDATION_PASSED,
+    acceptance_from_state,
+    candidate_binding_ok,
+    double_run_mismatch,
+)
 from app.graph.candidate import (
     accepted_contract_hashes,
     freeze_candidate,
+    is_candidate_gate_clean,
     new_verification_attempt_id,
+    reapply_candidate,
+    write_candidate_checkpoint,
 )
 from app.graph.gates import ensure_budget, run_gates
 from app.graph.loop_state import LoopSnapshot
-from app.graph.plain_loop import LoopOutcome, run_plain_loop
+from app.graph.plain_loop import MAX_PROTOCOL_REPAIRS, LoopOutcome, run_plain_loop
 from app.graph.resources import ResourceLedger
 from app.graph.state import TaskState
 from app.llm.base import Model
@@ -57,6 +72,10 @@ READ_TOOLS = [
     "find_symbol",
     "describe_file",
     "read_file",
+    "read_evidence",
+    "update_memory",
+    # G11:调查阶段就可以向可信用户澄清(等待发生在循环的安全边界)
+    "ask_user",
     "git_diff",
     FINISH_TOOL,
 ]
@@ -66,10 +85,25 @@ WRITE_TOOLS = [
     "find_symbol",
     "describe_file",
     "read_file",
+    "read_evidence",
+    "update_memory",
+    "ask_user",
     "git_diff",
     "apply_patch",
     "run_tests",
+    # G09:受控诊断命令与复现工件(诊断副本内执行,改动不进候选)
+    "write_repro",
+    "run_command",
     FINISH_TOOL,
+]
+# G10:diagnose_then_repair 模式的 LOCALIZE 白名单——调查阶段就能跑受控命令
+# (issue-only 任务要靠 pytest_collect/pytest_selected 提出失败测试)并提交验收提议,
+# 但绝不含 apply_patch(批准冻结之前不生产补丁)
+DIAGNOSE_TOOLS = [
+    *READ_TOOLS,
+    "write_repro",
+    "run_command",
+    "propose_acceptance",
 ]
 
 
@@ -144,6 +178,13 @@ class TaskNodes:
     # 卡5 自适应分支:第 i 个候选用哪个模型。None = 不分支(单线,与 V1 同行为)。
     # 带默认值,runner/service 的关键字构造不受影响;由调用方注入,graph 层不 import 测试替身。
     branch_model_factory: Callable[[int], Model] | None = None
+    # G13:子任务模型工厂(角色 → 模型;None = 未配置,delegate 明确拒绝)。由调用方
+    # 注入(与 branch_model_factory 同源):graph 层不 import 测试替身,fake 回放的
+    # replay_subtasks 读取留在 eval/service 入口。
+    subtask_model_factory: Callable[[str], Model] | None = None
+    # G13:子任务编排器。delegation_enabled 且非 one_shot 时在 __post_init__ 建;
+    # None ⇒ 全程无委派、无子任务记账,阶段装配面与接入前逐字节相同。
+    subtask_manager: Any | None = None
     # M6 崩溃恢复:被打断阶段的循环快照(仅当 stage/round 与该阶段本次执行匹配时消费一次,
     # 取走即清空——同一份快照不得被后续阶段或后续轮次再回放一遍)。默认 None = 冷启动,
     # 与引入恢复能力之前的行为逐字一致。
@@ -153,21 +194,233 @@ class TaskNodes:
     ledger: ResourceLedger | None = None
     # S10a:实验策略(两臂唯一差异登记面)。None=默认 agent 臂,与引入前逐字一致。
     policy: Any | None = None
+    # G03:折价用的模型身份(与报告里的 model_name 同源)。空串=回落到 Settings.llm_model;
+    # fake 回放传什么都拿不到价目,费用维度自然不开 —— 零花费路径不该被价表挡。
+    price_model: str = ""
+    # G06:连续会话身份与任务记忆。None ⇒ __post_init__ 按 Settings 建(`task_memory_enabled`
+    # 关掉时保持 None,于是阶段装配面与接入之前逐字节相同);显式传实例的调用方(恢复/测试)
+    # 优先用传入的那份 —— 恢复要沿用崩溃前那条会话与那一版记忆,不是新建一条。
+    session: SessionState | None = None
+    memory: TaskMemory | None = None
+    assembler: ContextAssembler | None = None
+    # G07:任务开工时冻结的运行 profile。引擎读它的数字(软窗口/尾部钉住/容量余量),
+    # 不再每个阶段回读全局 Settings —— 那才是"并发两个 profile 互不影响"与"受理后改环境
+    # 变量不改在跑的任务"的落点。None ⇒ 按 Settings 建 legacy_v1(与今日逐字相同)。
+    runtime: TaskRuntime | None = None
+    # G08:目标仓库自带说明(AGENTS.md 一类)。None ⇒ 首次装配时按 Settings 加载冻结副本;
+    # `repo_instructions_enabled=false` 时得到空档案,阶段装配面与接入之前逐字节相同。
+    instructions: RepoInstructions | None = None
+    # G10:issue-only 诊断与验收清单。mode 决定图的路由形状(diagnose 模式跳过
+    # baseline 节点、localize 结束后进 diagnose);两个身份字段由 runner 在解出冻结
+    # TaskSpec 后回填,工具层用它们把 proposal/manifest 绑到受理契约。
+    mode: str = "repair"
+    source_snapshot_hash: str = ""
+    task_spec_hash: str = ""
+    # 最小批准等待接线:approval_event 由服务层在提交前登记;on_waiting 在等待前调用
+    # (服务层把任务行置 WAITING_INPUT 并释放对外可见的等待状态)。等待窗秒数由
+    # 节点按冻结 Settings 读 acceptance_wait_seconds;0 = 不等待(headless)。
+    approval_event: threading.Event | None = None
+    on_waiting: Callable[[], None] | None = None
+    # G11:ask_user 的等待通道(InteractionChannel;服务层构造,None = headless 不等待)。
+    # 它随 `_build_ctx` 进 ToolContext,由 run_plain_loop 在安全边界消费。
+    interaction: Any | None = None
+    # G11:任务绝对寿命上限(epoch 秒;None = 不设)。用户等待时长顺延 deadline 时的钳制点,
+    # 由 runner 在受理时建立、随 state 持久化,恢复不重授(旧检查点缺省 = None)。
+    absolute_deadline_epoch: float | None = None
+    # G11:已从 ctx 同步进 self.deadline_epoch 的等待时长(增量口径,恰好一次)
+    _paused_synced: float = 0.0
+    # "manifest 是否已冻结"的幂等派生缓存(避免每次 _build_ctx 都读盘)
+    _acceptance_checked: bool = False
 
     def __post_init__(self) -> None:
         if self.policy is None:
             from app.evals.experiment_policy import agent_policy
 
             self.policy = agent_policy()
+        settings = get_settings()
+        if self.runtime is None:
+            # G07:profile 在节点构造时就冻结(与账本"恢复优先读回"同一思路)。此后改环境
+            # 变量、或并发跑另一份 profile 的任务,都不改写已经在跑的这一份。
+            self.runtime = TaskRuntime.build(settings)
         if self.ledger is None:
-            settings = get_settings()
             # getattr 兜底:测试替身(部分字段的 SimpleNamespace settings)落在"无预算"一侧,
-            # 与本文件 _persistent_context 的既有惯例一致
-            self.ledger = ResourceLedger(
+            # 与本文件 _persistent_context 的既有惯例一致。
+            # G03:构造口径收进 ledger_from_settings(与 plain 引擎同一份),并且带上
+            # run_dir —— 恢复时读回 ledger_state.json,未知holdings不随崩溃清零。
+            from app.graph.resources import ledger_from_settings
+
+            self.ledger = ledger_from_settings(
                 task_id=str(getattr(self.bug, "id", "") or ""),
-                token_limit=int(getattr(settings, "token_budget", 0) or 0),
-                output_reserve=int(getattr(settings, "llm_max_tokens", 0) or 0),
+                settings=settings,
+                price_model=self.price_model or str(getattr(settings, "llm_model", "") or ""),
+                run_dir=self.report_dir.parent,
             )
+        # ---------- G06:会话身份与任务记忆 ----------
+        # `task_memory_enabled` 关掉 ⇒ 两者都不建,阶段装配面与接入之前逐字节相同
+        # (getattr 兜底同样让 SimpleNamespace 测试桩落在"关闭"一侧)。
+        if self.assembler is None:
+            self.assembler = ContextAssembler()
+        if self.memory is None and getattr(settings, "task_memory_enabled", False):
+            task_id = str(getattr(self.bug, "id", "") or "")
+            # 恢复优先读回崩溃前那一份:记忆是"平台观测到的事实",重新推断一遍就是造假
+            stored = load_memory_state(self.report_dir.parent)
+            self.memory = stored if stored is not None else TaskMemory(task_id)
+        if self.memory is not None and self.session is None:
+            self.session = SessionState(self.memory.task_id, self.memory.session_id)
+            self.memory.session_id = self.session.session_id
+        # ---------- G13:子任务编排器 ----------
+        # one_shot 始终禁委派(delegate 不进 WRITE_TOOLS,这里也直接不建)。
+        # getattr 兜底:SimpleNamespace 测试桩没有 delegation_enabled 时落在"关闭"侧,
+        # 与本文件 _persistent_context 的既有惯例一致。
+        if getattr(settings, "delegation_enabled", False) and not getattr(
+            self.policy, "is_one_shot", False
+        ):
+            from app.agent.subtasks import SubtaskManager
+
+            self.subtask_manager = SubtaskManager(
+                enabled=True,
+                max_concurrency=int(getattr(settings, "max_subagent_concurrency", 2)),
+                max_delegations=int(getattr(settings, "max_delegations", 3)),
+                max_turns=int(getattr(settings, "subtask_max_turns", 10)),
+                model_factory=self.subtask_model_factory,
+                ledger=self.ledger,
+                report_dir=self.report_dir,
+                bug=self.bug,
+                runtime=self.runtime,
+                deadline_epoch=self.deadline_epoch,
+                absolute_deadline_epoch=self.absolute_deadline_epoch,
+                cancel_event=self.cancel_event,
+            )
+        # 本阶段装配好的上下文(骨架 + 记忆块);None = 尚未装配,退回"只有骨架"的旧形状
+        self._stage_context: str | None = None
+
+    def _begin_assembly(self, stage: str, round_no: int, allowed_tools: list[str] | None) -> str:
+        """装配本阶段的 system 附加文本(仓库说明 + 仓库骨架 + 工作记忆块),每 (阶段, 轮次) 一次。
+
+        放在节点里而不是 `_persistent_context` 里,是因为装配需要知道"这是哪个阶段、开放哪些
+        能力"——那属于会话身份(G06 要把它记进 SessionState),而骨架本身不知道。
+        仓库说明(G08)排最前:它对本任务稳定,而记忆块随观测增长 —— 易放末尾才不打掉前缀。
+        """
+        skeleton = self._repo_skeleton(self.workspace)
+        rules = self._repo_instructions(stage).render(self._observed_paths())
+        if self.memory is None or self.assembler is None:
+            self._stage_context = "\n\n".join(block for block in (rules, skeleton) if block)
+            return self._stage_context
+        context = self.assembler.assemble(
+            stage=stage,
+            round_no=round_no,
+            session=self.session,
+            memory=self.memory,
+            skeleton=skeleton,
+            instructions=self.instructions,
+            evidence_paths=self._observed_paths(),
+            max_chars=int(getattr(get_settings(), "task_memory_max_chars", 0) or 0),
+            current_revision=self.ctx.workspace_revision if self.ctx is not None else 0,
+            allowed_tools=allowed_tools or [],
+        )
+        if context.reused:
+            # 同一 (阶段, 轮次) 第二次装配 ⇒ 复用第一次的成品,并把"没有叠加"这件事留在轨迹里
+            self.tracker.record(
+                tool="context_assembly_reused",
+                round_no=round_no,
+                state=stage,
+                input_payload={"memory_version": context.memory_version},
+                output_summary=context.as_dict(),
+            )
+        else:
+            self.tracker.record(
+                tool="context_assembled",
+                round_no=round_no,
+                state=stage,
+                input_payload={"memory_version": context.memory_version},
+                output_summary=context.as_dict(),
+            )
+        self._stage_context = context.text
+        return context.text
+
+    def _observed_paths(self) -> tuple[str, ...]:
+        """平台已经观测到的文件路径 —— 决定哪些**目录级**说明此刻该在场(G08)。
+
+        用的是记忆里的观测而不是"模型说它要改哪个文件":观测是真实发生过的读/检索,
+        模型自述的目标要到 PLAN 之后才有,而 LOCALIZE 阶段就需要"碰到某目录才带上该目录规则"。
+        """
+        if self.memory is None:
+            return ()
+        return tuple(item.path for item in self.memory.evidence if item.path)
+
+    def _repo_instructions(self, stage: str) -> RepoInstructions:
+        """仓库自带说明只加载一次:它读的是冻结副本,同一任务内这些字节不会变。"""
+        if self.instructions is not None:
+            return self.instructions
+        settings = get_settings()
+        enabled = bool(getattr(settings, "repo_instructions_enabled", False))
+        if enabled:
+            loaded = load_instructions(
+                self.workspace,
+                enabled=True,
+                max_file_bytes=int(getattr(settings, "repo_instructions_max_file_bytes", 16_384)),
+                max_total_bytes=int(getattr(settings, "repo_instructions_max_total_bytes", 65_536)),
+            )
+        else:
+            loaded = RepoInstructions(enabled=False)
+        self.instructions = loaded
+        # 每份说明的相对路径 / 哈希 / 作用域 / 裁剪都要留下读数(SPEC §7 G08)。
+        # 读数里只有仓库内相对路径,宿主绝对路径不进轨迹。
+        self.tracker.record(
+            tool="repo_instructions_loaded",
+            state=stage,
+            input_payload={"enabled": enabled},
+            output_summary=loaded.as_dict(),
+        )
+        return loaded
+
+    def _note_memory(self, event: str, **payload: Any) -> None:
+        """平台侧事实进记忆并同时落盘(观测/判定/候选/计划这些不由模型写的内容)。"""
+        if self.memory is None:
+            return
+        getattr(self.memory, event)(**payload)
+        save_memory_state(self.report_dir.parent, self.memory)
+
+    def _open_agent_state(self) -> None:
+        """把受理时冻结的目标/约束/验收清单登记进记忆,并留下会话身份事件(G06)。
+
+        prepare 与崩溃恢复共用这一处:记忆是从 `memory_state.json` 读回的那一份,
+        重放同一组冻结上下文是幂等的(`set_context` 只覆盖传入的非空字段)。
+        getattr 兜底:直接构造 TaskNodes 的测试桩(bug 只有部分字段)落在"不登记"一侧。
+        """
+        if self.memory is None:
+            return
+        settings = get_settings()
+        allowed = getattr(self.bug, "allowed_paths", None) or []
+        acceptance = [
+            *list(getattr(self.bug, "failed_tests", []) or []),
+            *list(getattr(self.bug, "regression_tests", []) or []),
+        ]
+        self.memory.set_context(
+            goal=str(getattr(self.bug, "issue_text", "") or ""),
+            constraints=[
+                f"可改路径:{', '.join(str(p) for p in allowed) if allowed else '未显式限制(仍受门禁)'}",
+                "禁止修改测试文件与 pytest 控制文件(门禁)",
+                f"任务级 token 预算:{settings.token_budget}",
+                f"补丁文件数上限:{settings.max_patch_files}",
+            ],
+            acceptance=[str(x) for x in acceptance],
+        )
+        save_memory_state(self.report_dir.parent, self.memory)
+        self.tracker.record(
+            tool="session_opened",
+            state="BASELINE",
+            input_payload={
+                "session_id": self.session.session_id if self.session else "",
+                "protocol_version": self.session.protocol if self.session else "",
+            },
+            output_summary={
+                "memory_version": self.memory.version,
+                "acceptance_items": len(acceptance),
+                # resumed=True ⇒ 这份记忆是崩溃前那一份,不是新建的
+                "resumed": bool(self.memory.evidence or self.memory.plans),
+            },
+        )
 
     def _take_resume_snapshot(self, stage: str, round_no: int) -> LoopSnapshot | None:
         """按"当前阶段+当前轮次"领取快照;不匹配返回 None(冷启动)。"""
@@ -198,7 +451,55 @@ class TaskNodes:
             # P1-4 整改:资源上限此前只落在硬编码默认值上,settings 改了不生效
             max_read_lines=settings.max_read_lines,
             max_search_results=settings.max_search_results,
+            # G06:记忆与会话句柄交给工具层,回执才会被自动登记成观测(registry._record_memory)。
+            # None 时工具层完全不做事,与接入前逐字节相同。
+            memory=self.memory,
+            session=self.session,
+            # G09:受控命令的冻结执行后端与协作式取消事件。后端在受理时冻结
+            # (TaskSpec.effective_policy.execution_backend 同源),运行中改环境变量
+            # 不改变已受理任务的命令落点。
+            execution_backend=settings.execution_backend,
+            cancel_event=self.cancel_event,
+            # G10:任务模式与验收身份。diagnose 模式从盘上 manifest 派生"是否已冻结"
+            # (恢复重建 ctx 时也要拿到同一结论);repair 模式恒 False,与接入前相同。
+            mode=self.mode,
+            acceptance_frozen=self._manifest_frozen(),
+            source_snapshot_hash=self.source_snapshot_hash,
+            task_spec_hash=self.task_spec_hash,
+            # G11:ask_user 的等待通道(None = headless,问题落盘但不等回答)
+            interaction=self.interaction,
+            # G13:子任务编排器(经 delegate 工具访问;None = 未开启委派,工具直接拒)
+            subtasks=self.subtask_manager,
         )
+
+    def _with_delegation(self, tools: list[str]) -> list[str]:
+        """G13:委派开关打开时给阶段工具表追加 delegate。
+
+        delegate 不进静态白名单:由本方法在 localize/propose 装配时按开关追加,
+        one_shot 恒不建 subtask_manager ⇒ 天然禁。关闭委派时返回原列表逐字节。
+        """
+        if self.subtask_manager is None:
+            return list(tools)
+        return [*tools, "delegate"]
+
+    def _manifest_frozen(self) -> bool:
+        """验收清单是否已冻结(只查一次盘,结果幂等缓存)。
+
+        损坏的 manifest 不在这里判死:diagnose 节点会重新装载并如实转待审;
+        本方法只回答"工具层放不放行 apply_patch"。
+        """
+        if self._acceptance_checked:
+            return True
+        if self.mode != "diagnose_then_repair":
+            return False
+        from app.diagnosis.proposal import load_manifest
+
+        try:
+            frozen = load_manifest(self.report_dir.parent) is not None
+        except Exception:
+            frozen = False
+        self._acceptance_checked = frozen
+        return frozen
 
     def restore_runtime(self, state: TaskState, baseline_commit: str) -> None:
         """M6 崩溃恢复:重建 prepare 造出的闭包对象(ctx / baseline_commit)。
@@ -209,7 +510,26 @@ class TaskNodes:
         时由调用方回退工作区 HEAD。
         """
         self.baseline_commit = baseline_commit
+        # G11:绝对寿命上限随 state 带回(旧检查点缺字段 = None = 不做钳制);
+        # self.deadline_epoch 已由 prepare_resume 从 state 恢复(剩余时间不重授)。
+        raw_absolute = state.get("absolute_deadline_epoch")
+        try:
+            self.absolute_deadline_epoch = float(raw_absolute) if raw_absolute is not None else None
+        except (TypeError, ValueError):
+            self.absolute_deadline_epoch = None
+        if self.mode == "diagnose_then_repair":
+            # G10:冻结清单先于 ctx 重建——恢复进 diagnose 节点时它直接沿用盘上
+            # manifest;恢复落在修复段中段时,prompt/verify 读的失败集也必须是冻结集。
+            from app.diagnosis.proposal import load_manifest
+
+            manifest = load_manifest(self.report_dir.parent)
+            if manifest is not None:
+                self.bug.failed_tests = list(manifest.failed_tests)
+                self.bug.regression_tests = list(manifest.regression_tests)
         self.ctx = self._build_ctx(state)
+        # 恢复同样要过一遍冻结上下文:记忆是从 run_dir 读回的那一份(不是新建),
+        # 会话身份沿用崩溃前那个 session_id,于是快照绑定校验比的是同一条会话。
+        self._open_agent_state()
 
     def prepare(self, state: TaskState) -> dict[str, Any]:
         """物化题目仓库为 git 工作区,固定基线 commit。"""
@@ -218,10 +538,20 @@ class TaskNodes:
                 self.bug.repo_dir, self.workspace, extra_commit=False
             )
             self.ctx = self._build_ctx(state)
+            self._open_agent_state()
             self.tracker.record(
                 tool="create_workspace",
                 state="BASELINE",
                 input_payload={"baseline": self.baseline_commit[:12]},
+            )
+            # 运行 profile 落轨迹(G07):这一跑用的是哪套软窗口/尾部钉住/输出预留,
+            # 目标窗口有没有被端点声明的容量夹小,都要在报告里查得到而不是靠回忆配置。
+            # 只登记事实,不参与任何判定;每个任务一次(prepare 不在恢复路径上重跑)。
+            self.tracker.record(
+                tool="runtime_profile",
+                state="BASELINE",
+                input_payload={"profile_name": self.runtime.profile_name},
+                output_summary=self.runtime.as_dict(),
             )
             # M6:基线 sha 进 state(SqliteSaver 可序列化),恢复方据此复位工作区
             return {
@@ -233,7 +563,13 @@ class TaskNodes:
             return {"status": "INVALID_TASK", "error": str(exc), "outcome": "invalid"}
 
     def route_prepare(self, state: TaskState) -> str:
-        return "end" if state["status"] == "INVALID_TASK" else "continue"
+        if state["status"] == "INVALID_TASK":
+            return "end"
+        # G10:diagnose 模式没有可信失败/回归集,baseline 节点会对空集跑 pytest
+        # (等价于全仓运行)。红/绿基线由 diagnose 节点在快照副本上重做,这里直接进调查。
+        if self.mode == "diagnose_then_repair":
+            return "localize"
+        return "continue"
 
     # ---------- BASELINE ----------
 
@@ -284,6 +620,17 @@ class TaskNodes:
     # ---------- 持久记忆(M2 仓库骨架) ----------
 
     def _persistent_context(self, workspace: Path) -> str:
+        """节点侧拿到的"持久上下文" = 本阶段装配好的文本(骨架 + 工作记忆块)。
+
+        没装配过(直接调用方、候选路径、既有测试桩)就退回"只有骨架"的形状 —— 与 G06 之前
+        逐字节相同。三个跑模型的节点各自在 `run_plain_loop` 之前调 `_begin_assembly`,
+        所以这里的返回值对同一 (阶段, 轮次) 是稳定的:模型不会每轮看到一份新拼装的说明。
+        """
+        if self._stage_context is not None:
+            return self._stage_context
+        return self._repo_skeleton(workspace)
+
+    def _repo_skeleton(self, workspace: Path) -> str:
         """LOCALIZE/PROPOSE 共用的仓库骨架:纯本地 ast 生成、零 LLM 请求、每阶段一次。
 
         缺陷证据(PROGRESS.md D.4/D.11):结构从未进过提示,模型只能自己 list_files 现场
@@ -308,6 +655,17 @@ class TaskNodes:
 
     def localize(self, state: TaskState) -> dict[str, Any]:
         assert self.ctx is not None
+        # G10:diagnose 模式的 LOCALIZE 白名单带受控命令与提议工具(issue-only 任务
+        # 要靠 pytest_collect/pytest_selected 提出候选失败集);repair 模式与接入前相同。
+        # G13:委派开启时追加 delegate(researcher 委托受同一阶段约束)。
+        localize_tools = self._with_delegation(
+            DIAGNOSE_TOOLS if self.mode == "diagnose_then_repair" else READ_TOOLS
+        )
+        # 装配本阶段的可见上下文(骨架 + 此前的工作记忆);LOCALIZE 是第一个阶段,
+        # 此时记忆里还没有观测 ⇒ 与接入前逐字节相同
+        self._begin_assembly("LOCALIZE", state["round_no"], localize_tools)
+        # G11:先把任务累计的用户等待时长顺延进 deadline(恰好一次),再进入循环
+        self._sync_wait_pause_deadline()
         try:
             outcome = run_plain_loop(
                 self.ctx,
@@ -321,13 +679,13 @@ class TaskNodes:
                 state_label="LOCALIZE",
                 # 主线 localize 无阶段提示,故 extra_system 即骨架(候选点未接,见 _run_candidate)
                 extra_system=self._persistent_context(self.workspace),
-                allowed_tools=READ_TOOLS,
+                allowed_tools=localize_tools,
                 deadline_epoch=self.deadline_epoch,
+                absolute_deadline_epoch=self.absolute_deadline_epoch,
                 token_budget=self._token_budget_for(
                     state, share=get_settings().localize_budget_share
                 ),
-                context_window_tokens=get_settings().context_window_tokens,
-                context_keep_recent_turns=get_settings().context_keep_recent_turns,
+                **self.runtime.loop_settings(),
                 cancel_event=self.cancel_event,
                 resume_snapshot=self._take_resume_snapshot("LOCALIZE", state["round_no"]),
                 ledger=self.ledger,
@@ -347,7 +705,11 @@ class TaskNodes:
                 "tokens_completion": state.get("tokens_completion", 0) + exc.tokens_completion,
             }
             budget = get_settings().token_budget
-            if budget > 0 and usage["tokens_used"] >= budget:
+            # 第三种"耗尽"(G07):保护区超出端点声明容量。它不属于"份额用尽可以降级继续"——
+            # 换阶段还是同一个端点、同一份压不动的历史,继续只会再烧一次请求并同样被拒。
+            # 终止并把原因串留在 error 里,报告能区分"钱花光了"与"这一发本来就装不下"。
+            capacity_blocked = CONTEXT_CAPACITY_EXCEEDED in str(exc)
+            if capacity_blocked or (budget > 0 and usage["tokens_used"] >= budget):
                 return {
                     **usage,
                     "status": "BUDGET_EXCEEDED",
@@ -379,6 +741,19 @@ class TaskNodes:
                 "error": f"localize: {exc}",
             }
 
+        if outcome.completion == "clarification_required":
+            # G11:模型提问但没人能回答(headless/等待超时)——问题保留在盘上,
+            # 转 needs_review;绝不把"没回答的问题"当成调查结论继续。
+            return {
+                "status": "NEEDS_REVIEW",
+                "outcome": "needs_review",
+                "error": f"clarification_required: {outcome.protocol_reason}",
+                "turns": state.get("turns", 0) + outcome.turns,
+                "tokens_used": state.get("tokens_used", 0) + outcome.tokens_used,
+                "tokens_prompt": state.get("tokens_prompt", 0) + outcome.tokens_prompt,
+                "tokens_completion": state.get("tokens_completion", 0) + outcome.tokens_completion,
+            }
+
         if outcome.finish_declared and outcome.success:
             return {
                 "status": "PROPOSE_PATCH",
@@ -397,7 +772,222 @@ class TaskNodes:
 
     def route_localize(self, state: TaskState) -> str:
         """定位失败/超预算都是终点(N-5):超预算后不得继续 propose。"""
-        return "end" if state["status"] in ("NEEDS_REVIEW", "BUDGET_EXCEEDED") else "continue"
+        if state["status"] in ("NEEDS_REVIEW", "BUDGET_EXCEEDED"):
+            return "end"
+        # G10:issue-only 任务的调查结束后进 diagnose(提议 → 平台红/绿校验 → 批准冻结),
+        # 不直接进补丁段;repair 模式保持原有 "continue"→plan 语义。
+        if self.mode == "diagnose_then_repair":
+            return "diagnose"
+        return "continue"
+
+    # ---------- DIAGNOSE(G10:issue-only 验收清单冻结) ----------
+
+    def _apply_manifest(self, manifest: Any) -> None:
+        """冻结清单生效:失败/回归集以 manifest 为唯一权威,apply_patch 放行凭据置真。
+
+        工具层的 apply_patch 门只读 ctx.acceptance_frozen;bug 的双集是 verify/提示
+        的实际读源(runner 的 restore_runtime 对恢复路径做同一件事,口径统一)。
+        """
+        self.bug.failed_tests = list(manifest.failed_tests)
+        self.bug.regression_tests = list(manifest.regression_tests)
+        if self.ctx is not None:
+            self.ctx.acceptance_frozen = True
+        self._acceptance_checked = True
+
+    def diagnose(self, state: TaskState) -> dict[str, Any]:
+        """验收清单节点:提议 → 平台红/绿校验 → 等待批准 → 冻结(SPEC §7 G10)。
+
+        提议只是候选:平台在**未修改的快照副本**上重做红/绿基线校验,读数进提议工件;
+        trusted_user 批准(API/CLI → 冻结 manifest → 唤醒本线程)之后才放行补丁生产。
+        headless(无线程事件或等待窗为 0)不等待:立即 needs_review 并保留提议工件,
+        绝不把"没批准的清单"当成功证据(对应 T15)。
+        """
+        assert self.ctx is not None
+        from app.agent.control import WAIT_APPROVED, WAIT_CANCELLED, wait_for_approval
+        from app.diagnosis.proposal import (
+            ManifestIntegrityError,
+            load_manifest,
+            load_proposal,
+            verify_baseline,
+            write_proposal,
+        )
+
+        run_dir = self.report_dir.parent
+
+        # 1) 已冻结(恢复路径/重复进入):直接沿用盘上清单,不重跑基线、不重新等待
+        try:
+            manifest = load_manifest(run_dir)
+        except ManifestIntegrityError as exc:
+            return {
+                "status": "NEEDS_REVIEW",
+                "outcome": "needs_review",
+                "error": f"acceptance manifest unreadable: {exc}",
+            }
+        if manifest is not None:
+            self._apply_manifest(manifest)
+            self.tracker.record(
+                tool="acceptance_frozen",
+                state="DIAGNOSE",
+                input_payload={"source": "resumed"},
+                output_summary={"manifest_hash": manifest.manifest_hash},
+            )
+            return {
+                "status": "PLAN",
+                "acceptance_manifest_hash": manifest.manifest_hash,
+                "failed_tests": list(manifest.failed_tests),
+                "regression_tests": list(manifest.regression_tests),
+            }
+
+        # 2) 取提议:本进程内工具提交的优先,否则读盘(恢复路径)
+        proposal = self.ctx.pending_acceptance
+        if proposal is None:
+            try:
+                proposal = load_proposal(run_dir)
+            except ManifestIntegrityError as exc:
+                return {
+                    "status": "NEEDS_REVIEW",
+                    "outcome": "needs_review",
+                    "error": f"acceptance proposal unreadable: {exc}",
+                }
+        if proposal is None:
+            return {
+                "status": "NEEDS_REVIEW",
+                "outcome": "needs_review",
+                "error": (
+                    "diagnosis finished without an acceptance proposal;"
+                    " no patch can be produced without an approved test list"
+                ),
+            }
+        self.tracker.record(
+            tool="acceptance_proposal",
+            state="DIAGNOSE",
+            input_payload={
+                "proposal_id": proposal.proposal_id[:12],
+                "content_hash": proposal.content_hash()[:12],
+            },
+            output_summary={
+                "failed_tests": len(proposal.failed_tests),
+                "regression_tests": len(proposal.regression_tests),
+            },
+        )
+
+        # 3) 红/绿基线校验:只在未验证过时真跑(恢复路径沿用已通过的读数,不重复烧测试)
+        if not proposal.baseline.get("verified"):
+            if (overrun := self._deadline_overrun()) is not None:
+                return {
+                    "status": "BUDGET_EXCEEDED",
+                    "outcome": "failed",
+                    "error": overrun,
+                    "resource_status": "exhausted",
+                }
+            check = verify_baseline(
+                python_exe=self.ctx.python_exe,
+                snapshot_dir=self.bug.repo_dir,
+                failed_tests=list(proposal.failed_tests),
+                regression_tests=list(proposal.regression_tests),
+                work_dir=run_dir / "acceptance",
+                timeout_seconds=get_settings().test_timeout_seconds,
+                env=self.ctx.env,
+            )
+            proposal.baseline = check.as_dict()
+            # 提议先落盘再等待:批准方(另一线程/端点)必须能读到内容 hash 与校验读数
+            write_proposal(run_dir, proposal)
+            self.tracker.record(
+                tool="acceptance_baseline",
+                state="DIAGNOSE",
+                input_payload={
+                    "red_exit_code": check.red_exit_code,
+                    "green_exit_code": check.green_exit_code,
+                },
+                output_summary=check.as_dict(),
+            )
+            if not check.verified:
+                reason = (
+                    check.collection_error
+                    or check.environment_failure
+                    or check.premise_error
+                    or "red/green baseline mismatch (unrelated failures or sets not as proposed)"
+                )
+                return {
+                    "status": "NEEDS_REVIEW",
+                    "outcome": "needs_review",
+                    "error": f"acceptance baseline not verified: {reason}",
+                }
+            if (overrun := self._deadline_overrun()) is not None:
+                return {
+                    "status": "BUDGET_EXCEEDED",
+                    "outcome": "failed",
+                    "error": overrun,
+                    "resource_status": "exhausted",
+                }
+
+        # 4) 等待 trusted_user 批准;0 / 无线程事件 = headless,不等待
+        wait_seconds = get_settings().acceptance_wait_seconds
+        self.tracker.record(
+            tool="acceptance_waiting",
+            state="DIAGNOSE",
+            input_payload={
+                "wait_seconds": wait_seconds,
+                "headless": self.approval_event is None,
+                "content_hash": proposal.content_hash()[:12],
+            },
+        )
+        if self.on_waiting is not None:
+            try:
+                self.on_waiting()
+            except Exception:  # 状态展示失败不得杀任务:等批准仍可能成功
+                log.exception("task %s: on_waiting callback failed", self.bug.id)
+        verdict = wait_for_approval(
+            self.approval_event, wait_seconds, cancel_event=self.cancel_event
+        )
+        if verdict == WAIT_CANCELLED:
+            raise TaskCancelled("cancelled while waiting for acceptance approval")
+        if verdict != WAIT_APPROVED:
+            return {
+                "status": "NEEDS_REVIEW",
+                "outcome": "needs_review",
+                "error": (
+                    "acceptance not approved within the wait window;"
+                    " proposal kept for review (no patch produced)"
+                ),
+            }
+
+        # 5) 醒来后重读冻结 manifest:批准方先冻结后唤醒;拿不到匹配清单决不放行
+        try:
+            manifest = load_manifest(run_dir)
+        except ManifestIntegrityError as exc:
+            return {
+                "status": "NEEDS_REVIEW",
+                "outcome": "needs_review",
+                "error": f"acceptance manifest unreadable after approval: {exc}",
+            }
+        if manifest is None or manifest.manifest_hash != proposal.content_hash():
+            return {
+                "status": "NEEDS_REVIEW",
+                "outcome": "needs_review",
+                "error": "approval wake without a matching frozen manifest; refusing to continue",
+            }
+        self._apply_manifest(manifest)
+        self.tracker.record(
+            tool="acceptance_frozen",
+            state="DIAGNOSE",
+            input_payload={"source": "approved"},
+            output_summary={
+                "manifest_hash": manifest.manifest_hash,
+                "approved_by": manifest.approved_by,
+                "approved_at": manifest.approved_at,
+            },
+        )
+        return {
+            "status": "PLAN",
+            "acceptance_manifest_hash": manifest.manifest_hash,
+            "failed_tests": list(manifest.failed_tests),
+            "regression_tests": list(manifest.regression_tests),
+        }
+
+    def route_diagnose(self, state: TaskState) -> str:
+        """批准冻结后进 PLAN;任何未冻结路径都是终点(无清单不生产补丁)。"""
+        return "continue" if state["status"] == "PLAN" else "end"
 
     def _provisional_findings(self, last_content: str) -> str:
         """额度耗尽时的暂定结论:模型最后一轮的实质文本 + 已调查过的线索清单。
@@ -460,6 +1050,28 @@ class TaskNodes:
             return remaining
         return max(int(remaining * share), 1)
 
+    def _sync_wait_pause_deadline(self) -> None:
+        """把任务累计的**用户等待时长**从 deadline 里顺延出去(G11,恰好一次)。
+
+        语义(SPEC G11):用户等待有独立超时,主动运行时长暂停累计——等待结束后
+        deadline 按等待时长顺延,但顺延不得越过任务**绝对寿命**上限(受理时建立、
+        恢复不重授)。增量口径:ctx 累计的是整任务,`_paused_synced` 记已顺延部分,
+        本方法只消费"自上次同步以来的新增等待",所以同一段等待不会被算两遍。
+        在**每个读取 deadline 之前**调用(见 `_deadline_overrun` 与三个循环调用点)。
+        """
+        if self.deadline_epoch is None or self.ctx is None:
+            return
+        total = float(getattr(self.ctx, "interaction_paused_seconds", 0.0) or 0.0)
+        delta = total - self._paused_synced
+        if delta <= 0:
+            return
+        self._paused_synced = total
+        extended = self.deadline_epoch + delta
+        if self.absolute_deadline_epoch is not None:
+            # 不越过绝对寿命;同时绝不把 deadline 缩短(上限早于当前 deadline 时保持原值)
+            extended = min(extended, max(self.absolute_deadline_epoch, self.deadline_epoch))
+        self.deadline_epoch = extended
+
     # ---------- PLAN ----------
 
     def plan(self, state: TaskState) -> dict[str, Any]:
@@ -475,9 +1087,13 @@ class TaskNodes:
         刻意不做的两件事:
         ①不给任何检索/写入工具——"先计划"不能变成"再调查一轮";结构信息走骨架注入
           (与 localize/propose 同一份持久记忆:计划要点名文件与符号,而实测定位结论
-          常薄到 63-397 字符,只靠它就只能写出"改那个模块"这类无法执行的话);
+          常薄到 63-397 字符,只靠它就只能写出"改那个模块"这类无法执行的话)。
+          G01/R2 之后这条从"执行时挡下"升为"模型根本看不见":本阶段可见 schema 只有 finish;
         ②降级不等于失败——计划段份额用完只带暂定文本进 PROPOSE(与 localize 同构),
           任务级总额耗尽仍是硬终点,N-5 的处置一字不改。
+        G01/R1 补的第三条:完成协议是**单次文本**。合规的计划文本一次请求就结束本阶段;
+        空回复/截断/越权工具调用最多换一次协议修正,再不合就落 plan_invalid 降级——
+        不再有"遵守提示反而把阶段份额烧光"这条路。
         """
         assert self.ctx is not None
         settings = get_settings()
@@ -493,6 +1109,11 @@ class TaskNodes:
             previous_plan=state.get("plan", ""),
             round_no=state["round_no"],
         )
+        # 计划阶段的能力集合只有 finish(不给检索/写入面),但**证据照样带过去**:
+        # 记忆块里是定位阶段真实读过的文件与行范围,不是模型自述的一句结论(T10 的观察点)
+        self._begin_assembly("PLAN", state["round_no"], [FINISH_TOOL])
+        # G11:等待顺延在进入循环前先落进 deadline(同 localize)
+        self._sync_wait_pause_deadline()
         try:
             outcome = run_plain_loop(
                 self.ctx,
@@ -505,12 +1126,16 @@ class TaskNodes:
                 # 计划只产文本:工具白名单只留 finish,不给任何检索/写入面
                 # (否则"先计划"会变成"再调查一轮")
                 allowed_tools=[FINISH_TOOL],
+                # G01/R1:一段合规的计划文本**就是**本阶段结束。此前纯文本会被循环当作
+                # "还没干完"继续下一轮,遵守提示的真实模型只能把阶段份额烧到 max_turns/
+                # phase_share 才"退出"(真实 Q0:PLAN 132 次请求、20/21 题走降级出口)。
+                complete_on_text=True,
                 deadline_epoch=self.deadline_epoch,
+                absolute_deadline_epoch=self.absolute_deadline_epoch,
                 token_budget=self._token_budget_for(
                     state, share=getattr(settings, "plan_budget_share", 0.15)
                 ),
-                context_window_tokens=settings.context_window_tokens,
-                context_keep_recent_turns=settings.context_keep_recent_turns,
+                **self.runtime.loop_settings(),
                 cancel_event=self.cancel_event,
                 resume_snapshot=self._take_resume_snapshot("PLAN", state["round_no"]),
                 ledger=self.ledger,
@@ -526,7 +1151,9 @@ class TaskNodes:
                 "tokens_completion": state.get("tokens_completion", 0) + exc.tokens_completion,
             }
             budget = settings.token_budget
-            if budget > 0 and usage["tokens_used"] >= budget:
+            if CONTEXT_CAPACITY_EXCEEDED in str(exc) or (
+                budget > 0 and usage["tokens_used"] >= budget
+            ):
                 return {
                     **usage,
                     "status": "BUDGET_EXCEEDED",
@@ -544,6 +1171,7 @@ class TaskNodes:
                     "plan_chars": len(provisional),
                 },
             )
+            self._note_memory("record_plan", plan_text=provisional, degraded=True)
             return {**usage, "status": "PROPOSE_PATCH", "plan": provisional}
         except TaskCancelled:
             raise  # 交给 runner 收敛为 CANCELLED,不得吞成 NEEDS_REVIEW
@@ -554,6 +1182,44 @@ class TaskNodes:
                 "error": f"plan: {exc}",
             }
 
+        if outcome.completion == "clarification_required":
+            # G11:同 localize——提问没被回答时转 needs_review,计划不落成工件
+            return {
+                "status": "NEEDS_REVIEW",
+                "outcome": "needs_review",
+                "error": f"clarification_required: {outcome.protocol_reason}",
+                "turns": state.get("turns", 0) + outcome.turns,
+                "tokens_used": state.get("tokens_used", 0) + outcome.tokens_used,
+                "tokens_prompt": state.get("tokens_prompt", 0) + outcome.tokens_prompt,
+                "tokens_completion": state.get("tokens_completion", 0) + outcome.tokens_completion,
+            }
+
+        if outcome.completion == "protocol_invalid":
+            # 协议不合 ≠ 额度耗尽:份额一次没烧、max_turns 也没走到,但计划确实没落成工件。
+            # 处置与 plan_degraded 同形——带可用文本(没有就空)降级进 PROPOSE,不判死;
+            # route_plan 的终点仍只有 NEEDS_REVIEW / BUDGET_EXCEEDED 两类。
+            self.tracker.record(
+                tool="plan_invalid",
+                state="PLAN",
+                input_payload={
+                    "repairs_allowed": MAX_PROTOCOL_REPAIRS,
+                    "round_no": state["round_no"],
+                },
+                output_summary={
+                    "reason": outcome.protocol_reason,
+                    "plan_chars": len((outcome.summary or "").strip()),
+                    "model_requests": outcome.turns,
+                },
+                error=f"plan protocol invalid: {outcome.protocol_reason}",
+            )
+
+        # 计划是**工件**,进记忆并带版本号:失败轮回 PLAN 修订时,PROPOSE 看到的是同一份
+        # 记忆里的最新计划,而不是 state 里一段可能被覆盖的字符串
+        self._note_memory(
+            "record_plan",
+            plan_text=outcome.summary,
+            degraded=(outcome.completion == "protocol_invalid"),
+        )
         return {
             "status": "PROPOSE_PATCH",
             "plan": outcome.summary,
@@ -602,6 +1268,11 @@ class TaskNodes:
             return {"status": "BUDGET_EXCEEDED", "outcome": "failed", "error": str(exc)}
 
         prompt = self._propose_prompt(state, state["round_no"])
+        # 补丁阶段带着定位/计划两个阶段的真实观测进入(而不是只带一段自述结论)
+        propose_tools = self._with_delegation(self.policy.propose_tools)
+        self._begin_assembly("PROPOSE_PATCH", state["round_no"], propose_tools)
+        # G11:用户等待时长在进入本阶段循环前先顺延进 deadline(与 localize 同一口径)
+        self._sync_wait_pause_deadline()
         try:
             outcome = run_plain_loop(
                 self.ctx,
@@ -611,11 +1282,11 @@ class TaskNodes:
                 round_no=state["round_no"],
                 state_label="PROPOSE_PATCH",
                 extra_system=self._persistent_context(self.workspace),
-                allowed_tools=list(self.policy.propose_tools),
+                allowed_tools=propose_tools,
                 deadline_epoch=self.deadline_epoch,
+                absolute_deadline_epoch=self.absolute_deadline_epoch,
                 token_budget=self._token_budget_for(state),
-                context_window_tokens=get_settings().context_window_tokens,
-                context_keep_recent_turns=get_settings().context_keep_recent_turns,
+                **self.runtime.loop_settings(),
                 cancel_event=self.cancel_event,
                 resume_snapshot=self._take_resume_snapshot("PROPOSE_PATCH", state["round_no"]),
                 ledger=self.ledger,
@@ -644,6 +1315,14 @@ class TaskNodes:
             "tokens_prompt": state.get("tokens_prompt", 0) + outcome.tokens_prompt,
             "tokens_completion": state.get("tokens_completion", 0) + outcome.tokens_completion,
         }
+        if outcome.completion == "clarification_required":
+            # G11:补丁阶段提问没被回答 → 转 needs_review,不生产任何候选
+            update.update(
+                status="NEEDS_REVIEW",
+                outcome="needs_review",
+                error=f"clarification_required: {outcome.protocol_reason}",
+            )
+            return update
         if outcome.finish_declared and not outcome.success and not outcome.patch_applied:
             # 模型声明放弃且没有任何补丁 → VERIFY_FAILED 终态
             update.update(
@@ -681,7 +1360,11 @@ class TaskNodes:
                 source_snapshot_hash=accepted_source_hash,
                 baseline_commit=self.baseline_commit,
                 round_no=state["round_no"],
-                parent_candidate_id=state.get("candidate_id") or None,
+                # G14 v2:续改轮从"具名候选"起步,新候选的父 = 续改起点候选;
+                # 非续改轮沿用当前候选引用(幂等重复冻结同 diff 同 id)
+                parent_candidate_id=(
+                    state.get("continue_from_candidate_id") or state.get("candidate_id") or None
+                ),
                 generated_call_ids=[
                     c["call_id"]
                     for c in (self.ledger.snapshot()["calls"] if self.ledger else [])
@@ -692,6 +1375,14 @@ class TaskNodes:
                 "candidate_id": candidate.candidate_id,
                 "candidate_hash": candidate.diff_sha256,
             }
+            # 候选进记忆(G06):下一轮的 PROPOSE 看得见"当前候选是哪一份、hash 是什么",
+            # 而不是只看见一句"你上次改的文件没修好"
+            self._note_memory(
+                "record_candidate",
+                candidate_id=candidate.candidate_id,
+                candidate_hash=candidate.diff_sha256,
+                workspace_revision=self.ctx.workspace_revision if self.ctx else 0,
+            )
             self.tracker.record(
                 tool="candidate_frozen",
                 round_no=state["round_no"],
@@ -709,6 +1400,20 @@ class TaskNodes:
             forbid_test_files=self.ctx.forbid_test_files,
         )
         if gate.ok and not diff.is_empty:
+            # G14:门禁通过 → 落候选验证证据(checkpoint 记 gate_ok=True),供
+            # 后续 rollback 的"从具名候选续改"准入与报告审计;verify 的真实结果
+            # 由 verify 节点随后覆盖写回。
+            if candidate_update:
+                write_candidate_checkpoint(
+                    self.report_dir.parent,
+                    candidate_update["candidate_id"],
+                    gate_ok=True,
+                    verify_failed_ok=bool(state.get("verify_failed_ok")),
+                    verify_regression_ok=bool(state.get("verify_regression_ok")),
+                    round_no=state["round_no"],
+                    verification_attempt_id=str(state.get("verification_attempt_id") or ""),
+                    note="apply: gates passed",
+                )
             self.tracker.record(
                 tool="apply_gate", state="VERIFY", input_payload={"files": diff.changed_files}
             )
@@ -720,6 +1425,19 @@ class TaskNodes:
             }
 
         violations = [str(v) for v in gate.violations] or ["[format] no patch applied"]
+        # G14:被门禁拒绝的候选同样保全工件(checkpoint 记 gate_ok=False,失败现场
+        # 可审计),并把候选引用带回——rollback 据此判定"此候选不可续改,复位基线"。
+        if candidate_update:
+            write_candidate_checkpoint(
+                self.report_dir.parent,
+                candidate_update["candidate_id"],
+                gate_ok=False,
+                verify_failed_ok=False,
+                verify_regression_ok=False,
+                round_no=state["round_no"],
+                verification_attempt_id=str(state.get("verification_attempt_id") or ""),
+                note="apply: gates rejected: " + "; ".join(violations)[:200],
+            )
         self.tracker.record(
             tool="apply_gate",
             state="VERIFY",
@@ -732,8 +1450,11 @@ class TaskNodes:
         # "保全现场 → reset → 一次递增"(与验证失败同一条单线失败路径)。
         # 旧实现在这里预增、route_apply 再拿更新值比较:max_rounds=2 的首轮拒绝
         # 会被直接判耗尽,第二轮永远不发生。已拒绝候选由 rollback 复位,不泄漏到下一轮。
+        # G14:拒绝候选也把 candidate_id/hash 带回 state——rollback 读取其 checkpoint
+        # (gate_ok=False)判定"不可续改、必须整体复位",并避免把旧轮候选误当可续改对象。
         return {
             "status": "PATCH_REJECTED",
+            **candidate_update,
             "gate_violations": violations,
             "feedback": build_feedback(
                 [], "上一轮补丁被门禁拒绝:" + "; ".join(violations), repeat_streak=streak
@@ -757,7 +1478,9 @@ class TaskNodes:
         verify 双跑最多 4 次 pytest,单次各有 test_timeout,但都不查任务级
         截止时刻——不复查则可整体越界。deadline_epoch 未接线(直连 TaskNodes
         的测试场景)不查,与 R2 同口径;verify 无模型调用不耗 token,
-        任务级 token 预算由 propose/apply 段守卫。"""
+        任务级 token 预算由 propose/apply 段守卫。
+        G11:先顺延用户等待时长(恰好一次),再比对——等待不算主动运行时间。"""
+        self._sync_wait_pause_deadline()
         if self.deadline_epoch is None:
             return None
         if time.time() > self.deadline_epoch:
@@ -805,6 +1528,20 @@ class TaskNodes:
             # S03:每次真实重跑都刷新验证尝试 id——恢复不得沿用旧证据的身份
             "verification_attempt_id": new_verification_attempt_id(),
         }
+        # G14:验证真实重跑 → 把这次证据写回当前候选的 checkpoint(fresh attempt id)。
+        # 旧尝试的绿证据只属于那次验证,restore/重试不得把过去某个候选的成功套到新代码上。
+        candidate_id = state.get("candidate_id") or ""
+        if candidate_id:
+            write_candidate_checkpoint(
+                self.report_dir.parent,
+                candidate_id,
+                gate_ok=True,
+                verify_failed_ok=bool(update["verify_failed_ok"]),
+                verify_regression_ok=bool(update["verify_regression_ok"]),
+                round_no=state["round_no"],
+                verification_attempt_id=str(update["verification_attempt_id"]),
+                note="verify: platform rerun of failed + regression sets",
+            )
         # 回归集单独失败时也要有反馈(此前只处理 failed 集,回归失败反馈会悬空);
         # failed+regression 的失败签名合并成一组做"连续相同"检测(重复错误 → 换思路提示)
         failing_cases = [
@@ -906,6 +1643,17 @@ class TaskNodes:
                 "regression_ok": regression_report.all_passed,
             },
         )
+        self._note_memory(
+            "record_evidence",
+            source="platform.verify",
+            stage="VERIFY",
+            round_no=state["round_no"],
+            detail="平台独立重跑双测试集(判定不采信模型自述)",
+            workspace_revision=self.ctx.workspace_revision if self.ctx else 0,
+            verdict=(
+                f"failed_ok={failed_report.all_passed} regression_ok={regression_report.all_passed}"
+            ),
+        )
         return update
 
     def route_verify(self, state: TaskState) -> str:
@@ -927,12 +1675,35 @@ class TaskNodes:
         非资源类拒绝(取消/空 diff/验证缺失)收敛 VERIFY_FAILED,语义不混装。
         """
         assert self.ledger is not None
+        diff = working_tree_diff(self.workspace)
         decision = acceptance_from_state(
             state,
             ledger=self.ledger,
-            diff_non_empty=not working_tree_diff(self.workspace).is_empty,
+            diff_non_empty=not diff.is_empty,
             cancelled=bool(self.cancel_event is not None and self.cancel_event.is_set()),
         )
+        # G14 候选绑定:终局只认"当前工作区 == 冻结候选"。apply 冻结后的任何额外改动
+        # (恢复漂移/落盘篡改/补丁消失)都不得把旧候选的验证结论套到新代码上。
+        binding_ok, binding_reason = candidate_binding_ok(
+            run_dir=self.report_dir.parent,
+            state=state,
+            workspace_diff_text=diff.diff_text,
+        )
+        if not binding_ok:
+            decision.resolved = False
+            if decision.validation_status == VALIDATION_PASSED:
+                decision.validation_status = VALIDATION_FAILED
+            decision.reasons.append("candidate binding: " + binding_reason)
+            self.tracker.record(
+                tool="candidate_binding",
+                round_no=state["round_no"],
+                state="FINISH",
+                input_payload={
+                    "candidate_id": state.get("candidate_id"),
+                    "candidate_hash": state.get("candidate_hash"),
+                },
+                error=binding_reason,
+            )
         self.tracker.record(
             tool="final_acceptance",
             round_no=state["round_no"],
@@ -1037,26 +1808,75 @@ class TaskNodes:
             patch_applied=False,
             finish_declared=False,
         )
+        manager = self.subtask_manager
+        reserved_budget = 0
         try:
-            outcome = run_plain_loop(
-                cand_ctx,
-                self.branch_model_factory(index),  # type: ignore[misc]
-                self._propose_prompt(state, rounds),
-                max_turns=self.max_turns,
-                round_no=rounds,
-                state_label=f"BRANCH-{index}",
-                extra_system=VARIANT_HINTS.get(index, ""),
-                allowed_tools=WRITE_TOOLS,
-                # 候选各拿任务级余量的一半:两个候选合计不超一轮双倍开销。
-                # max(…, 1):余量极小时 0 会被 plain_loop 当"不限制",
-                # 脚枪式语义(复盘 P2);至少给 1,让候选在首个 turn 边界即被预算拦下
-                token_budget=max(reserve // 2, 1) if reserve else reserve,
-                deadline_epoch=self.deadline_epoch,
-                context_window_tokens=settings.context_window_tokens,
-                context_keep_recent_turns=settings.context_keep_recent_turns,
-                cancel_event=self.cancel_event,
-                ledger=self.ledger,
-            )
+            if manager is None:
+                # 委派关闭:逐字节保持旧行为(直跑主线循环,预算取任务余量一半)
+                outcome = run_plain_loop(
+                    cand_ctx,
+                    self.branch_model_factory(index),  # type: ignore[misc]
+                    self._propose_prompt(state, rounds),
+                    max_turns=self.max_turns,
+                    round_no=rounds,
+                    state_label=f"BRANCH-{index}",
+                    extra_system=VARIANT_HINTS.get(index, ""),
+                    allowed_tools=WRITE_TOOLS,
+                    # 候选各拿任务级余量的一半:两个候选合计不超一轮双倍开销。
+                    # max(…, 1):余量极小时 0 会被 plain_loop 当"不限制",
+                    # 脚枪式语义(复盘 P2);至少给 1,让候选在首个 turn 边界即被预算拦下
+                    token_budget=max(reserve // 2, 1) if reserve else reserve,
+                    deadline_epoch=self.deadline_epoch,
+                    **self.runtime.loop_settings(),
+                    cancel_event=self.cancel_event,
+                    ledger=self.ledger,
+                )
+            else:
+                # G13:候选接入统一 child runner —— 名额由 _run_fallback_branches 的
+                # acquire_bulk 占,预算从子任务池预留(不叠加第二套额度),结果记 ChildResult
+                from app.agent.subtasks import _subtask_ctx, run_subtask_loop
+
+                subtask_budget = manager.per_subtask_budget()
+                if subtask_budget:
+                    if not manager.ledger.reserve_subtask(tokens=subtask_budget, stage="branch"):
+                        # 子任务额度不足:候选拒绝执行,不跑 LLM/pytest,按"无补丁"计
+                        return BranchCandidate(
+                            index=index,
+                            workspace=cand_ws,
+                            diff_text="",
+                            failed_ok=False,
+                            regression_ok=False,
+                            failed_remaining=len(self.bug.failed_tests),
+                            failed_cases=[],
+                            turns=0,
+                            tokens_used=0,
+                            tokens_prompt=0,
+                            tokens_completion=0,
+                            error="subtask budget insufficient",
+                        )
+                    reserved_budget = subtask_budget
+                outcome = run_subtask_loop(
+                    _subtask_ctx(
+                        cand_ctx,
+                        task_id=f"{self.ctx.task_id}-cand{index}",
+                        workspace=cand_ws,
+                        baseline_commit=sha,
+                        report_dir=cand_reports,
+                    ),
+                    self.branch_model_factory(index),  # type: ignore[misc]
+                    self._propose_prompt(state, rounds),
+                    max_turns=manager.max_turns,
+                    round_no=1,
+                    state_label=f"BRANCH-{index}",
+                    allowed_tools=WRITE_TOOLS,
+                    token_budget=subtask_budget or None,
+                    deadline_epoch=self.deadline_epoch,
+                    absolute_deadline_epoch=self.absolute_deadline_epoch,
+                    cancel_event=self.cancel_event,
+                    runtime=self.runtime,
+                    ledger=self.ledger,
+                    extra_system=VARIANT_HINTS.get(index, ""),
+                )
         except TaskCancelled:
             raise  # 取消语义不得被候选吞掉
         except BudgetError as exc:
@@ -1074,6 +1894,12 @@ class TaskNodes:
             )
         except Exception as exc:  # 候选失败不拖垮主流程:按"未修好"计分
             note = f"{type(exc).__name__}: {exc}"
+        finally:
+            # G13:候选结算(含取消/崩溃路径)——子任务池先预留再结算,不蒸发不泄漏
+            if manager is not None and reserved_budget:
+                manager.ledger.settle_subtask(
+                    reserved_tokens=reserved_budget, tokens_used=outcome.tokens_used
+                )
 
         diff = working_tree_diff(cand_ws)
         failed_report, _ = run_pytest(
@@ -1094,6 +1920,39 @@ class TaskNodes:
         )
         # 候选阶段不做 E3 双跑:双跑复核属于主流程的 resolved 判定,择优阶段
         # 多一倍 pytest 开销换来的只是"同一伪绿再验一次",与择优目的无关
+        if manager is not None:
+            # G13:候选也记 ChildResult(报告能说明每个候选的贡献与终止原因);
+            # 候选引用 = 自身 workspace 的 diff hash,供报告/审计追踪。
+            from app.agent.subtasks import ChildResult
+
+            termination = "finished"
+            error = ""
+            if note.startswith("预算超限"):
+                termination = "budget"
+                error = note
+            elif note:
+                termination = "crashed"
+                error = note
+            manager.record_child(
+                ChildResult(
+                    role="repair_candidate",
+                    subtask_id=f"cand{index}",
+                    ok=outcome.success,
+                    conclusion=outcome.summary,
+                    candidate_id=f"cand{index}",
+                    candidate_hash=(
+                        hashlib.sha256(diff.diff_text.encode("utf-8")).hexdigest()
+                        if diff.diff_text.strip()
+                        else ""
+                    ),
+                    turns=outcome.turns,
+                    tokens_used=outcome.tokens_used,
+                    tokens_prompt=outcome.tokens_prompt,
+                    tokens_completion=outcome.tokens_completion,
+                    termination=termination,
+                    error=error,
+                )
+            )
         return BranchCandidate(
             index=index,
             workspace=cand_ws,
@@ -1148,9 +2007,39 @@ class TaskNodes:
         )
         reserve = self._token_budget_for(state) or 0
         count = max(2, settings.branch_candidates)
-        with ThreadPoolExecutor(max_workers=count) as pool:
-            futures = [pool.submit(self._run_candidate, state, i, reserve) for i in range(count)]
-            cands = [f.result() for f in futures]  # TaskCancelled 在此向上抛出
+        manager = self.subtask_manager
+        # G13:Best-of-N 候选各消耗一个子任务名额(与委派共用 max_delegations/
+        # max_concurrency 上限),不因分支创建重授次数/并发;子任务池名额不足则
+        # 候选无法创建,按"无补丁"回到单线下一轮。
+        acquired = manager.acquire_bulk(count) if manager is not None else count
+        if acquired <= 0:
+            self.tracker.record(
+                tool="adaptive_branch_no_slot",
+                round_no=round_no,
+                state="PROPOSE_PATCH",
+                error="subtask slots unavailable for branch candidates",
+            )
+            return {
+                "turns": state.get("turns", 0),
+                "tokens_used": state.get("tokens_used", 0),
+                "tokens_prompt": state.get("tokens_prompt", 0),
+                "tokens_completion": state.get("tokens_completion", 0),
+                "status": "PROPOSE_PATCH",
+                "round_no": round_no + 1,
+                "branching_used": True,
+                "verify_failed_ok": False,
+                "verify_regression_ok": False,
+                "feedback": ("自适应分支:子任务名额/并发不足,候选未能创建;继续按单线修复。"),
+            }
+        try:
+            with ThreadPoolExecutor(max_workers=count) as pool:
+                futures = [
+                    pool.submit(self._run_candidate, state, i, reserve) for i in range(acquired)
+                ]
+                cands = [f.result() for f in futures]  # TaskCancelled 在此向上抛出
+        finally:
+            if manager is not None:
+                manager.release_bulk(acquired)
 
         winner = self._select_candidate(cands)
         self.tracker.record(
@@ -1273,7 +2162,81 @@ class TaskNodes:
                 "verify_failed_ok": state.get("verify_failed_ok", False),
                 "verify_regression_ok": state.get("verify_regression_ok", False),
             }
+        # G14 有界停止:同一组失败连续 `max_identical_failures` 轮、且换思路的出口
+        # (自适应分支)已用过或不存在 → 收敛 NEEDS_REVIEW,不再整体 reset 重试
+        # (不靠增加 max_rounds 绕预算)。分支可用且未用 → 交给下面的分支路径重新规划。
+        limit = int(getattr(get_settings(), "max_identical_failures", 0) or 0)
+        streak = int(state.get("repeat_streak", 0) or 0)
+        if (
+            limit > 0
+            and streak >= limit
+            and (state.get("branching_used", False) or self.branch_model_factory is None)
+        ):
+            self.tracker.record(
+                tool="bounded_stop",
+                round_no=state["round_no"],
+                state="VERIFY",
+                input_payload={"round": state["round_no"]},
+                output_summary={
+                    "repeat_streak": streak,
+                    "max_identical_failures": limit,
+                    "branching_used": state.get("branching_used", False),
+                    "preserved_diff_bytes": len(preserved),
+                },
+                error=f"identical failures {streak} >= {limit} without new evidence",
+            )
+            return {
+                "status": "NEEDS_REVIEW",
+                "outcome": "needs_review",
+                "error": (
+                    f"bounded stop: identical failures {streak} >= {limit} without new evidence"
+                ),
+                "preserved_diff": preserved,
+            }
+
+        # G14 v2 续改:候选门禁干净且轮数未耗尽 → reset 到基线后重应用具名候选,
+        # 下一轮 PROPOSE 从该候选继续修复(保留已证实的局部进展,避免每次整体
+        # reset 丢弃)。"部分测试通过"只是一条事实——续改产生的新候选会重新过
+        # 门禁并完整 verify,旧验证结论全部失效。分支信号优先(上面 bounded-stop
+        # 未拦截且此处 not _should_branch):streak>=2 仍走 reset+分支,不截断换思路。
+        candidate_id = str(state.get("candidate_id") or "")
+        if (
+            candidate_id
+            and state["round_no"] < self.max_rounds
+            and not self._should_branch(state)
+            and is_candidate_gate_clean(self.report_dir.parent, candidate_id)
+        ):
+            reapply_candidate(self.workspace, self.report_dir.parent, candidate_id)
+            if self.ctx is not None:
+                self.ctx.workspace_revision += 1
+                self._note_memory("mark_stale", from_revision=self.ctx.workspace_revision)
+            self.tracker.record(
+                tool="continue_from_candidate",
+                round_no=state["round_no"],
+                state="PROPOSE_PATCH",
+                input_payload={"round": state["round_no"]},
+                output_summary={"candidate_id": candidate_id},
+            )
+            return {
+                "status": "PROPOSE_PATCH",
+                "round_no": state["round_no"] + 1,
+                # 续改起点候选:apply 冻结新候选时作父引用;candidate_id 保留旧值,
+                # 下一轮 apply 幂等/覆盖。验证结论置 False,完整重验。
+                "continue_from_candidate_id": candidate_id,
+                "verify_failed_ok": False,
+                "verify_regression_ok": False,
+                "feedback": (
+                    f"候选 {candidate_id} 门禁通过但验证未全绿,已从该候选继续修复"
+                    "(未整体复位到源码基线);请在候选基础上做最小修改。"
+                ),
+            }
+
         reset_workspace(self.workspace, self.baseline_commit)
+        # 工作区回到基线 ⇒ 此前在"打过补丁的工作区"里读到的行范围不再是现状。
+        # 代数由 graph 在这里递增(复位是平台动作,不经工具层),并立刻把旧观测标失效。
+        if self.ctx is not None:
+            self.ctx.workspace_revision += 1
+            self._note_memory("mark_stale", from_revision=self.ctx.workspace_revision)
         self.tracker.record(
             tool="reset_workspace",
             state="PROPOSE_PATCH",
@@ -1294,6 +2257,11 @@ class TaskNodes:
         return {
             "status": "PROPOSE_PATCH",
             "round_no": state["round_no"] + 1,
+            # G14:整体复位后清候选引用——残留的旧 candidate_hash 会让下一轮 finish
+            # 绑定判定误拒("工作区 diff != 旧候选"),也必须从续改谱系里摘除
+            "continue_from_candidate_id": "",
+            "candidate_id": "",
+            "candidate_hash": "",
             "verify_failed_ok": False,
             "verify_regression_ok": False,
             # M4 失败反思:工作区已被复位,下一轮 PROPOSE 是新会话,除了失败用例还得知道
@@ -1306,10 +2274,11 @@ class TaskNodes:
     def route_rollback(self, state: TaskState) -> str:
         """BUDGET_EXCEEDED → 终点;VERIFY_FAILED(S10a 对照臂首次验证失败即终局)
         → 终点(agent 臂的 rollback 不产出该状态,此边对默认臂是死代码);
-        APPLY_PATCH(分支合流)→ apply 节点做图级门禁复核;
+        NEEDS_REVIEW(G14 有界停止:连续相同失败无新增证据)→ 终点,不得落回
+        plan 死循环;APPLY_PATCH(分支合流)→ apply 节点做图级门禁复核;
         其余 → 下一轮重规划(M5:返回串仍是既有的 "propose" 键名,builder 把它接到 plan 节点,
         这样状态串与本函数返回值都不动,只有节点目标改变)。"""
-        if state["status"] in ("BUDGET_EXCEEDED", "VERIFY_FAILED"):
+        if state["status"] in ("BUDGET_EXCEEDED", "VERIFY_FAILED", "NEEDS_REVIEW"):
             return "end"
         if state["status"] == "APPLY_PATCH":
             return "apply"

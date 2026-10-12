@@ -48,6 +48,12 @@ class RunRow:
     error: str | None = None
     finished_stamp: float = 0.0  # report.json 修改时间:目录名格式各异,以文件时间为准
     provenance: dict[str, Any] = field(default_factory=dict)  # T10.1 批次溯源(透传)
+    # G04 任务身份:来自同 run_dir 的 task_spec.json(冻结契约)。三个 hash 在场才能判
+    # "两臂跑的是同一道题的同一份输入";缺失一律空串,由配对诊断报出来,不当"相同"。
+    task_spec_hash: str = ""
+    source_snapshot_hash: str = ""
+    test_set_hash: str = ""
+    resources: dict[str, Any] = field(default_factory=dict)
     localized: bool = False
     localized_strict: bool = False
     patch_applied: bool = False
@@ -57,6 +63,32 @@ class RunRow:
     # S09:参考缺失标注与期望文件覆盖率(仅评测使用 reference,不进模型上下文)
     reference_missing: bool = False
     expected_coverage: float | None = None
+
+
+def _task_identity(run_dir: Path) -> tuple[str, str, str]:
+    """从 run_dir/task_spec.json 取任务/源码/测试清单身份;缺文件一律空串(不是"相同")。"""
+    path = run_dir / "task_spec.json"
+    if not path.is_file():
+        return "", "", ""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        log.warning("skip unreadable task_spec: %s", path)
+        return "", "", ""
+    spec = data.get("spec") if isinstance(data.get("spec"), dict) else data
+    from app.task_spec import stable_hash
+
+    test_set = stable_hash(
+        {
+            "failed": list(spec.get("failed_tests") or []),
+            "regression": list(spec.get("regression_tests") or []),
+        }
+    )[:16]
+    return (
+        str(spec.get("task_spec_hash") or data.get("task_spec_hash") or ""),
+        str(spec.get("source_snapshot_hash") or ""),
+        test_set,
+    )
 
 
 def load_run(run_dir: Path) -> RunRow | None:
@@ -69,6 +101,7 @@ def load_run(run_dir: Path) -> RunRow | None:
     except (OSError, json.JSONDecodeError):
         log.warning("skip unreadable report: %s", report_path)
         return None
+    spec_hash, source_hash, test_hash = _task_identity(run_dir)
     return RunRow(
         task_id=data.get("task_id", run_dir.name),
         bug_id=data.get("bug_id", ""),
@@ -88,6 +121,10 @@ def load_run(run_dir: Path) -> RunRow | None:
         error=data.get("error"),
         finished_stamp=report_path.stat().st_mtime,
         provenance=data.get("provenance") if isinstance(data.get("provenance"), dict) else {},
+        task_spec_hash=spec_hash,
+        source_snapshot_hash=source_hash,
+        test_set_hash=test_hash,
+        resources=data.get("resources") if isinstance(data.get("resources"), dict) else {},
     )
 
 
@@ -119,6 +156,70 @@ def latest_per_bug(rows: list[RunRow]) -> list[RunRow]:
     for row in sorted(rows, key=sort_key):
         latest[(row.bug_id, str(row.provenance.get("arm") or "agent"))] = row
     return list(latest.values())
+
+
+def pair_runs(
+    rows: list[RunRow],
+    *,
+    arms: tuple[str, ...],
+    expected_repetitions: int | None = None,
+) -> dict[str, Any]:
+    """按 `(task_identity, arm, repetition)` 配对,**保留每一次运行**。
+
+    `latest_per_bug` 是历史汇总口径(每题取最新),它会把重复之间的方差抹掉——
+    三次里挑最好看的那次不是证据,是叙事(G04)。这里一条都不丢:
+    - 同一个 (bug, arm) 里出现两个相同 task_id ⇒ `duplicate_run_ids`(记账出错的第一信号)
+    - 某臂缺该题的运行 ⇒ `missing_cells` ⇒ `unpaired_bugs`
+    - `expected_repetitions` 给定时,次数不符即 `repetition_mismatch`(不补跑、不剔除)
+    """
+
+    def arm_of(row: RunRow) -> str:
+        return str(row.provenance.get("arm") or "agent")
+
+    cells: dict[tuple[str, str], list[RunRow]] = {}
+    duplicates: list[str] = []
+    for row in rows:
+        key = (row.bug_id, arm_of(row))
+        bucket = cells.setdefault(key, [])
+        if any(existing.task_id == row.task_id for existing in bucket):
+            duplicates.append(f"{row.bug_id}@{arm_of(row)} task_id={row.task_id}")
+        bucket.append(row)
+
+    bugs = sorted({key[0] for key in cells})
+    missing = sorted(f"{bug}@{arm}" for bug in bugs for arm in arms if (bug, arm) not in cells)
+    unpaired = sorted({bug for bug in bugs if any((bug, arm) not in cells for arm in arms)})
+    mismatch = sorted(
+        f"{bug}@{arm}={len(cells[(bug, arm)])}"
+        for (bug, arm) in cells
+        if expected_repetitions is not None and len(cells[(bug, arm)]) != expected_repetitions
+    )
+    kept = sum(len(bucket) for bucket in cells.values())
+    return {
+        "pairing": "task_identity+arm+repetition",
+        "arms": list(arms),
+        "bugs_total": len(bugs),
+        "runs_kept": kept,
+        "cells": {
+            f"{bug}@{arm}": [
+                {
+                    "task_id": r.task_id,
+                    "repetition": index,
+                    "run_dir": str(r.run_dir),
+                    "verdict": r.verdict,
+                    "status": r.status,
+                    "tokens_used": r.tokens_used,
+                    "duration_ms": r.duration_ms,
+                    "task_spec_hash": r.task_spec_hash,
+                }
+                for index, r in enumerate(sorted(bucket, key=lambda x: x.task_id), start=1)
+            ]
+            for (bug, arm), bucket in sorted(cells.items())
+        },
+        "duplicate_run_ids": duplicates,
+        "missing_cells": missing,
+        "unpaired_bugs": unpaired,
+        "repetition_mismatch": mismatch,
+    }
 
 
 def expected_files_for(bug_id: str, bugs_root: Path | str = Path("bugs")) -> list[str]:

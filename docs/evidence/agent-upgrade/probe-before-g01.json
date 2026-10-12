@@ -1,0 +1,21 @@
+{
+  "offline_probes": {
+    "plan_plain_text": {
+      "calls": 3,
+      "error": "agent loop exceeded max_turns=3"
+    },
+    "plan_visible_schema_count": 10,
+    "usage_missing_labeled": "provider",
+    "usage_missing_estimated_tokens": 289,
+    "mocked_http_calls": 1,
+    "sent_schema_count": 10,
+    "comparison_changed_outcome": "rejected: unregistered differences between arms:\n  probe: verdict differs: 'resolved' != 'failed'",
+    "comparison_changed_context_only": "accepted",
+    "fold_output": {
+      "raw_chars": 12035,
+      "visible_chars": 8015,
+      "valid_json": false,
+      "tail_marker_preserved": false
+    }
+  }
+}

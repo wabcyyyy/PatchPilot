@@ -40,9 +40,14 @@ def run_task_graph(
     model_name: str = "",
     cancel_event: threading.Event | None = None,
     branch_model_factory: Callable[[int], Model] | None = None,
+    subtask_model_factory: Callable[[str], Model] | None = None,
     resume: bool = False,
     tracker_sink: Callable[[dict[str, Any]], None] | None = None,
     arm: str = "agent",
+    mode: str = "repair",
+    approval_event: threading.Event | None = None,
+    on_waiting: Callable[[], None] | None = None,
+    interaction: Any | None = None,
 ) -> Any:
     """执行一个任务(状态机引擎);返回与 plain 引擎一致的 TaskResult。
 
@@ -96,7 +101,7 @@ def run_task_graph(
     )
     # 批次溯源:与 plain 引擎同口径,任务开始即取证
     result.provenance = build_provenance(
-        result.model_provider, model_name, "graph", max_turns=max_turns
+        result.model_provider, model_name, "graph", arm, max_turns=max_turns, policy=policy
     )
     result.provenance["arm"] = arm
     result.provenance["experiment_policy"] = policy.describe()
@@ -109,6 +114,10 @@ def run_task_graph(
         if get_settings().task_timeout_seconds > 0
         else None
     )
+    # G11:绝对寿命上限同样在受理时建立并进 state——用户等待可以顺延 deadline,
+    # 但不能把任务寿命拖过这条线;恢复从 state 读回原值,不重授。
+    lifetime = get_settings().task_absolute_lifetime_seconds
+    absolute_deadline_epoch = time.time() + lifetime if lifetime > 0 else None
     checkpointer = None
     preserved_diff: str | None = None
     nodes: TaskNodes | None = None  # 异常路径也要能读到账本(S02:资源状态不写 0)
@@ -123,9 +132,19 @@ def run_task_graph(
             max_rounds=max_rounds if max_rounds is not None else bug.max_rounds,
             max_turns=max_turns,
             deadline_epoch=deadline_epoch,
+            absolute_deadline_epoch=absolute_deadline_epoch,
             cancel_event=cancel_event,
             branch_model_factory=branch_model_factory,
+            # G13:子任务模型工厂(角色 → 模型)。由调用方注入;None = 委派未配置
+            subtask_model_factory=subtask_model_factory,
             policy=policy,
+            price_model=model_name,
+            # G10:验收等待接线由调用方(服务层)注入;直接调用方不传 = headless,
+            # diagnose 模式到点不等待、如实 needs_review
+            approval_event=approval_event,
+            on_waiting=on_waiting,
+            # G11:ask_user 的等待通道(同 G10 的口径:不传 = headless 不等待)
+            interaction=interaction,
         )
         checkpointer = (
             make_sqlite_checkpointer(run_dir / "checkpoints.sqlite") if use_checkpoint else None
@@ -169,8 +188,15 @@ def run_task_graph(
                     and bug.replay_script_path is not None
                     else None
                 ),
+                mode=mode,
             )
             write_task_spec_file(run_dir, task_spec)
+        # G10:任务模式与验收身份随受理契约走(旧契约缺 mode 字段按 repair 读);
+        # 回填给节点/工具层——propose_acceptance/manifest 通过这些字段与契约绑定,
+        # 受理后改环境变量不改变已受理任务走的是哪条路径。
+        nodes.mode = task_spec.mode
+        nodes.source_snapshot_hash = task_spec.source_snapshot_hash
+        nodes.task_spec_hash = task_spec.task_spec_hash
         graph = build_graph(nodes, checkpointer=checkpointer)
 
         initial: TaskState = {
@@ -185,6 +211,8 @@ def run_task_graph(
             "turns": 0,
             "tokens_used": 0,
             "deadline_epoch": deadline_epoch,
+            # G11:绝对寿命上限进 state(恢复不重授;旧检查点缺省 = None = 不钳制)
+            "absolute_deadline_epoch": absolute_deadline_epoch,
         }
         # recursion_limit 随 max_rounds 推导(R2 整改;M5 起 5N+8)。斜率不靠推算:满轮数
         # 重试路径实测每轮 5 个 superstep、固定段 3 个(N=2/3/6 → 13/18/33,三点共线,
@@ -257,6 +285,9 @@ def run_task_graph(
             result.candidate_id = str(final.get("candidate_id") or "")
             result.candidate_hash = str(final.get("candidate_hash") or "")
             result.verification_attempt_id = str(final.get("verification_attempt_id") or "")
+            # G13:子任务贡献进报告(委派与分支候选都记;未开启委派时为空列表)
+            if nodes is not None and nodes.subtask_manager is not None:
+                result.subtasks = [c.as_dict() for c in nodes.subtask_manager.children]
             # S02(spec §3.1):终局验收的三态与用量事实进报告;state 未携带时
             # (预算路径提前收尾,没走到 finish 节点)回读账本真相,不冒充 unknown
             result.validation_status = final.get("validation_status", "not_run")
@@ -317,6 +348,10 @@ def run_task_graph(
         result.cost_usd = estimate_cost(
             result.model_name, result.tokens_prompt, result.tokens_completion
         )
+        # G03:资源维度摘要与 plain 引擎同口径(异常路径也要有,不能只在正常收尾时才有数)
+        from app.graph.resources import report_summary
+
+        result.resources = report_summary(nodes.ledger if nodes is not None else None)
         # N-17 整改:与 plain 引擎同口径,tmp + os.replace 原子写,轮询方不会读到半截文件
         from app.evals.driver import _write_report
 

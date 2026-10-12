@@ -45,5 +45,5 @@ scripts/compose_smoke.sh 已就绪但无留档的实测运行——P3-7 如实�
 
 - `app/config.py` — `execution_backend: str = "local"`
 - `app/config.py` — `docker 后端已接线并有 09-18 端到端产物`
-- `docs/docker-isolation-notes.md` — `实验结果(2026-09-16 实测)`
+- `docs/archive/docker-isolation-notes.md` — `实验结果(2026-09-16 实测)`
 

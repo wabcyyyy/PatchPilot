@@ -56,9 +56,10 @@ def git_diff(ctx: ToolContext) -> ToolResult:
         output={
             "changed_files": diff.changed_files,
             "is_empty": diff.is_empty,
-            "diff": diff.diff_text
-            if len(diff.diff_text) <= 20_000
-            else diff.diff_text[:20_000] + "\n... (truncated)",
+            # 整份 diff 交给统一的那一道有界视图(app/tools/registry.py + output_filter):
+            # 此前这里自己 `[:20_000] + "(truncated)"`,同一份信息于是有两套裁剪器,而被切掉的
+            # 尾巴既没落盘也取不回来——模型只能重跑一次 apply_patch 再猜改了哪些行。
+            "diff": diff.diff_text,
         },
     )
 
@@ -68,7 +69,16 @@ def apply_patch(ctx: ToolContext, patch_text: str) -> ToolResult:
 
     任何一步拒绝都返回带拒绝原因的失败信息,交由模型在下一轮修正;协议级拒绝
     与门禁拒绝共用 `[gate]` 词表,模型不必猜是哪一道拦的。
+    G10:diagnose_then_repair 模式下,验收清单冻结之前不生产补丁——这是"可信批准
+    先于任何生产补丁"的结构性保证,不依赖图路由(工具层直接拒绝)。
     """
+    if getattr(ctx, "mode", "repair") == "diagnose_then_repair" and not getattr(
+        ctx, "acceptance_frozen", False
+    ):
+        return ToolResult.fail(
+            "acceptance manifest is not frozen yet: issue-only tasks cannot produce"
+            " patches before the acceptance list is approved and frozen"
+        )
     try:
         sections = parse_block_patch(patch_text)
     except BlockPatchError as exc:

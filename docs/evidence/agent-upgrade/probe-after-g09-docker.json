@@ -1,0 +1,37 @@
+{
+  "started_at": "2026-10-11T11:29:15.518731+00:00",
+  "image": "patchpilot-executor:latest",
+  "pytest_collect": {
+    "ok": true,
+    "backend": "docker"
+  },
+  "pytest_selected": {
+    "ok": true
+  },
+  "python_repro": {
+    "ok": true
+  },
+  "ruff_missing_dependency": {
+    "ok": true,
+    "honest": "environment_not_ready: ruff is not installed in this execution environment"
+  },
+  "network_disabled": {
+    "ok": true,
+    "tail": "NETWORK-BLOCKED gaierror\n"
+  },
+  "env_isolation": {
+    "ok": true
+  },
+  "cancel_kills_container": {
+    "ok": true,
+    "elapsed_s": 3.4,
+    "exit_code": 137
+  },
+  "workspace_clean": {
+    "ok": true,
+    "strays": []
+  },
+  "status": "verified",
+  "failures": [],
+  "finished_at": "2026-10-11T11:29:23.385431+00:00"
+}

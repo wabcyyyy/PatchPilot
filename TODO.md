@@ -592,7 +592,7 @@
       为什么默认 1.0 而不是直接上 1.47:①历史读数与 M15 的 V1 锚点吃的是未换算的估算值,
       回溯改它等于把已入库的证据改成另一种口径;②1.47 是**这台模型 + 这批仓库**的数,
       拿它当平台默认是拍脑袋;③这个字段的价值是"让统一到真值口径变成一件可以对照的事",
-      不是替 Q3 做决定(判据见 `docs/paid-batch-preregistration-2026-10-08.md`)。
+      不是替 Q3 做决定(判据见 `docs/archive/paid-batch-preregistration-2026-10-08.md`)。
 - [x] M17.3 用例三例(`tests/test_plain_loop.py`):
       ①`test_gate_reading_at_default_is_the_unscaled_estimate` —— 默认读数逐字等于
       "真值累计 + 未换算估算",这条是钉死"不许回溯改口径"的不变量;
@@ -613,7 +613,7 @@
 
 ### M18 付费批预登记入库(2026-10-08 19:40,**状态:未启动,一分钱没花**)
 
-- [x] M18.1 新增 `docs/paid-batch-preregistration-2026-10-08.md`:题单(7 道已导入且金补丁可修的难题,
+- [x] M18.1 新增 `docs/archive/paid-batch-preregistration-2026-10-08.md`:题单(7 道已导入且金补丁可修的难题,
       改动行按 `reference.diff` 现算,口径与上一份证据文档一致)、统一参、判据、停手条件、
       成本上限全部先写死;排除的三题连理由一起写,不许事后拿来凑分母。
 - [x] M18.2 **这一批的设计重心从"分数"挪到"噪声地板"**:Q0 先做 7 题 × 3 次**同参重复**,
@@ -669,10 +669,10 @@
       仓库根 `.pytest-tmp*`(`scripts/measure_retrieval_domain.py` 的真实上游仓库缓存是它的数据源,
       删了只能重跑全量再生 —— 维持"留着"的判断,除非你另有打算)。
 
-### S 系列(spec 执行:docs/PatchPilot执行SPEC-2026-10-08.md,2026-10-08 接手)
+### S 系列(spec 执行:docs/archive/PatchPilot执行SPEC-2026-10-08.md,2026-10-08 接手)
 
 执行根 `D:/wcy/project/PatchPilot`,分支 `codex/patchpilot-reliability-20261008`
-(代码身份与 spec 审查基线 `442cd8d` 逐字核对一致,偏离声明见 docs/spec-s00-baseline-2026-10-08.md)。
+(代码身份与 spec 审查基线 `442cd8d` 逐字核对一致,偏离声明见 docs/archive/spec-s00-baseline-2026-10-08.md)。
 依赖序:S00→S01→S02a→S02b→S05a→S03→S04→S05b→S06→S07→S08→S09→S10a→S10b→S11;L01 不自动启动。
 授权边界:只实施 spec 明确列出的语义修正;禁降门禁、禁改被诊断仓库测试放行。
 
@@ -680,7 +680,7 @@
       锚点格式所致、当卡修复)、plain/graph 各 35 题 FakeLLM 基线批
       (`runs/spec-baseline-{plain,graph}-20261008`,均 35/35 resolved)、ADR-0009
       (严格验收/资源账本/时间口径/恢复证据/指标版本契约)、基线清单
-      docs/spec-s00-baseline-2026-10-08.md。首个 commit 仅文档。
+      docs/archive/spec-s00-baseline-2026-10-08.md。首个 commit 仅文档。
 - [x] S01 测试身份完整匹配与合法 node id(F3):类链/参数化/嵌套类,file 缺失与 rootdir 口径,
       白名单放行 `test_tuple[(1,2)]` 等合法 ID;新增 app/adapters/test_identity.py 与用例。
 - [x] S02a 资源账本与共享终局验收(F1):app/graph/resources.py + acceptance.py,
@@ -706,8 +706,8 @@
       预算/终局验收;manifest 登记差异,未登记差异报错。
 - [x] S10b 实验预登记 v2 与离线统计:修正旧方案八条(样本固定/ITT 分母/失败分类等),
       docs/experiment-preregistration-v2-2026-10-08.md + scripts/compare_experiments.py。
-- [x] S11 全量收口:证据索引 docs/release-evidence-2026-10-08.md、简历证据
-      docs/resume-evidence-2026-10-08.md、README/design 对齐 implemented/offline/planned 边界。
+- [x] S11 全量收口:证据索引 docs/archive/release-evidence-2026-10-08.md、简历证据
+      docs/work-notes/resume-evidence-2026-10-08.md、README/design 对齐 implemented/offline/planned 边界。
       **补录(2026-10-09)**:发布证据第 5/7 节那条"本地 uvicorn HTTP 未实跑"已按
       demo/README.md §3 命令人工实跑闭环(golden path 经真实 HTTP 栈 resolved,约 18s,
       三态验收+候选工件齐全,终态冻结直接观测),记录 docs/evidence/2026-10-09-uvicorn-http-demo.txt;

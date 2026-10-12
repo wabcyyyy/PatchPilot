@@ -29,6 +29,10 @@ class TaskState(TypedDict, total=False):
     # S02b:任务级墙钟截止时刻(epoch 秒)。执行启动时建立、随 superstep 进 checkpoint,
     # 恢复沿用原值的剩余时间(不重授);None = 不限时(旧约定 0=无限的同义)。必须可序列化。
     deadline_epoch: float | None
+    # G11:任务**绝对寿命**上限(epoch 秒;None = 不设)。用户等待时长从 deadline 里顺延,
+    # 但顺延不得越过这条上限;上限在受理时建立并随 checkpoint 持久化,恢复不重授。
+    # 旧检查点缺字段 ⇒ None ⇒ 不做绝对钳制,与加字段前逐字相同。
+    absolute_deadline_epoch: float | None
 
     # 运行时进度
     status: str
@@ -80,3 +84,11 @@ class TaskState(TypedDict, total=False):
     candidate_id: str
     candidate_hash: str
     verification_attempt_id: str
+    # G14 v2:从具名候选续改——rollback 判定"候选 gate 干净且未越界"时,把下一轮
+    # PROPOSE 的目标基线记为"续改该候选"(apply 重应用候选、不整体复位到源码基线)。
+    # 只存引用不存内容(内容在 candidates/<id>/);reset 清引用,续改产生的新候选
+    # 换新 candidate_id/hash,旧验证全部失效。
+    continue_from_candidate_id: str
+    # G10:diagnose_then_repair 的验收清单身份——diagnose 节点在冻结/沿用 manifest
+    # 时写回;报告与恢复核对"补丁生产的放行凭据是哪一份"(repair 任务恒缺省空串)
+    acceptance_manifest_hash: str

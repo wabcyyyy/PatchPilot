@@ -201,15 +201,27 @@ def _run_checks(
             exe_ok = False
 
     if collects_on_host:
-        checks.append(
-            _collect_check(
-                "collect_failed_set", python_exe, workspace, failed_tests, timeout_seconds
+        if not failed_tests and not regression_tests:
+            # G10:issue-only 受理没有双集可收集;做一次整仓收集,只证明
+            # "解释器/pytest/仓库可收集"这一环境事实——红/绿基线由 diagnose 节点
+            # 在快照副本上重做,预检不替代 baseline(S06 的分类边界不变)
+            checks.append(
+                _collect_check("collect_repo", python_exe, workspace, [], timeout_seconds)
             )
-        )
-        checks.append(
-            _collect_check(
-                "collect_regression_set", python_exe, workspace, regression_tests, timeout_seconds
+        else:
+            checks.append(
+                _collect_check(
+                    "collect_failed_set", python_exe, workspace, failed_tests, timeout_seconds
+                )
             )
-        )
+            checks.append(
+                _collect_check(
+                    "collect_regression_set",
+                    python_exe,
+                    workspace,
+                    regression_tests,
+                    timeout_seconds,
+                )
+            )
 
     return checks

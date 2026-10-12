@@ -204,3 +204,25 @@ def compact_messages(
             break
 
     return _build(working, removed, before, stubbed, dropped)
+
+
+def protected_region(
+    messages: list[dict[str, object]], *, keep_recent_turns: int
+) -> list[dict[str, object]]:
+    """不可压区:头部(system + 首条 user)与最近 `keep_recent_turns` 个回合组,按原顺序返回。
+
+    这是"压缩救不了的那一段"(SPEC §5:保护任务约束、规则、未完成 tool-call 配对、
+    当前失败与候选、近期必要证据)。调用方用它做一次**容量判断**:这一段本身就超出
+    声明容量可用余量时,继续压缩只会把额度耗光而请求仍然装不下 —— §5 明令此时给
+    `context_capacity_exceeded`,不得反复压缩。
+
+    估算留给调用方用自己的口径(`app.llm.usage.estimate_request`,含有效 schema 与协议
+    开销)。这里不引入第二把尺子:两把尺子量出来的"超没超容量"迟早会互相打脸。
+    """
+    head_end, groups = _regions(messages)
+    pinned = max(1, keep_recent_turns)
+    tail = groups[len(groups) - pinned :] if len(groups) > pinned else groups
+    indices = set(range(head_end))
+    for group in tail:
+        indices.update(group)
+    return [messages[index] for index in sorted(indices)]

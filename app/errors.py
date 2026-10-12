@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # 只在类型位引用:异常层不许拉起 llm 包的运行时依赖
+    from app.llm.usage import ModelResponseEnvelope
+
 
 class PatchPilotError(Exception):
     """所有 PatchPilot 业务异常的基类。"""
@@ -37,6 +42,15 @@ class GateError(PatchPilotError):
     code = "gate"
 
 
+class ConflictError(PatchPilotError):
+    """幂等/状态冲突(G10 起具名):hash 竞态、清单已冻结为不同内容等。
+
+    语义与 routes 层既有映射一致:PatchPilotError 家族 → 409;这里给冲突一个
+    可区分的类型,调用方不再用裸 PatchPilotError 表达"提交的东西与现状矛盾"。"""
+
+    code = "conflict"
+
+
 class BudgetError(PatchPilotError):
     """超过轮数/时间/token 预算(BUDGET_EXCEEDED)。
 
@@ -69,3 +83,32 @@ class TaskCancelled(PatchPilotError):
     """任务被协作式取消:在下个 turn 边界生效(正在跑的 pytest/LLM 调用先完成)。"""
 
     code = "cancelled"
+
+
+class ModelResponseError(TaskError):
+    """端点**已经回复**但结构无法解释(SPEC §4 契约 3 / 验收矩阵 T03)。
+
+    此前这类情况抛裸 TaskError:choices 为空、工具 arguments 不是 JSON、被 max_tokens
+    截断的补丁,全都在异常抛出那一刻把已返回的 usage 一起丢掉,账本只剩 unknown,
+    报告看不出这笔花费。envelope 必须随异常交付——先计量,再谈解析失败。
+    """
+
+    code = "model_response"
+
+    def __init__(self, message: str, *, envelope: ModelResponseEnvelope) -> None:
+        super().__init__(message)
+        self.envelope = envelope
+
+
+class ModelTransportError(TaskError):
+    """物理请求本身失败(连接/超时/端点 5xx):已知消耗与未知笔数一起交付。
+
+    `envelope.usage.unknown_attempts` 记的是"有几次尝试的花费无从知道"——恢复与
+    预算侧据此**不重授余量**(G03),这里只负责把事实带出来。
+    """
+
+    code = "model_transport"
+
+    def __init__(self, message: str, *, envelope: ModelResponseEnvelope) -> None:
+        super().__init__(message)
+        self.envelope = envelope

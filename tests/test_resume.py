@@ -130,21 +130,6 @@ class _ScriptedModel:
         return step
 
 
-class _CrashAfter(FakeLLM):
-    """回放脚本到第 limit 次请求为止,之后按"进程死亡"退出。"""
-
-    def __init__(self, script: list[dict], limit: int) -> None:
-        super().__init__(script)
-        self._limit = limit
-        self.calls = 0
-
-    def complete(self, messages, tools):  # type: ignore[no-untyped-def]
-        self.calls += 1
-        if self.calls > self._limit:
-            raise _ProcessDied("process died mid-turn")
-        return super().complete(messages, tools)
-
-
 class _StubGraph:
     """只提供 get_state 的图替身:读侧契约是 (values, next, metadata) 三元组。"""
 
@@ -335,23 +320,45 @@ def test_snapshot_disabled_writes_nothing_and_matches_messages(
 # ---------- B 级:图 / 服务 ----------
 
 
-def test_graph_resume_finishes_and_reruns_every_gate(tmp_path: Path) -> None:
-    """崩溃在 PROPOSE 第 1 轮 → 续跑必须复位工作区、重打补丁、重跑门禁与双跑复核。"""
+def test_graph_resume_finishes_and_reruns_every_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """崩溃在 PROPOSE 第 2 轮的工具边界 → 续跑必须复位工作区、重打补丁、重跑门禁与双跑复核。
+
+    崩溃点刻意选在"第 2 轮的回复**已经结算**、run_tests 还没执行"这一刻:账本里
+    没有未定的在途调用,恢复后资源维度是 within_budget,续跑可以按既有契约判 resolved。
+    "进程死在模型请求中间"(花费无从知道 → 恢复后不得判成功)是另一种现场,G03 起由
+    `tests/test_budget_reservations.py::test_midrequest_crash_resume_cannot_certify` 单独钉。
+    """
     bug = load_bug("BUG-001", BUG_ROOT)
     task_id = "T-RESUME-GRAPH"
     run_dir = tmp_path / "runs" / task_id
-    # localize 三轮收敛 + plan(非消耗请求)+ propose 打上崩溃残留后在第 2 轮死掉
-    first_model = _CrashAfter(
+    # localize 三轮收敛 + plan(非消耗请求)+ propose 第 1 轮打上崩溃残留、第 2 轮要跑测试时死掉
+    first_model = FakeLLM(
         [
             *_localize_script(),
             {"tool": "apply_patch", "args": {"patch_text": block(_partial_diff())}},
-        ],
-        5,
+            {"tool": "run_tests", "args": {"test_set": "failed"}},
+        ]
     )
-    with pytest.raises(_ProcessDied):
-        run_task_graph(
-            bug, first_model, runs_root=tmp_path / "runs", task_id=task_id, run_dir=run_dir
-        )
+
+    import app.graph.plain_loop as plain_loop
+
+    real_execute = plain_loop.execute
+
+    def _die_on_run_tests(ctx, name, arguments, **kwargs):  # type: ignore[no-untyped-def]
+        if name == "run_tests":
+            raise _ProcessDied("process died at the tool boundary")
+        return real_execute(ctx, name, arguments, **kwargs)
+
+    monkeypatch.setattr(plain_loop, "execute", _die_on_run_tests)
+    try:
+        with pytest.raises(_ProcessDied):
+            run_task_graph(
+                bug, first_model, runs_root=tmp_path / "runs", task_id=task_id, run_dir=run_dir
+            )
+    finally:
+        monkeypatch.undo()
     target = run_dir / "workspace" / "src" / "dateparse.py"
     assert MARKER in target.read_text(encoding="utf-8")
     snapshot = load_loop_snapshot(run_dir, stage="PROPOSE_PATCH", round_no=1, task_id=task_id)

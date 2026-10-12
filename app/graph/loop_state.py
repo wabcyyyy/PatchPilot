@@ -31,6 +31,8 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 # 快照格式版本:结构变更必须升此值,旧快照随即失效(读侧按不符处理,不做兼容层)
+# G06 加的是**四个可空字段**(会话/记忆绑定),旧文件读回来落在"没绑定"上、语义与加字段前
+# 逐字相同,因此不升版本;真要改语义(比如把 unbound 判成 mismatch)才需要动这个数。
 SNAPSHOT_VERSION = 1
 # 与 trajectory.jsonl 同目录(run_dir),文件名固定——恢复方与写入方只认这一个约定
 SNAPSHOT_FILENAME = "loop_state.json"
@@ -59,6 +61,25 @@ class LoopSnapshot:
     last_content: str = ""
     task_id: str = ""
     written_at: str = ""
+    # G06 会话/记忆绑定。四个字段**全部可为空**:空 = 这份快照没有绑定(旧快照或未接记忆的
+    # 运行),恢复方按既有语义处理(阶段/轮次相符就续跑)。只有两侧都非空且不等时才算 mismatch
+    # ——把"没绑定"也判成 mismatch 会让所有历史快照在升级后一律待审,那是假装迁移成功。
+    session_id: str = ""
+    session_hash: str = ""
+    memory_version: int = 0
+    memory_hash: str = ""
+    # G07 运行 profile 绑定:第五个**可空**字段,同样的加字段理由(旧文件读回来落在
+    # "没绑定"上,语义与加字段前逐字相同)。它记的是"写这份快照时用的是哪一套窗口/轮数/
+    # 输出预留口径",恢复方据此拒绝把 legacy_v1 的历史接进 repair_v2 的运行里。
+    runtime_profile: str = ""
+    # G11 用户等待顺延后的 deadline(epoch 秒;0 = 没记)。等待用户的时长从任务 deadline
+    # 里顺延出去,而这个顺延必须活过崩溃:恢复取"state 里的 deadline"与"快照里的"较大者。
+    # 同样按加可空字段的规矩:旧快照读回来是 0.0 ⇒ 不参与比较,语义与加字段前逐字相同。
+    deadline_epoch: float = 0.0
+    # G12 工具调用账(会话的 calls 尾部):恢复时把崩溃前那本账带回内存,
+    # planned/running 卡住的调用标 unknown 并按 RECOVERY_POLICY 措辞。
+    # 旧快照缺字段 ⇒ 空表 ⇒ 与加字段前逐字相同。
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _now_iso() -> str:
@@ -181,6 +202,15 @@ def load_loop_snapshot(
             last_content=str(raw.get("last_content", "") or ""),
             task_id=str(raw.get("task_id", "")),
             written_at=str(raw.get("written_at", "")),
+            session_id=str(raw.get("session_id", "") or ""),
+            session_hash=str(raw.get("session_hash", "") or ""),
+            memory_version=int(raw.get("memory_version", 0) or 0),
+            memory_hash=str(raw.get("memory_hash", "") or ""),
+            runtime_profile=str(raw.get("runtime_profile", "") or ""),
+            deadline_epoch=float(raw.get("deadline_epoch", 0) or 0.0),
+            tool_calls=[
+                dict(row) for row in (raw.get("tool_calls") or []) if isinstance(row, dict)
+            ],
         )
     except (TypeError, ValueError) as exc:
         log.warning("task %s: loop snapshot malformed (%s); ignoring", label, exc)

@@ -7,11 +7,22 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 from app.api.auth import require_token
+from app.api.events import stream_task_events
 from app.api.report import render_markdown
-from app.api.schemas import TaskCreateIn, TaskListOut, TaskOut, TrajectoryPage
+from app.api.schemas import (
+    AcceptanceApproveIn,
+    AcceptanceOut,
+    MessageIn,
+    MessageOut,
+    QuestionOut,
+    TaskCreateIn,
+    TaskListOut,
+    TaskOut,
+    TrajectoryPage,
+)
 from app.errors import InvalidRequestError, PatchPilotError, TaskError
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_token)])
@@ -110,6 +121,88 @@ def cancel_task(task_id: str, request: Request):
         return _error(409, "conflict", str(exc), task_id=task_id)
 
 
+@router.post("/tasks/{task_id}/acceptance", response_model=AcceptanceOut)
+def approve_acceptance(task_id: str, payload: AcceptanceApproveIn, request: Request):
+    """G10:trusted_user 批准 diagnose_then_repair 任务的验收清单(冻结 manifest)。"""
+    try:
+        result = _service(request).approve_acceptance(
+            task_id,
+            proposal_id=payload.proposal_id,
+            content_hash=payload.content_hash,
+            expected_revision=payload.expected_revision,
+        )
+        return AcceptanceOut(**result)
+    except TaskError as exc:
+        return _error(404, "invalid_task", str(exc), task_id=task_id)
+    except InvalidRequestError as exc:
+        return _error(422, "invalid_request", str(exc), task_id=task_id)
+    except PatchPilotError as exc:
+        return _error(409, "conflict", str(exc), task_id=task_id)
+
+
 @router.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@router.post("/tasks/{task_id}/messages", response_model=MessageOut)
+def submit_message(task_id: str, payload: MessageIn, request: Request):
+    """G11:回答澄清问题(answer)或追加途中纠偏(steer)。
+
+    与 acceptance 批准同一条纪律:输入只经已配置鉴权的 HTTP 面写入(router 级
+    require_token),模型文字与仓库文件都不是输入来源。
+    """
+    try:
+        result = _service(request).submit_message(
+            task_id,
+            kind=payload.kind,
+            text=payload.text,
+            question_id=payload.question_id,
+            expected_revision=payload.expected_revision,
+            idem_key=payload.idem_key,
+        )
+        return MessageOut(**result)
+    except TaskError as exc:
+        return _error(404, "invalid_task", str(exc), task_id=task_id)
+    except InvalidRequestError as exc:
+        return _error(422, "invalid_request", str(exc), task_id=task_id)
+    except PatchPilotError as exc:
+        return _error(409, "conflict", str(exc), task_id=task_id)
+
+
+@router.get("/tasks/{task_id}/question", response_model=QuestionOut)
+def get_question(task_id: str, request: Request):
+    """G11:当前未回答问题与输入版本(CLI 展示问题/选项;无问题时 question=null)。"""
+    try:
+        result = _service(request).pending_question(task_id)
+        return QuestionOut(**result)
+    except TaskError as exc:
+        return _error(404, "invalid_task", str(exc), task_id=task_id)
+    except PatchPilotError as exc:
+        return _error(409, "conflict", str(exc), task_id=task_id)
+
+
+@router.get("/tasks/{task_id}/events")
+def task_events(task_id: str, request: Request, last_event_id: int = 0):
+    """G12:任务事件流(SSE)——阶段/tool_started·finished/候选/等待/usage/终态。
+
+    事实来源与 `GET /tasks/{id}/trajectory` 同一张表(不另记一份进度);续传锚点是
+    事件行自增 id:客户端可带 `?last_event_id=N` 或标准的 `Last-Event-ID` 头,
+    只收其后的事件。任务已终态且没有未读事件时立即以一条 terminal 状态帧结束。
+    """
+    service = _service(request)
+    if service.get_task(task_id) is None:
+        return _error(404, "invalid_task", f"task not found: {task_id}")
+    resume_id = max(int(last_event_id or 0), 0)
+    header = request.headers.get("last-event-id") or ""
+    if header.strip().isdigit():
+        resume_id = max(resume_id, int(header.strip()))
+    return StreamingResponse(
+        stream_task_events(service, task_id, after_id=resume_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
