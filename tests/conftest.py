@@ -108,3 +108,54 @@ def _isolated_nested_temp(
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+
+
+# ---- 分档:慢用例登记表 → `slow` 标记(快档 `-m "not slow"` 跳过,断言不变) ----
+
+SLOW_REGISTRY = Path(__file__).parent / "slow_tests.txt"
+# 跑完时点名"超过这个时长却没登记"的用例,防止快档悄悄变慢
+UNREGISTERED_SLOW_SECONDS = 5.0
+
+
+def load_slow_registry() -> set[str]:
+    """读登记表:`tests/x.py::test_y` 或整文件 `tests/x.py`;# 开头为注释。"""
+    entries: set[str] = set()
+    for raw in SLOW_REGISTRY.read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if line:
+            entries.add(line)
+    return entries
+
+
+def _registry_key(nodeid: str) -> tuple[str, str]:
+    """nodeid → (文件, 文件::函数);参数化后缀 `[...]` 去掉,按函数整体登记。"""
+    base = nodeid.split("[", 1)[0]
+    return base.split("::", 1)[0], base
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    registry = load_slow_registry()
+    for item in items:
+        file_key, func_key = _registry_key(item.nodeid)
+        if file_key in registry or func_key in registry:
+            item.add_marker(pytest.mark.slow)
+
+
+_unregistered_slow: list[tuple[str, float]] = []
+
+
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    if (
+        report.when == "call"
+        and report.duration >= UNREGISTERED_SLOW_SECONDS
+        and "slow" not in report.keywords
+    ):
+        _unregistered_slow.append((report.nodeid, report.duration))
+
+
+def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
+    if not _unregistered_slow:
+        return
+    terminalreporter.section("未登记的慢用例(请加进 tests/slow_tests.txt)")
+    for nodeid, duration in sorted(_unregistered_slow, key=lambda pair: -pair[1]):
+        terminalreporter.write_line(f"{duration:6.1f}s  {nodeid}")

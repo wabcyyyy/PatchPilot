@@ -266,6 +266,7 @@ def _materialize_tiny_repo(root: Path) -> None:
     (root / "tests" / "test_dateparse.py").write_text(_TINY_TESTS, encoding="utf-8", newline="\n")
 
 
+@pytest.mark.stress  # 单条约 100s:本地全量用 -m "not stress" 跳过,CI 全集照跑
 def test_ten_custom_tasks_concurrent_smoke(tmp_path: Path) -> None:
     """E4 并发冒烟基线:10 个 CUSTOM 任务(默认并发 2,池内 8 个真实排队)全部
     到达终态且 FINISHED/resolved,不丢任务、无 RUNNING 残留。

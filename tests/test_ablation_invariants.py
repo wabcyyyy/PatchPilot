@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from app.evals.bugset import load_bug
 from app.graph.runner import run_task_graph
 from app.llm.fake import FakeLLM
@@ -56,14 +58,29 @@ def _wrong_replay() -> list[dict[str, Any]]:
     ]
 
 
-def test_shared_stage_messages_are_identical_across_arms(tmp_path: Path) -> None:
-    """两臂共有阶段(LOCALIZE/PLAN)的模型消息逐字一致——差异只允许出现在 PROPOSE。"""
-    bug = load_bug("BUG-001", BUG_ROOT)
-    agent_model = _RecordingFake(_localize_script() + _fix_replay())
-    run_task_graph(bug, agent_model, runs_root=tmp_path / "agent", arm="agent")
+@pytest.fixture(scope="module")
+def fixed_both_arms(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> dict[str, tuple[Any, _RecordingFake]]:
+    """同一份"修得好"的回放,两臂各跑一次;下面两条不变量共用这两次运行(省一倍图运行)。
 
-    one_shot_model = _RecordingFake(_localize_script() + _fix_replay())
-    run_task_graph(bug, one_shot_model, runs_root=tmp_path / "one-shot", arm="one_shot")
+    记录型 Fake 只多存一份 messages,回放行为与 FakeLLM 逐字相同。
+    """
+    bug = load_bug("BUG-001", BUG_ROOT)
+    root = tmp_path_factory.mktemp("ablation-fixed")
+    runs: dict[str, tuple[Any, _RecordingFake]] = {}
+    for arm in ("agent", "one_shot"):
+        model = _RecordingFake(_localize_script() + _fix_replay())
+        runs[arm] = (run_task_graph(bug, model, runs_root=root / arm, arm=arm), model)
+    return runs
+
+
+def test_shared_stage_messages_are_identical_across_arms(
+    fixed_both_arms: dict[str, tuple[Any, _RecordingFake]],
+) -> None:
+    """两臂共有阶段(LOCALIZE/PLAN)的模型消息逐字一致——差异只允许出现在 PROPOSE。"""
+    agent_model = fixed_both_arms["agent"][1]
+    one_shot_model = fixed_both_arms["one_shot"][1]
 
     assert len(agent_model.seen) == len(one_shot_model.seen)
     for index, (a, b) in enumerate(zip(agent_model.seen, one_shot_model.seen, strict=False)):
@@ -118,12 +135,12 @@ def test_verification_failure_retries_only_for_agent(tmp_path: Path) -> None:
     assert "one_shot_stop" in names and "reset_workspace" not in names, "不 reset:证据原样保留"
 
 
-def test_double_run_consistency_honored_by_both_arms(tmp_path: Path) -> None:
+def test_double_run_consistency_honored_by_both_arms(
+    fixed_both_arms: dict[str, tuple[Any, _RecordingFake]],
+) -> None:
     """双跑复核是共享验收的一部分:两臂在双双转绿的路径上都真跑 verify_double_run。"""
-    bug = load_bug("BUG-001", BUG_ROOT)
-    replay = _localize_script() + _fix_replay()
-    agent = run_task_graph(bug, FakeLLM(replay), runs_root=tmp_path / "agent", arm="agent")
-    one_shot = run_task_graph(bug, FakeLLM(replay), runs_root=tmp_path / "one-shot", arm="one_shot")
+    agent = fixed_both_arms["agent"][0]
+    one_shot = fixed_both_arms["one_shot"][0]
     for result in (agent, one_shot):
         assert result.status == "FINISHED" and result.verdict == "resolved"
         names = [e["tool"] for e in _events(Path(result.run_dir))]

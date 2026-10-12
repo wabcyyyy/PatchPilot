@@ -10,7 +10,9 @@ import json
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.api.app import create_app
@@ -120,14 +122,20 @@ def test_live_stage_and_trajectory_visible_mid_run(tmp_path: Path) -> None:
         service.shutdown()
 
 
-def test_no_duplicate_events_between_sink_and_backfill(tmp_path: Path) -> None:
-    """实时 sink + 收尾补录必须与 JSONL 行数一致且无重复。"""
+@pytest.fixture(scope="module")
+def finished_plain_task(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+    """一次普通的 plain 任务跑到终态;"无重复事件"与"迟到事件不复活"两条共用它。
+
+    终态后的 JSONL 与入库轨迹在这里先拍快照——迟到事件那条会往库里追加 late-1,
+    快照保证"无重复"那条看到的仍是收尾时刻的库,与用例执行顺序无关。
+    """
+    tmp_path = tmp_path_factory.mktemp("live-finished")
     service = _service(tmp_path)
     repo_root = tmp_path / "tiny"
     _materialize_tiny_repo(repo_root)
     task, _ = service.create_task(
         repo_path=str(repo_root),
-        issue_text="dup check",
+        issue_text="finished plain task",
         failed_tests=["tests/test_dateparse.py::test_empty_string_returns_none"],
         regression_tests=["tests/test_dateparse.py::test_iso_format"],
         replay_script=REPLAY,
@@ -144,6 +152,19 @@ def test_no_duplicate_events_between_sink_and_backfill(tmp_path: Path) -> None:
         if line.strip()
     ]
     stored = service.repo.get_trajectory(task_id, limit=10000)
+    return {
+        "service": service,
+        "task_id": task_id,
+        "row": row,
+        "jsonl_lines": jsonl_lines,
+        "stored": stored,
+    }
+
+
+def test_no_duplicate_events_between_sink_and_backfill(finished_plain_task: dict[str, Any]) -> None:
+    """实时 sink + 收尾补录必须与 JSONL 行数一致且无重复。"""
+    jsonl_lines = finished_plain_task["jsonl_lines"]
+    stored = finished_plain_task["stored"]
     assert len(stored) == len(jsonl_lines), "实时+补录的并集必须恰好等于 JSONL"
     event_ids = [e["event_id"] for e in stored]
     assert len(event_ids) == len(set(event_ids)), "event_id 必须唯一"
@@ -174,22 +195,11 @@ def test_sink_failure_degrades_and_backfills(tmp_path: Path) -> None:
     assert len(stored) > 0, "收尾补录必须把缺口补齐"
 
 
-def test_late_event_cannot_revive_terminal(tmp_path: Path) -> None:
+def test_late_event_cannot_revive_terminal(finished_plain_task: dict[str, Any]) -> None:
     """终态后迟到事件:status 与进度列都不被改写(生命周期不可复活)。"""
-    service = _service(tmp_path)
-    repo_root = tmp_path / "tiny"
-    _materialize_tiny_repo(repo_root)
-    task, _ = service.create_task(
-        repo_path=str(repo_root),
-        issue_text="late event",
-        failed_tests=["tests/test_dateparse.py::test_empty_string_returns_none"],
-        regression_tests=["tests/test_dateparse.py::test_iso_format"],
-        replay_script=REPLAY,
-        engine="plain",
-    )
-    task_id = task["task_id"]
-    row = _wait_terminal(service, task_id)
-    service.shutdown()
+    service = finished_plain_task["service"]
+    task_id = finished_plain_task["task_id"]
+    row = finished_plain_task["row"]
     before = dict(row)
     service.repo.upsert_event_live(
         task_id,
