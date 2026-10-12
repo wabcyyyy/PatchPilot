@@ -1713,3 +1713,115 @@ C4:B5 批次退出全量 pytest 收据(附 --durations=30)。
   在 ubuntu 上红——POSIX 的 Path 不认盘符,`relpath_within` 把 `C:/…` 当成仓库内子目录(未越出工作区)。
   按用户裁定改边界:首段 `[A-Za-z]:` 在所有平台拒绝(与门禁 paths 规则同口径),新增平台无关单测。
   本地全量 `-m "not stress"` → 1205 passed / 31 skipped / 0 failed(22:51);Linux 侧以 CI 为证(本机 WSL/Docker 不可用)。
+
+---
+
+## B6 批次(G16):离线端到端收口与精简产品交付(2026-10-12)
+
+- **开始身份**:`3fdc8e7`(B5 退出)→ **收据身份**:`9babd48`(工作树含用户并行改动,见"范围决定");
+  六个 commit:`20e57c3`(C1 能力查询面/显式 profile/one_shot 显式拒绝)、`69ae103`(C2 G07
+  冻结契约重建)、`3e8229c`(C3 report v2 补全 + Markdown 三态)、`414dba1`(C4 演示重写)、
+  `f71bdab`(C5 场景索引 + 迁移验收)、`5825c3c`+`9babd48`(C6 发布收据与证据)。
+
+## G16 / P1:离线端到端收口(落地 20e57c3→9babd48)
+
+- **卡面范围**(SPEC G16):demo/、tests/、scripts/、README、design/ADR、
+  docs/evidence/agent-upgrade/、进度文件;业务接线修复限 G00–G14 已声明模块
+  (实际触及 app/api/{routes,schemas,service,capabilities}.py、app/task_spec.py、
+  app/agent/{cli,runtime}.py、app/graph/{runner,nodes,resume,plain_loop,loop_state}.py、
+  app/evals/{driver,single_shot,report_evidence}.py、app/llm/profiles.py——均在已声明模块内)。
+
+### 改了什么语义
+
+| 项 | 语义 |
+|---|---|
+| 能力查询面 | GET /api/capabilities:engine/profile/arm/role/model/预算真实有效值一个出口可查,读数从登记处现取;one_shot 如实登记"未接线到 API(评测 CLI 专用)" |
+| 显式 profile | TaskCreateIn.agent_profile 请求显式选运行 profile(不传=Settings,旧客户端语义不变);profile 进 effective_policy ⇒ 进 task_spec_hash ⇒ 不同 profile 不 coalesce |
+| one_shot | API 面只受理 agent:schema Literal 422 + service 直连同口径拒绝,不静默按 agent 跑 |
+| MVP 入口 | CLI submit 子命令新任务默认 repair_v2 且显式随请求发送;新旧客户端靠显式字段区分,不靠环境变量猜 |
+| G07 收口 | 执行与恢复从受理时冻结的 TaskSpec 重建有效策略(TaskRuntime.from_frozen + nodes.adopt_runtime + _policy_value 单一读取口径):窗口/输出上限/工具上限/份额/分支开关/双跑/有界停止阈值全沿用原契约;旧契约缺键按现状重建(兼容约定) |
+| 绑定牙齿 | loop 快照新增 runtime_policy_hash(可空),绑定校验在 profile 名之外比数值指纹——同名 profile 数值漂移 ⇒ 待审;旧快照无指纹不参与比较 |
+| report v2 | evidence 段(两引擎共用 _write_report 收集):验收清单提议/冻结两态、候选清单(含 gate 拒绝者)、受控命令、输入事件、运行身份(含 profile 指纹与 served_model 去重);Markdown 三态显式呈现"已验证/未运行/不确定"+ 五个证据节 |
+| 演示重写 | 六个离线演示分工不混装:issue-only 全流程(诊断→批准→门禁拒绝反馈重试→报告,repair_v2 显式入口)、澄清纠偏、子任务委派(临时题目走真实装载路径)、崩溃恢复(工具边界硬死→复位+重验);demo/README 重写为分工表 |
+| 场景索引 | offline-scenarios.md 十三类场景逐行点名测试入口;test_offline_scenarios 防腐(node id 必须真实存在 + 十三类各有一行) |
+| 迁移验收 | 旧 SQLite 行判待审不重跑;旧 loop 快照"没绑定"不算 mismatch(对照组:新快照绑定时 mismatch 照常工作);custom fake 任务 os._exit 硬死于补丁阶段 → 新实例 recover_stale 重入队 → 续跑 resolved,补丁标记串坐实"用的就是受理契约那份脚本" |
+| 发布工件 | scripts/release_receipt.py 生成 release-receipt.json(逐场景演示结果/环境与 git 身份/全量收据/已知限制/容器证据打标);release-evidence-2026-10-12.md 为导读 |
+
+### 配套接线修复(超出卡面清单的,按 SPEC §7 记录理由)
+
+| 文件 | 为什么必须动 |
+|---|---|
+| app/api/capabilities.py(新增) | G16 明文要求 engine/profile/role/model/预算真实有效值可查询 |
+| app/evals/report_evidence.py(新增) | report v2 的验收清单/命令/输入事件等只存在于 run_dir 工件,需收集器 |
+| app/evals/single_shot.py | run_plain_loop 新增 runtime_policy_hash 后,one_shot 臂未接新 kwarg(TypeError)——消融臂必须与主臂消费同一份 profile 读数 |
+| app/api/service.py(_execute) | custom 任务恢复路径拿不到回放脚本(bugs/ 无该文件,load_replay_script 判死);replay 进 task_spec_hash,从冻结契约复原,契约优先也保证题目目录事后改动不跟随 |
+
+### 最小行为证据(输入 → 实际请求/动作 → 结果)
+
+| 场景 | 实测(均离线) |
+|---|---|
+| 环境漂移 | 受理时冻结 capacity=32000 的 repair_v2 契约,运行环境漂移到 16000 → 轨迹 runtime_profile 仍是 32000/原 adopted 值(test_frozen_policy 整链用例) |
+| 同名漂移拦截 | 快照带指纹 A、当前指纹 B(名字同为 repair_v2)→ binding_mismatch 点名 runtime_policy_hash;旧快照无指纹 → 放行 |
+| profile 身份 | 同题同引擎同模型、profile 不同 → task_spec_hash 不同(不 coalesce);未知 profile 在契约构建处拒绝 |
+| one_shot 双面拒绝 | HTTP arm=one_shot → 422;service 直连 → InvalidRequestError |
+| 演示全绿 | 六个演示 subprocess 真跑(resolved/终态/报告断言),冒烟测试 4 条登记慢用例 |
+| 迁移恢复 | 硬死 → recover_stale 重入队 → 契约回放 → resolved;diff.patch 含契约标记串 |
+| 防腐 | 场景索引删一行/改一个 node id → test_offline_scenarios 红 |
+
+### 检查读数(卡内定向 → 批次全量)
+
+```
+每卡:ruff check . && ruff format --check .  → 全绿(307 files)
+定向(按卡):test_capabilities 7 / test_frozen_policy 5 / test_report_evidence 6 /
+        test_demo_smoke 6 / test_offline_scenarios+test_legacy_migration 4+4(三遍稳定)/
+        回归批次 test_api+test_task_spec+test_docs_anchors+test_service_robustness+
+        test_waiting_input+test_diagnosis_intake+test_resume 等 45–92 passed
+第一次全量 → 4 failed(见下"失败处理"),修复后重跑:
+批次最终全量 pytest -q -m "not stress" --basetemp=D:/tmp/pt --durations=30
+        → 1276 passed / 0 failed / 0 skipped / 1 deselected,exit 0,21:07
+```
+- 本机环境:`D:/wcy/project/PatchPilot/.venv`(Python 3.14.1 / pytest 9.1.1 / ruff 0.17.0);
+  basetemp 落仓库外 `D:/tmp/pt`。**Docker 守护进程本轮可用**:B5 收据里 31 个 skip 的
+  容器用例本轮真实执行并通过(0 skipped)——比 B5 收据更强,不是读数漂移。
+- 日志与收据:`docs/evidence/agent-upgrade/b6-full-pytest-2026-10-12.log`、
+  `release-receipt.json`(HEAD 5825c3c 上生成,六演示逐场景 OK);
+  导读 `release-evidence-2026-10-12.md`。
+
+### 失败处理(照实记)
+
+第一次全量 4 failed,定位均为 B6 引入(非合并/非外来):①test_model_profiles 的
+legacy"逐字"钉子没纳入 loop_settings 新键 runtime_policy_hash;②single_shot 的
+one_shot_agent 未接新 kwarg;③test_plan_stage 与 ④(已在 C2 修过同类)test 的
+plan/分支开关补丁打在 nodes.get_settings 上,冻结契约语义下受理口径不再被它拦截。
+修复:补 kwarg、钉子纳入新键、两处补丁挪到缓存 Settings(断言不降);重跑全量得最终收据。
+
+### 需要点名的范围决定与判断(不同意就说,回退成本很低)
+
+- **工作树里的并行改动不属于本批次**:会话中途工作树出现用户侧"快速迭代验证"工作流
+  (verify.ps1、scripts/ai_validate*.py、tests/test_ai_validation.py、AGENTS.md 节奏修订、
+  ci.yml concurrency、pyproject 注释等,均未提交)。C5 曾因 `git add -A` 把它们误收进
+  提交,当场 reset 重做;此后每笔提交只点名本批次文件。它们仍原样留在工作树,
+  release-receipt 的 dirty_files 如实记录;本批次的进度登记不做任何评价与合并。
+- **Settings.agent_runtime_profile 默认保持 legacy_v1**:G16 口径是"新产品入口显式
+  repair_v2、旧 API 契约/回放继续 legacy_v1",靠请求显式字段区分而非翻转全局默认
+  (翻转会让既有回放/评测语料集体换轨,那是另一个决定)。
+- **恢复路径的回放脚本以契约为唯一来源**:比"题目目录现读"更严格——语料事后改动
+  不跟随已受理任务;评测直连(run_single)不经 service,行为不变。
+- **崩溃恢复演示选工具边界而非模型调用在途**:后者账本留未知持有,续跑验证全绿也
+  拒判 resolved(G03 语义,test_budget_reservations 已钉);演示文档明写两种现场的区别。
+
+### 剩余限制(不许被读成"已证明效果")
+
+1. 离线收据只证协议与边界:修复率、轮次/成本收益、窗口配比最优性属 G17 真实端点批;
+2. repair_v2 的 64k/keep=12、max_identical_failures=3、委派并发=2/每任务 3 次是工程起点;
+3. 在线 cost/hybrid 的真实计费链路离线不覆盖;
+4. release-receipt 的容器证据 = 本机 Docker 可用且容器用例通过;CI Linux 矩阵以
+   GitHub Actions 运行记录为准,本文件不代 CI 宣言。
+
+### 费用与外部动作
+
+零模型调用、零付费、零网络(演示与测试全离线)、零 push、零删除历史结果。
+
+### 下一卡
+
+B6(G16)批次完成。G15 为可选(P3),G17 为在线批**需单独授权**;均未启动。
