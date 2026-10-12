@@ -379,3 +379,19 @@ def test_run_gates_block_shadow_via_rename_and_extension_suffixes() -> None:
         )
         gate = run_gates(diff)
         assert any(v.gate == "shadow" for v in gate.violations), (target, gate.violations)
+
+
+def test_relpath_within_rejects_drive_paths_on_every_platform(tmp_path) -> None:
+    """盘符路径在 Windows 与 POSIX 上同样越界(与门禁 paths 规则同口径);合法名不误伤。
+
+    Linux CI 首次暴露:POSIX 的 Path 不认盘符,`C:/Users/...` 曾被解析成仓库内
+    `C:` 子目录——同一路径两个平台判定不同。本例不依赖运行平台。
+    """
+    from app.tools.paths import relpath_within
+
+    for host_path in ("C:/Users/me/.aws/credentials", r"C:\Users\me\x", "d:/x.py", "C:"):
+        assert relpath_within(tmp_path, host_path) is None, host_path
+    assert (
+        relpath_within(tmp_path, "src/weird:name.py") == (tmp_path / "src/weird:name.py").resolve()
+    )
+    assert relpath_within(tmp_path, "src/ok.py") == (tmp_path / "src/ok.py").resolve()

@@ -63,6 +63,11 @@ def relpath_within(workspace: Path, rel_path: str) -> Path | None:
     posix = PurePosixPath(rel_path.replace("\\", "/"))
     if posix.is_absolute() or rel_path.startswith("~"):
         return None
+    # 盘符形态(`C:/...`、`C:\\...`)在所有平台都按绝对路径拒:POSIX 上 Path 不认盘符,
+    # 否则同一路径在 Windows 被拒、在 Linux 被当成仓库内 `C:` 子目录——与门禁
+    # (gates.py 的 paths 规则)同一口径;只看首段,`weird:name.py` 这类合法名不受影响
+    if posix.parts and re.fullmatch(r"[A-Za-z]:", posix.parts[0]):
+        return None
 
     candidate = (workspace / posix.as_posix()).resolve()
     try:
