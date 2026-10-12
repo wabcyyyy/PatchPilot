@@ -296,9 +296,10 @@ def test_branch_candidate_call_site_still_takes_only_the_variant_hint() -> None:
     """
     source = (REPO_ROOT / "app/graph/nodes.py").read_text(encoding="utf-8").splitlines()
     hits = [line.strip() for line in source if "extra_system=" in line]
-    assert hits == [
-        "extra_system=self._persistent_context(self.workspace),",
-        "extra_system=self._persistent_context(self.workspace),",
-        "extra_system=self._persistent_context(self.workspace),",
-        'extra_system=VARIANT_HINTS.get(index, ""),',
-    ]
+    skeleton = "extra_system=self._persistent_context(self.workspace),"
+    variant = 'extra_system=VARIANT_HINTS.get(index, ""),'
+    # 骨架恰好三处(localize/plan/propose);候选点可以不止一处(G13 委派路径另有一个
+    # 候选调用点),但每一处都只能带变体提示——红线是"候选不接骨架",不是"候选只有一处"
+    assert hits.count(skeleton) == 3, hits
+    candidate_sites = [line for line in hits if line != skeleton]
+    assert candidate_sites and all(line == variant for line in candidate_sites), hits

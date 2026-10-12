@@ -350,3 +350,95 @@ def test_bounded_stop_stops_identical_failures_without_progress(
     )
     off = nodes.rollback(_state(repeat_streak=9, branching_used=True))  # type: ignore[arg-type]
     assert off["status"] != "NEEDS_REVIEW"
+
+
+# ---------- 2026-10-11 合并回归修复:续改准入 / 失败反馈 / 末轮终态 ----------
+
+
+def _frozen_gate_clean_candidate(nodes: TaskNodes, ws: Path) -> str:
+    """工作区落修复 → 冻结候选 → checkpoint 记门禁通过(验证未全绿)。"""
+    from app.graph.candidate import freeze_candidate
+
+    _fix_workspace(ws)
+    run_dir = nodes.report_dir.parent
+    manifest = freeze_candidate(
+        run_dir,
+        ws,
+        task_spec_hash="t-spec",
+        source_snapshot_hash="t-src",
+        baseline_commit=nodes.baseline_commit,
+        round_no=2,
+    )
+    write_candidate_checkpoint(
+        run_dir,
+        manifest.candidate_id,
+        gate_ok=True,
+        verify_failed_ok=False,
+        verify_regression_ok=True,
+        round_no=2,
+    )
+    return manifest.candidate_id
+
+
+def test_unreadable_gate_clean_candidate_falls_back_to_full_reset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """checkpoint 说门禁干净、但候选工件被篡改:不得从未核验目录续改,也不得把图打崩
+    (修复前 reapply_candidate 抛 TaskError),而是退回整体复位并留下拒绝记录。"""
+    import json
+
+    from app.gitops.differ import working_tree_diff
+
+    nodes, ws = _nodes(monkeypatch, tmp_path)
+    candidate_id = _frozen_gate_clean_candidate(nodes, ws)
+    patch = candidates_root(nodes.report_dir.parent) / candidate_id / "diff.patch"
+    patch.write_text(patch.read_text(encoding="utf-8") + "# tampered\n", encoding="utf-8")
+
+    rolled = nodes.rollback(_state(candidate_id=candidate_id, candidate_hash="x"))  # type: ignore[arg-type]
+    assert rolled["status"] == "PROPOSE_PATCH" and rolled["round_no"] == 3
+    assert rolled["candidate_id"] == "" and rolled["continue_from_candidate_id"] == ""
+    assert working_tree_diff(ws).diff_text.strip() == "", "整体复位:工作区回到基线"
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "trajectory.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    refused = [e for e in events if e["tool"] == "continue_from_candidate"]
+    assert refused and refused[0]["output_summary"]["refused"] is True
+    assert any(e["tool"] == "reset_workspace" for e in events)
+
+
+def test_continuation_keeps_the_verify_failure_feedback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """续改时验证失败的事实(哪些测试仍失败)必须留在反馈里,续改说明接在后面。"""
+    nodes, ws = _nodes(monkeypatch, tmp_path)
+    candidate_id = _frozen_gate_clean_candidate(nodes, ws)
+    failure = f"上一轮补丁应用后仍有失败:\n- {FAILED_ID}"
+
+    rolled = nodes.rollback(  # type: ignore[arg-type]
+        _state(candidate_id=candidate_id, candidate_hash="x", feedback=failure)
+    )
+    assert rolled["status"] == "PROPOSE_PATCH"
+    assert rolled["continue_from_candidate_id"] == candidate_id
+    feedback = str(rolled["feedback"])
+    assert feedback.startswith(failure), feedback
+    assert "已从该候选继续修复" in feedback
+
+
+def test_bounded_stop_yields_to_round_exhaustion_on_the_last_round(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """有界停止是"提前停":末轮同时满足时以轮数用尽(BUDGET_EXCEEDED)收尾。"""
+    nodes, _ws = _nodes(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "app.graph.nodes.get_settings", lambda: _fake_settings(max_identical_failures=3)
+    )
+    last = nodes.rollback(  # type: ignore[arg-type]
+        _state(round_no=nodes.max_rounds, repeat_streak=3, branching_used=True)
+    )
+    assert last["status"] == "BUDGET_EXCEEDED", last
+    early = nodes.rollback(  # type: ignore[arg-type]
+        _state(round_no=nodes.max_rounds - 1, repeat_streak=3, branching_used=True)
+    )
+    assert early["status"] == "NEEDS_REVIEW", early

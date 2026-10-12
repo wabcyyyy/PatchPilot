@@ -211,11 +211,22 @@ def test_verify_double_run_trigger_unchanged_by_plan(
     )
 
 
+def _without_bounded_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """这两条测的是"满轮数重试"的图拓扑步数;G14 的有界停止(同失败连续 N 轮提前收敛)
+    会让每轮同一失败的脚本走不满轮数——它是另一项功能(test_candidate_checkpoints 覆盖),
+    这里显式关掉(0=关闭,用户可配的合法取值),让满轮路径照旧可达、公式照旧可测。"""
+    from app.config import get_settings
+
+    monkeypatch.setenv("PATCHPILOT_MAX_IDENTICAL_FAILURES", "0")
+    get_settings.cache_clear()
+
+
 def test_recursion_limit_covers_the_extra_plan_superstep(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """满轮数重试:旧公式 4N+8 在 PLAN 加入后先把任务炸成 GraphRecursionError(非结构化终态),
     runner 的 5N+8 让它以 BUDGET_EXCEEDED 收尾。pytest 全脚本化,本用例只关涉步数。"""
+    _without_bounded_stop(monkeypatch)
     _scripted_pytest(monkeypatch, verify_green=False)
     rounds = 6
     bug = load_bug("BUG-001", BUG_ROOT)
@@ -269,6 +280,7 @@ def test_recursion_limit_formula_matches_measured_superstep_cost(
     这条同时是拓扑变动的绊线:往环里加节点 → 每轮成本变 → 本用例红,逼着同步改公式,
     而不是等某个长重试任务在生产里炸出来。pytest 全脚本化,零花费。
     """
+    _without_bounded_stop(monkeypatch)
     _scripted_pytest(monkeypatch, verify_green=False)
     bug = load_bug("BUG-001", BUG_ROOT)
     measured: dict[int, int] = {}

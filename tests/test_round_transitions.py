@@ -116,8 +116,12 @@ def test_verify_failure_path_consumes_one_attempt_and_recovers(tmp_path: Path) -
     )
     assert result.status == "FINISHED" and result.verdict == "resolved"
     assert result.rounds == 2
-    names = [e["tool"] for e in _events(Path(result.run_dir))]
-    assert "reset_workspace" in names, "验证失败路径的保全+复位仍由 rollback 完成"
+    events = _events(Path(result.run_dir))
+    # G14 v2:门禁干净的候选验证失败 → rollback 从具名候选续改(不整体复位到基线);
+    # 递增仍只发生在 rollback 这一处(上面 rounds == 2 钉住)
+    continued = [e for e in events if e["tool"] == "continue_from_candidate"]
+    assert continued, "验证失败路径仍由 rollback 处理(G14 后为候选续改)"
+    assert not (continued[0].get("output_summary") or {}).get("refused"), continued[0]
 
 
 def test_first_round_success_never_enters_rollback(tmp_path: Path) -> None:

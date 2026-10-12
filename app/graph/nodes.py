@@ -42,6 +42,7 @@ from app.graph.candidate import (
     accepted_contract_hashes,
     freeze_candidate,
     is_candidate_gate_clean,
+    load_candidate,
     new_verification_attempt_id,
     reapply_candidate,
     write_candidate_checkpoint,
@@ -2165,11 +2166,14 @@ class TaskNodes:
         # G14 有界停止:同一组失败连续 `max_identical_failures` 轮、且换思路的出口
         # (自适应分支)已用过或不存在 → 收敛 NEEDS_REVIEW,不再整体 reset 重试
         # (不靠增加 max_rounds 绕预算)。分支可用且未用 → 交给下面的分支路径重新规划。
+        # 有界停止是"提前停":只在还剩轮次时生效;末轮本就要以"轮数用尽"
+        # (BUDGET_EXCEEDED)收尾,不被改写成 NEEDS_REVIEW(2026-10-11 裁定)。
         limit = int(getattr(get_settings(), "max_identical_failures", 0) or 0)
         streak = int(state.get("repeat_streak", 0) or 0)
         if (
             limit > 0
             and streak >= limit
+            and state["round_no"] < self.max_rounds
             and (state.get("branching_used", False) or self.branch_model_factory is None)
         ):
             self.tracker.record(
@@ -2200,12 +2204,25 @@ class TaskNodes:
         # 门禁并完整 verify,旧验证结论全部失效。分支信号优先(上面 bounded-stop
         # 未拦截且此处 not _should_branch):streak>=2 仍走 reset+分支,不截断换思路。
         candidate_id = str(state.get("candidate_id") or "")
-        if (
+        continue_ok = bool(
             candidate_id
             and state["round_no"] < self.max_rounds
             and not self._should_branch(state)
             and is_candidate_gate_clean(self.report_dir.parent, candidate_id)
-        ):
+        )
+        if continue_ok and load_candidate(self.report_dir.parent, candidate_id) is None:
+            # 门禁干净但候选工件读不出(缺身份字段/篡改/半写):不能从未核验的目录续改,
+            # 也不该让 reapply 抛错把整张图打崩——退回下面的整体复位(既有安全路径)
+            self.tracker.record(
+                tool="continue_from_candidate",
+                round_no=state["round_no"],
+                state="PROPOSE_PATCH",
+                input_payload={"round": state["round_no"]},
+                output_summary={"candidate_id": candidate_id, "refused": True},
+                error="candidate unreadable; falling back to full reset",
+            )
+            continue_ok = False
+        if continue_ok:
             reapply_candidate(self.workspace, self.report_dir.parent, candidate_id)
             if self.ctx is not None:
                 self.ctx.workspace_revision += 1
@@ -2225,9 +2242,16 @@ class TaskNodes:
                 "continue_from_candidate_id": candidate_id,
                 "verify_failed_ok": False,
                 "verify_regression_ok": False,
-                "feedback": (
-                    f"候选 {candidate_id} 门禁通过但验证未全绿,已从该候选继续修复"
-                    "(未整体复位到源码基线);请在候选基础上做最小修改。"
+                # 验证失败的事实(哪些测试仍失败)原样保留,续改说明接在后面——
+                # 只给"已续改"一句会让下一轮看不到失败现场
+                "feedback": "\n\n".join(
+                    part
+                    for part in (
+                        str(state.get("feedback", "") or "").strip(),
+                        f"候选 {candidate_id} 门禁通过但验证未全绿,已从该候选继续修复"
+                        "(未整体复位到源码基线);请在候选基础上做最小修改。",
+                    )
+                    if part
                 ),
             }
 

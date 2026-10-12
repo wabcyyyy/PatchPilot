@@ -214,7 +214,10 @@ def test_failed_round_replans_with_previous_plan_and_feedback(
     assert len(plans) == 2, _llm_states(Path(result.run_dir))
     assert "### 上一版计划" not in plans[0] and "上一轮补丁应用后仍有失败" not in plans[0]
     assert "### 上一版计划" in plans[1] and "上一轮补丁应用后仍有失败" in plans[1]
-    assert "上一轮补丁已回滚" in plans[1]  # M4 的 discarded-patch 形状跟着进重规划
+    # G14 v2:门禁干净的候选验证失败后走续改而非复位——重规划要知道"在候选上继续",
+    # 失败反馈不能被续改说明顶掉(上一行钉住)。整体复位路径的 discarded-patch 形状:
+    # rollback 写进 feedback 由 test_reflection 钉住,feedback 进重规划由上一行钉住
+    assert "已从该候选继续修复" in plans[1]
     # 第二轮的 propose 必须排在第二次 PLAN 之后:重规划不是并行装饰
     states = _llm_states(Path(result.run_dir))
     second_plan = len(states) - 1 - states[::-1].index("PLAN")
