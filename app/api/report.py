@@ -18,6 +18,24 @@ def _md_escape(text: Any) -> str:
     return str(text).replace("|", "\\|").replace("`", "'").replace("\n", " ")
 
 
+def _tristate(value: Any, *, kind: str) -> str:
+    """三态显式呈现(G16):每一项都翻成 已验证/未运行/不确定,并保留原值。
+
+    报告的读者不该背 validation_status 的取值表:"not_run"必须读得出"没跑过",
+    而不是被排版成一种结果。原值留在括号里,程序化核对仍以 report.json 为准。
+    """
+    raw = str(value or "") or ("unknown" if kind == "resource" else "not_run")
+    if kind == "resource":
+        if raw in {"within_budget", "exhausted", "exceeded"}:
+            return f"已验证({raw})"
+        return f"不确定({raw})"
+    if raw in {"passed", "failed", "rejected"}:
+        return f"已验证({raw})"
+    if raw == "not_run":
+        return "未运行(not_run)"
+    return f"不确定({raw})"
+
+
 def render_markdown(result: dict[str, Any]) -> str:
     """把 report.json 的内容渲染为可读 Markdown。"""
     bug_id = result.get("bug_id", "?")
@@ -36,11 +54,12 @@ def render_markdown(result: dict[str, Any]) -> str:
         "## 状态与验收证据",
         "",
         # S02(spec §3.1):三态缺一即 not_run/unknown——旧报告缺字段也如实显示,
-        # 没有验证过的任务不得因无 gate_violations 而展示"门禁已通过"
+        # 没有验证过的任务不得因无 gate_violations 而展示"门禁已通过"。
+        # G16:每项显式翻成 已验证/未运行/不确定,原值保留在括号里。
         f"- 报告结构版本:{result.get('report_schema_version', '(旧报告,无版本)')}",
-        f"- 验证状态 validation_status:{result.get('validation_status') or 'not_run'}",
-        f"- 门禁状态 gate_status:{result.get('gate_status') or 'not_run'}",
-        f"- 资源状态 resource_status:{result.get('resource_status') or 'unknown'}",
+        f"- 验证状态:{_tristate(result.get('validation_status'), kind='validation')}",
+        f"- 门禁状态:{_tristate(result.get('gate_status'), kind='gate')}",
+        f"- 资源状态:{_tristate(result.get('resource_status'), kind='resource')}",
         "",
         "## 判定过程",
         "",
@@ -107,5 +126,95 @@ def render_markdown(result: dict[str, Any]) -> str:
             if st.get("error"):
                 note += f" | {_md_escape(st['error'])}"
             lines.append(f"- {note}")
+    # G16:report v2 补全段(evidence 键,report_evidence 收集)。旧报告缺该键时
+    # 整节不出现,不冒充"没有验收/没有候选"。
+    evidence = result.get("evidence") or {}
+    if evidence:
+        acceptance = evidence.get("acceptance") or {}
+        if acceptance.get("proposed") or acceptance.get("frozen"):
+            lines += ["", "## 验收清单", ""]
+            lines.append(
+                "- 状态:**已冻结(用户批准)**"
+                if acceptance.get("frozen")
+                else "- 状态:已提议,未冻结(生产补丁未放行)"
+            )
+            if acceptance.get("manifest_hash"):
+                lines.append(
+                    f"- manifest `{str(acceptance['manifest_hash'])[:16]}…`"
+                    f"(revision {acceptance.get('revision')},批准者"
+                    f" {acceptance.get('approved_by') or 'n/a'})"
+                )
+            lines.append(
+                f"- 失败集 {len(acceptance.get('failed_tests') or [])} 项 /"
+                f" 回归集 {len(acceptance.get('regression_tests') or [])} 项"
+                "(明细见 run_dir 工件)"
+            )
+        candidates = evidence.get("candidates") or []
+        if candidates:
+            lines += ["", "## 候选", ""]
+            for cand in candidates:
+                gate_ok = cand.get("gate_ok")
+                gate = (
+                    "门禁通过" if gate_ok else ("门禁拒绝" if gate_ok is not None else "门禁未运行")
+                )
+                failed_ok, reg_ok = cand.get("verify_failed_ok"), cand.get("verify_regression_ok")
+                if failed_ok is None and reg_ok is None:
+                    verify = "验证未运行"
+                else:
+                    verify = (
+                        f"验证({failed_ok if failed_ok is not None else '未运行'}/"
+                        f"{reg_ok if reg_ok is not None else '未运行'})"
+                    )
+                parent = (
+                    f",parent `{str(cand['parent_candidate_id'])[:12]}`"
+                    if cand.get("parent_candidate_id")
+                    else ""
+                )
+                lines.append(
+                    f"- `{cand.get('candidate_id')}`(round {cand.get('round_no')}{parent}):"
+                    f"{gate} | {verify} | sha `{str(cand.get('diff_sha256'))[:12]}…`"
+                )
+        commands = evidence.get("commands") or []
+        if commands:
+            lines += ["", f"## 受控命令(共 {len(commands)} 条)", ""]
+            for cmd in commands[:10]:
+                err = f" | {_md_escape(cmd['error'])}" if cmd.get("error") else ""
+                lines.append(
+                    f"- round {cmd.get('round_no')} `{cmd.get('profile_id') or '?'}`"
+                    f" {cmd.get('state')}{err}"
+                )
+            if len(commands) > 10:
+                lines.append(f"- (其余 {len(commands) - 10} 条见轨迹)")
+        inputs = evidence.get("inputs") or {}
+        if inputs.get("questions") or inputs.get("steers"):
+            lines += ["", "## 输入事件", ""]
+            for question in inputs.get("questions") or []:
+                answered = (
+                    "已回答(" + str(question.get("answer_source") or "user") + ")"
+                    if (question.get("status") == "answered")
+                    else str(question.get("status") or "unknown")
+                )
+                lines.append(
+                    f"- 问题 `{question.get('question_id')}`:{answered} —"
+                    f" {_md_escape(question.get('question'))}"
+                )
+            for steer in inputs.get("steers") or []:
+                consumed = "已消费" if steer.get("consumed") else "未消费"
+                lines.append(f"- 纠偏({consumed}):{_md_escape(steer.get('text'))}")
+        identity = evidence.get("run_identity") or {}
+        if identity:
+            lines += ["", "## 运行身份", ""]
+            lines.append(
+                f"- profile:{identity.get('agent_profile') or 'n/a'}"
+                f"(指纹 `{str(identity.get('runtime_policy_hash'))[:16]}…`)"
+            )
+            if identity.get("task_spec_hash"):
+                lines.append(f"- task_spec `{str(identity['task_spec_hash'])[:16]}…`")
+            if identity.get("platform_commit"):
+                lines.append(f"- platform commit `{identity['platform_commit']}`")
+            if identity.get("prompts_hash"):
+                lines.append(f"- prompts `{str(identity['prompts_hash'])[:16]}…`")
+            if identity.get("served_models"):
+                lines.append(f"- served_model 观测:{_md_escape(identity['served_models'])}")
     lines += ["", f"> 轨迹与补丁:{result.get('run_dir', '.')}"]
     return "\n".join(lines) + "\n"

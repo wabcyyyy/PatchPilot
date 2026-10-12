@@ -108,6 +108,10 @@ class TaskResult:
     # G13:子任务贡献摘要(role/subtask_id/ok/termination/计量/候选引用/错误)。
     # 报告逐条列出,不以"线程池存在"充当完成证据(SPEC G13 退出条件)。
     subtasks: list[dict[str, Any]] = field(default_factory=list)
+    # G16:report v2 补全段(验收清单/候选/命令/输入事件/运行身份),收尾时从 run_dir
+    # 工件收集(report_evidence.collect_run_evidence)。旧报告缺该键 ⇒ 读方不渲染,
+    # 不冒充"没有验收/没有候选";收集失败落空结构,不拦报告本身。
+    evidence: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -127,6 +131,15 @@ def _write_report(result: TaskResult, run_dir: Path) -> None:
     发生在任务收尾 finally 里会把已完成的任务吞成 NEEDS_REVIEW——退化为
     直接覆写(放弃原子性,保住报告)。
     """
+    # G16:report v2 补全段(验收清单/候选/命令/输入事件/运行身份)在两引擎共用的
+    # 这一个落盘点收集;收集失败在 collect 内部落空结构,这里再兜一层 —— 证据补全
+    # 是附加物,任何意外都不得把已完成任务吞成 NEEDS_REVIEW。
+    try:
+        from app.evals.report_evidence import collect_run_evidence
+
+        result.evidence = collect_run_evidence(run_dir)
+    except Exception:
+        log.exception("task %s: run evidence collection failed", result.task_id)
     payload = json.dumps(result.as_dict(), ensure_ascii=False, indent=2)
     tmp = run_dir / "report.json.tmp"
     tmp.write_text(payload, encoding="utf-8")
