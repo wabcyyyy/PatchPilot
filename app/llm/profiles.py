@@ -177,6 +177,35 @@ class ModelProfile:
             "price_source": self.price_source,
         }
 
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ModelProfile:
+        """由 as_dict() 读数重建(恢复侧按受理时冻结的声明复原,不回读当前配置)。
+
+        只吃 as_dict() 的键;capacity_verified 是派生值不收。缺键落数据类默认,
+        声明本身非法(来源/容量矛盾)仍由 __post_init__ 当场拒绝——重建不放松校验。
+        """
+        assumed = data.get("assumed") or []
+        return cls(
+            requested_model=str(data.get("requested_model", "") or ""),
+            capacity_tokens=int(data.get("capacity_tokens", 0) or 0),
+            capacity_source=str(
+                data.get("capacity_source", SOURCE_UNVERIFIED) or SOURCE_UNVERIFIED
+            ),
+            output_ceiling_tokens=int(data.get("output_ceiling_tokens", 0) or 0),
+            supports_tools=data.get("supports_tools"),
+            supports_reasoning=data.get("supports_reasoning"),
+            reports_cached_usage=data.get("reports_cached_usage"),
+            assumed=tuple(str(item) for item in assumed),
+            endpoint=dict(data.get("endpoint") or {}),
+            estimate_method=str(data.get("estimate_method", ESTIMATE_METHOD) or ESTIMATE_METHOD),
+            estimate_version=str(
+                data.get("estimate_version", ESTIMATE_VERSION) or ESTIMATE_VERSION
+            ),
+            price_present=bool(data.get("price_present", False)),
+            price_version=str(data.get("price_version", "") or ""),
+            price_source=str(data.get("price_source", "") or ""),
+        )
+
 
 def profile_from_settings(settings: Any) -> ModelProfile:
     """运维显式声明 → 档案。没有声明的一律进 `assumed`,不从 `llm_model` 的名字里猜。"""

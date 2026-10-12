@@ -119,25 +119,33 @@ def binding_mismatch(
     两边都有值且不同 ⇒ 待审 —— 崩溃前那套软窗口/尾部钉住/输出预留口径已经不在场了,
     把 legacy_v1 的历史接进 repair_v2 的运行里,PROPOSE 看到的工作记忆形状与写快照时
     根本不是同一个,继续跑出来的结论没法解释。
+
+    `runtime_policy_hash`(G16 收口 G07)是名字之外的**数值牙齿**:同名 profile 下窗口/
+    输出上限/能力声明漂移,只比名字发现不了。快照带指纹而当前(按受理契约重建的)
+    profile 指纹不同 ⇒ 待审;旧快照没带指纹 ⇒ 不参与比较(兼容约定)。
     """
     if loop_snapshot is None:
         return [], {}
     snapshot_profile = getattr(loop_snapshot, "runtime_profile", "")
+    snapshot_policy_hash = str(getattr(loop_snapshot, "runtime_policy_hash", "") or "")
     if not getattr(loop_snapshot, "session_id", "") and not snapshot_profile:
         return [], {}
     current_session_id = getattr(session, "session_id", "") if session else ""
     current_memory_hash = memory.state_hash() if memory is not None else ""
     current_profile = getattr(runtime, "profile_name", "") if runtime is not None else ""
+    current_policy_hash = getattr(runtime, "policy_hash", "") if runtime is not None else ""
     readings = {
         "snapshot": {
             "session_id": loop_snapshot.session_id,
             "memory_version": loop_snapshot.memory_version,
             "runtime_profile": snapshot_profile,
+            "runtime_policy_hash": snapshot_policy_hash[:12],
         },
         "current": {
             "session_id": current_session_id,
             "memory_version": memory.version if memory is not None else 0,
             "runtime_profile": current_profile,
+            "runtime_policy_hash": str(current_policy_hash)[:12],
         },
     }
     mismatched = [
@@ -146,6 +154,7 @@ def binding_mismatch(
             "session_id": (loop_snapshot.session_id, current_session_id),
             "memory_hash": (loop_snapshot.memory_hash, current_memory_hash),
             "runtime_profile": (snapshot_profile, current_profile),
+            "runtime_policy_hash": (snapshot_policy_hash, str(current_policy_hash)),
         }.items()
         if expected and expected != actual
     ]

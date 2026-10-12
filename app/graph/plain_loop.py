@@ -288,6 +288,7 @@ def run_plain_loop(
     context_keep_recent_turns: int | None = None,
     capacity_ceiling_tokens: int = 0,
     runtime_profile: str = "",
+    runtime_policy_hash: str = "",
     token_estimate_factor: float | None = None,
     resume_snapshot: LoopSnapshot | None = None,
     ledger: ResourceLedger | None = None,
@@ -447,6 +448,7 @@ def run_plain_loop(
                 memory_version=memory.version if memory is not None else 0,
                 memory_hash=memory.state_hash() if memory is not None else "",
                 runtime_profile=runtime_profile,
+                runtime_policy_hash=runtime_policy_hash,
                 # G11:等待顺延后的 deadline 随快照持久化(跨崩溃续跑时取较大者)
                 deadline_epoch=deadline_epoch or 0.0,
                 # G12:工具调用账尾部随快照持久化(恢复时按 planned/running ⇒ unknown 处理)

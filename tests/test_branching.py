@@ -541,17 +541,21 @@ def test_end_to_end_branch_resolves(branch_bug_root: Path, tmp_path: Path) -> No
 
 
 def test_end_to_end_switch_off_stays_single_line(branch_bug_root: Path, tmp_path: Path) -> None:
-    """adaptive_branching_enabled=false → 功能级回退,行为与 V1 一致(不多花一次候选)。"""
-    from app.config import Settings
+    """adaptive_branching_enabled=false → 功能级回退,行为与 V1 一致(不多花一次候选)。
+
+    G16 收口 G07 后,开关在**受理时**冻结进 effective_policy,节点侧读冻结策略 ——
+    所以补丁打在受理读取的那份缓存 Settings 上(改 nodes.get_settings 拦不住
+    契约冻结,那是新语义要保证的事,tests/test_frozen_policy.py 另有钉子)。
+    """
+    from app.config import get_settings
     from app.evals.bugset import load_bug, load_replay_script
     from app.graph.runner import run_task_graph
 
-    monkeypatch_settings = Settings().model_copy(update={"adaptive_branching_enabled": False})
     bug_dir = _make_branch_bug(branch_bug_root / "off")
     bug = load_bug(bug_dir, branch_bug_root / "off")
     main_script = load_replay_script(bug, kind="graph")
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("app.graph.nodes.get_settings", lambda: monkeypatch_settings)
+        mp.setattr(get_settings(), "adaptive_branching_enabled", False)
         result = run_task_graph(
             bug,
             FakeLLM(main_script),

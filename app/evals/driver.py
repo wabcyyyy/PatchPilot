@@ -211,7 +211,29 @@ def run_task(
     # G07:plain 引擎与 graph 共用同一份**冻结的**运行 profile。同一个 profile 名字在两条
     # 路上必须给出同一组数字(软窗口/尾部钉住/容量判据),否则"换 profile"就成了看引擎才
     # 生效的话;消融臂换 profile 也就是换这一份读数。
+    # G16 收口 G07:服务受理路径在 run_dir 落了冻结契约 —— 运行 profile 与工具上限从它
+    # 复原,受理与执行之间的环境漂移改变不了已受理任务的口径;直接驱动(eval CLI)没有
+    # 契约文件时按现状构建/读取,兼容约定不变。
+    frozen_policy: dict[str, Any] | None = None
+    spec_file = run_dir / "task_spec.json"
+    if spec_file.is_file():
+        from app.task_spec import TaskSpec
+
+        try:
+            frozen_policy = TaskSpec.read_file(spec_file).effective_policy
+        except (ValueError, OSError):
+            frozen_policy = None
     runtime = TaskRuntime.build(settings)
+    if frozen_policy:
+        frozen_runtime = TaskRuntime.from_frozen(frozen_policy)
+        if frozen_runtime is not None:
+            runtime = frozen_runtime
+
+    def _policy_value(key: str) -> Any:
+        """与 graph 侧 TaskNodes._policy_value 同一口径:冻结策略优先,Settings 兜底。"""
+        if frozen_policy is not None and key in frozen_policy:
+            return frozen_policy[key]
+        return getattr(settings, key)
 
     def _time_overrun() -> str | None:
         if deadline_epoch is not None and time.time() > deadline_epoch:
@@ -245,11 +267,11 @@ def run_task(
             env=bug.env,
             test_sets=bug.test_sets,
             allowed_paths=bug.allowed_paths,
-            max_patch_files=settings.max_patch_files,
-            test_timeout_seconds=settings.test_timeout_seconds,
+            max_patch_files=int(_policy_value("max_patch_files")),
+            test_timeout_seconds=int(_policy_value("test_timeout_seconds")),
             # P1-4 整改:资源上限此前只落在硬编码默认值上,settings 改了不生效
-            max_read_lines=settings.max_read_lines,
-            max_search_results=settings.max_search_results,
+            max_read_lines=int(_policy_value("max_read_lines")),
+            max_search_results=int(_policy_value("max_search_results")),
             memory=memory,
             session=session,
         )
@@ -401,7 +423,9 @@ def run_task(
         diff = working_tree_diff(ctx.workspace)
         result.changed_files = diff.changed_files
         gate = run_gates(
-            diff.diff_text, allowed_paths=bug.allowed_paths, max_files=settings.max_patch_files
+            diff.diff_text,
+            allowed_paths=bug.allowed_paths,
+            max_files=int(_policy_value("max_patch_files")),
         )
         result.gate_violations = [str(v) for v in gate.violations]
         # 终局共享验收(S02/F1):与 graph 的 finish 节点同一条代码路径

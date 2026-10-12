@@ -208,6 +208,12 @@ class TaskNodes:
     # 不再每个阶段回读全局 Settings —— 那才是"并发两个 profile 互不影响"与"受理后改环境
     # 变量不改在跑的任务"的落点。None ⇒ 按 Settings 建 legacy_v1(与今日逐字相同)。
     runtime: TaskRuntime | None = None
+    # G16 收口 G07:受理时冻结的 effective_policy(TaskSpec.effective_policy)。在场时
+    # ToolContext 的资源上限(补丁文件数/读取行数/搜索条数/测试超时/执行后端)从**这份**
+    # 读,不回读当前 Settings —— 恢复(以及两次执行之间的环境漂移)沿用受理契约;
+    # None(旧契约/直接节点构造)按 Settings 读,兼容约定不变。runner 在解出 TaskSpec
+    # 后连同 runtime 一起回填(见 adopt_runtime)。
+    frozen_policy: dict[str, Any] | None = None
     # G08:目标仓库自带说明(AGENTS.md 一类)。None ⇒ 首次装配时按 Settings 加载冻结副本;
     # `repo_instructions_enabled=false` 时得到空档案,阶段装配面与接入之前逐字节相同。
     instructions: RepoInstructions | None = None
@@ -294,6 +300,30 @@ class TaskNodes:
             )
         # 本阶段装配好的上下文(骨架 + 记忆块);None = 尚未装配,退回"只有骨架"的旧形状
         self._stage_context: str | None = None
+
+    def adopt_runtime(self, runtime: TaskRuntime, frozen_policy: dict[str, Any]) -> None:
+        """G16 收口 G07:受理契约解出后回填冻结的运行 profile 与有效策略。
+
+        谁已经持有构造期的 runtime,这里一并换掉 —— subtask_manager 在 __post_init__
+        按当时的 self.runtime 建好,不跟着换就会出现"父任务用受理契约、子任务用
+        当前 Settings"的分裂。已在跑的上下文本不受影响:本方法只在图启动/恢复前、
+        任何请求发出前调用。
+        """
+        self.runtime = runtime
+        self.frozen_policy = dict(frozen_policy)
+        if self.subtask_manager is not None:
+            self.subtask_manager.runtime = runtime
+
+    def _policy_value(self, key: str, default: Any = None) -> Any:
+        """资源上限的单一读取口径:冻结策略在场用冻结值,否则按 Settings(兼容旧契约)。
+
+        default 只服务"此前就带 getattr 默认读"的键(plan_budget_share=0.15、
+        max_identical_failures=0)与测试替身缺键的场景;必填键不传 default,缺属性
+        照样 AttributeError(和旧的直接读一致,不把配置缺失藏成静默值)。
+        """
+        if self.frozen_policy is not None and key in self.frozen_policy:
+            return self.frozen_policy[key]
+        return getattr(get_settings(), key, default)
 
     def _begin_assembly(self, stage: str, round_no: int, allowed_tools: list[str] | None) -> str:
         """装配本阶段的 system 附加文本(仓库说明 + 仓库骨架 + 工作记忆块),每 (阶段, 轮次) 一次。
@@ -391,7 +421,6 @@ class TaskNodes:
         """
         if self.memory is None:
             return
-        settings = get_settings()
         allowed = getattr(self.bug, "allowed_paths", None) or []
         acceptance = [
             *list(getattr(self.bug, "failed_tests", []) or []),
@@ -402,8 +431,10 @@ class TaskNodes:
             constraints=[
                 f"可改路径:{', '.join(str(p) for p in allowed) if allowed else '未显式限制(仍受门禁)'}",
                 "禁止修改测试文件与 pytest 控制文件(门禁)",
-                f"任务级 token 预算:{settings.token_budget}",
-                f"补丁文件数上限:{settings.max_patch_files}",
+                # G16 收口 G07:登记进记忆的数字与 ToolContext 同一出处(冻结策略优先),
+                # 恢复重建的记忆不会因为环境漂移换一套说法
+                f"任务级 token 预算:{self._policy_value('token_budget')}",
+                f"补丁文件数上限:{self._policy_value('max_patch_files')}",
             ],
             acceptance=[str(x) for x in acceptance],
         )
@@ -436,8 +467,11 @@ class TaskNodes:
     # ---------- CREATED ----------
 
     def _build_ctx(self, state: TaskState) -> ToolContext:
-        """ToolContext 的唯一构造口径(prepare 与崩溃恢复共用,防两份实现漂移)。"""
-        settings = get_settings()
+        """ToolContext 的唯一构造口径(prepare 与崩溃恢复共用,防两份实现漂移)。
+
+        G16 收口 G07:资源上限从冻结策略读(frozen_policy 在场时),恢复与两次执行
+        之间的环境漂移不得改变已受理任务的边界;键缺失(旧契约)回落 Settings。
+        """
         return ToolContext(
             task_id=state["bug_id"],
             workspace=self.workspace,
@@ -447,11 +481,11 @@ class TaskNodes:
             env=self.bug.env,
             test_sets=self.bug.test_sets,
             allowed_paths=self.bug.allowed_paths,
-            max_patch_files=settings.max_patch_files,
-            test_timeout_seconds=settings.test_timeout_seconds,
+            max_patch_files=int(self._policy_value("max_patch_files")),
+            test_timeout_seconds=int(self._policy_value("test_timeout_seconds")),
             # P1-4 整改:资源上限此前只落在硬编码默认值上,settings 改了不生效
-            max_read_lines=settings.max_read_lines,
-            max_search_results=settings.max_search_results,
+            max_read_lines=int(self._policy_value("max_read_lines")),
+            max_search_results=int(self._policy_value("max_search_results")),
             # G06:记忆与会话句柄交给工具层,回执才会被自动登记成观测(registry._record_memory)。
             # None 时工具层完全不做事,与接入前逐字节相同。
             memory=self.memory,
@@ -459,7 +493,7 @@ class TaskNodes:
             # G09:受控命令的冻结执行后端与协作式取消事件。后端在受理时冻结
             # (TaskSpec.effective_policy.execution_backend 同源),运行中改环境变量
             # 不改变已受理任务的命令落点。
-            execution_backend=settings.execution_backend,
+            execution_backend=str(self._policy_value("execution_backend")),
             cancel_event=self.cancel_event,
             # G10:任务模式与验收身份。diagnose 模式从盘上 manifest 派生"是否已冻结"
             # (恢复重建 ctx 时也要拿到同一结论);repair 模式恒 False,与接入前相同。
@@ -684,7 +718,7 @@ class TaskNodes:
                 deadline_epoch=self.deadline_epoch,
                 absolute_deadline_epoch=self.absolute_deadline_epoch,
                 token_budget=self._token_budget_for(
-                    state, share=get_settings().localize_budget_share
+                    state, share=self._policy_value("localize_budget_share")
                 ),
                 **self.runtime.loop_settings(),
                 cancel_event=self.cancel_event,
@@ -705,7 +739,7 @@ class TaskNodes:
                 "tokens_prompt": state.get("tokens_prompt", 0) + exc.tokens_prompt,
                 "tokens_completion": state.get("tokens_completion", 0) + exc.tokens_completion,
             }
-            budget = get_settings().token_budget
+            budget = int(self._policy_value("token_budget"))
             # 第三种"耗尽"(G07):保护区超出端点声明容量。它不属于"份额用尽可以降级继续"——
             # 换阶段还是同一个端点、同一份压不动的历史,继续只会再烧一次请求并同样被拒。
             # 终止并把原因串留在 error 里,报告能区分"钱花光了"与"这一发本来就装不下"。
@@ -923,7 +957,7 @@ class TaskNodes:
                 }
 
         # 4) 等待 trusted_user 批准;0 / 无线程事件 = headless,不等待
-        wait_seconds = get_settings().acceptance_wait_seconds
+        wait_seconds = int(self._policy_value("acceptance_wait_seconds"))
         self.tracker.record(
             tool="acceptance_waiting",
             state="DIAGNOSE",
@@ -1043,10 +1077,10 @@ class TaskNodes:
         share < 1 时给该段只切一部分余量(LOCALIZE 用它,把剩余留给补丁阶段);
         分支与候选的额度口径不受影响——它们本来就按整份余量做前置判断。
         """
-        settings = get_settings()
-        if settings.token_budget <= 0:
+        task_budget = int(self._policy_value("token_budget") or 0)
+        if task_budget <= 0:
             return None
-        remaining = max(settings.token_budget - state.get("tokens_used", 0), 1)
+        remaining = max(task_budget - state.get("tokens_used", 0), 1)
         if share >= 1.0:
             return remaining
         return max(int(remaining * share), 1)
@@ -1097,8 +1131,7 @@ class TaskNodes:
         不再有"遵守提示反而把阶段份额烧光"这条路。
         """
         assert self.ctx is not None
-        settings = get_settings()
-        if not getattr(settings, "plan_stage_enabled", True):
+        if not self._policy_value("plan_stage_enabled"):
             # 关闭即回到旧行为:零 LLM 请求、零轨迹事件、state.plan 恒为空串,
             # 于是 PROPOSE 的渲染与引入本阶段之前逐字节相同
             return {"plan": ""}
@@ -1134,7 +1167,7 @@ class TaskNodes:
                 deadline_epoch=self.deadline_epoch,
                 absolute_deadline_epoch=self.absolute_deadline_epoch,
                 token_budget=self._token_budget_for(
-                    state, share=getattr(settings, "plan_budget_share", 0.15)
+                    state, share=float(self._policy_value("plan_budget_share") or 0.15)
                 ),
                 **self.runtime.loop_settings(),
                 cancel_event=self.cancel_event,
@@ -1151,7 +1184,7 @@ class TaskNodes:
                 "tokens_prompt": state.get("tokens_prompt", 0) + exc.tokens_prompt,
                 "tokens_completion": state.get("tokens_completion", 0) + exc.tokens_completion,
             }
-            budget = settings.token_budget
+            budget = int(self._policy_value("token_budget") or 0)
             if CONTEXT_CAPACITY_EXCEEDED in str(exc) or (
                 budget > 0 and usage["tokens_used"] >= budget
             ):
@@ -1260,7 +1293,7 @@ class TaskNodes:
                 round_no=state["round_no"],
                 max_rounds=self.max_rounds,
                 tokens_used=state.get("tokens_used", 0),
-                token_budget=get_settings().token_budget,
+                token_budget=int(self._policy_value("token_budget")),
                 deadline_epoch=self.deadline_epoch,
             )
         except BudgetError as exc:
@@ -1397,7 +1430,7 @@ class TaskNodes:
         gate = run_gates(
             diff.diff_text,
             allowed_paths=self.bug.allowed_paths,
-            max_files=get_settings().max_patch_files,
+            max_files=int(self._policy_value("max_patch_files")),
             forbid_test_files=self.ctx.forbid_test_files,
         )
         if gate.ok and not diff.is_empty:
@@ -1569,7 +1602,7 @@ class TaskNodes:
         if (
             failed_report.all_passed
             and regression_report.all_passed
-            and get_settings().verify_double_run
+            and self._policy_value("verify_double_run")
         ):
             # 双跑前再查一次:这是 verify 段最贵的追加开销(2 次全量 pytest),
             # 任务级 deadline 已到时不为复核越过 task_timeout_seconds
@@ -1753,7 +1786,7 @@ class TaskNodes:
         settings = get_settings()
         if not getattr(self.policy, "allow_branching", True):
             return False  # S10a:对照臂禁分支(登记差异,不是额外 best-of-N)
-        if not settings.adaptive_branching_enabled:
+        if not self._policy_value("adaptive_branching_enabled"):
             return False
         if state.get("branching_used", False):
             return False
@@ -1994,7 +2027,6 @@ class TaskNodes:
         本任务至多分支一次(branching_used)。
         """
         assert self.ctx is not None and self.branch_model_factory is not None
-        settings = get_settings()
         round_no = state["round_no"]
         reason = (
             f"repeat_streak={state.get('repeat_streak', 0)},"
@@ -2007,7 +2039,7 @@ class TaskNodes:
             input_payload={"round": round_no, "reason": reason},
         )
         reserve = self._token_budget_for(state) or 0
-        count = max(2, settings.branch_candidates)
+        count = max(2, int(self._policy_value("branch_candidates")))
         manager = self.subtask_manager
         # G13:Best-of-N 候选各消耗一个子任务名额(与委派共用 max_delegations/
         # max_concurrency 上限),不因分支创建重授次数/并发;子任务池名额不足则
@@ -2168,7 +2200,7 @@ class TaskNodes:
         # (不靠增加 max_rounds 绕预算)。分支可用且未用 → 交给下面的分支路径重新规划。
         # 有界停止是"提前停":只在还剩轮次时生效;末轮本就要以"轮数用尽"
         # (BUDGET_EXCEEDED)收尾,不被改写成 NEEDS_REVIEW(2026-10-11 裁定)。
-        limit = int(getattr(get_settings(), "max_identical_failures", 0) or 0)
+        limit = int(self._policy_value("max_identical_failures") or 0)
         streak = int(state.get("repeat_streak", 0) or 0)
         if (
             limit > 0

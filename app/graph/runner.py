@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from app.agent.runtime import TaskRuntime
 from app.errors import TaskCancelled, TaskError
 from app.gitops.differ import working_tree_diff
 from app.graph.builder import build_graph
@@ -197,6 +198,15 @@ def run_task_graph(
         nodes.mode = task_spec.mode
         nodes.source_snapshot_hash = task_spec.source_snapshot_hash
         nodes.task_spec_hash = task_spec.task_spec_hash
+        # G16 收口 G07:执行与恢复都从**受理时冻结的**契约重建有效策略——运行 profile
+        # (窗口/输出上限/能力声明)与工具上限(补丁文件数/读取行数/搜索条数/超时/后端)
+        # 全部沿用原契约,同名 profile 下环境漂移改变不了已受理任务的口径。读不出冻结
+        # profile(G07 之前的旧契约)按现状重建,兼容约定不变。
+        frozen_runtime = TaskRuntime.from_frozen(task_spec.effective_policy)
+        nodes.adopt_runtime(
+            frozen_runtime if frozen_runtime is not None else nodes.runtime,
+            task_spec.effective_policy,
+        )
         graph = build_graph(nodes, checkpointer=checkpointer)
 
         initial: TaskState = {

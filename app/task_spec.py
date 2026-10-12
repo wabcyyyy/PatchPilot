@@ -217,6 +217,11 @@ def _effective_policy(settings: Any, *, profile: str | None = None) -> dict[str,
         "subtask_budget_share",
         "subtask_max_turns",
         "subtask_model",
+        # G16 收口 G07:这两键此前只在别处各自冻结(verify_double_run 是 TaskSpec 字段、
+        # max_identical_failures 是 G14 新键),没进 effective_policy ⇒ 恢复侧按当前
+        # Settings 重建时会漂。补进策略快照;旧契约缺键时恢复侧按 Settings 回退(兼容)。
+        "verify_double_run",
+        "max_identical_failures",
     )
     policy = {k: getattr(settings, k, None) for k in keys}
     from app.executor.command_profiles import profiles_digest

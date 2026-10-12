@@ -72,6 +72,10 @@ class LoopSnapshot:
     # "没绑定"上,语义与加字段前逐字相同)。它记的是"写这份快照时用的是哪一套窗口/轮数/
     # 输出预留口径",恢复方据此拒绝把 legacy_v1 的历史接进 repair_v2 的运行里。
     runtime_profile: str = ""
+    # G16 收口 G07:上面那个名字的**指纹**。同名 profile 下窗口/输出上限/能力声明发生
+    # 环境漂移时,只比名字发现不了;恢复方拿受理契约重建的 profile 算同一种指纹来比,
+    # 两边都有值且不等 ⇒ 待审。旧快照缺字段 = 空串 ⇒ 不参与比较(兼容约定不变)。
+    runtime_policy_hash: str = ""
     # G11 用户等待顺延后的 deadline(epoch 秒;0 = 没记)。等待用户的时长从任务 deadline
     # 里顺延出去,而这个顺延必须活过崩溃:恢复取"state 里的 deadline"与"快照里的"较大者。
     # 同样按加可空字段的规矩:旧快照读回来是 0.0 ⇒ 不参与比较,语义与加字段前逐字相同。
@@ -207,6 +211,7 @@ def load_loop_snapshot(
             memory_version=int(raw.get("memory_version", 0) or 0),
             memory_hash=str(raw.get("memory_hash", "") or ""),
             runtime_profile=str(raw.get("runtime_profile", "") or ""),
+            runtime_policy_hash=str(raw.get("runtime_policy_hash", "") or ""),
             deadline_epoch=float(raw.get("deadline_epoch", 0) or 0.0),
             tool_calls=[
                 dict(row) for row in (raw.get("tool_calls") or []) if isinstance(row, dict)

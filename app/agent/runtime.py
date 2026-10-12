@@ -201,13 +201,23 @@ class TaskRuntime:
 
         两引擎(graph 的四个阶段循环、plain/one-shot 臂)共用这一个出口 —— 同一个 profile
         名字在两条路上必须是同一组数字,否则"换个 profile"就成了一句看引擎才生效的话。
+        runtime_policy_hash 是这组数字的指纹(G16 收口 G07):进 loop 快照做绑定,
+        恢复方据此拒绝"同名 profile、数值已漂移"的续跑,而不只比名字。
         """
         return {
             "context_window_tokens": self.context.soft_compaction_target_tokens,
             "context_keep_recent_turns": self.context.keep_recent_turns,
             "capacity_ceiling_tokens": self.window.ceiling_tokens,
             "runtime_profile": self.profile_name,
+            "runtime_policy_hash": self.policy_hash,
         }
+
+    @property
+    def policy_hash(self) -> str:
+        """运行 profile 读数的稳定指纹(同名 profile 数值漂移即可检测)。"""
+        from app.task_spec import stable_hash
+
+        return stable_hash(self.as_dict())
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -217,3 +227,45 @@ class TaskRuntime:
             "window": self.window.as_dict(),
             "model": self.model.as_dict(),
         }
+
+    @classmethod
+    def from_frozen(cls, policy: dict[str, Any] | None) -> TaskRuntime | None:
+        """由受理时冻结的 effective_policy 重建运行 profile(G16 收口 G07)。
+
+        恢复侧必须沿用**受理时**的窗口/输出上限/能力声明,而不是拿当前 Settings 重建
+        ——同名 profile 下环境漂移(改了 llm_max_tokens/声明容量)不得改变已受理任务
+        的口径。读不出(旧契约没有 runtime_profile 键、或形状不符)返回 None,由调用
+        方按兼容约定退回现状;策略 dict 在场但内容非法(如未声明容量超保守上界)按
+        构造校验当场抛,不静默换一份。
+        """
+        if not isinstance(policy, dict):
+            return None
+        frozen = policy.get("runtime_profile")
+        if not isinstance(frozen, dict) or not frozen.get("profile_name"):
+            return None
+        context_data = frozen.get("context") or {}
+        window_data = frozen.get("window") or {}
+        model_data = frozen.get("model") or {}
+        return cls(
+            profile_name=str(frozen["profile_name"]),
+            model=ModelProfile.from_dict(model_data),
+            context=ContextPolicy(
+                soft_compaction_target_tokens=int(
+                    context_data.get("soft_compaction_target_tokens", 0) or 0
+                ),
+                keep_recent_turns=int(context_data.get("keep_recent_turns", 1) or 1),
+                completion_output_cap_tokens=int(
+                    context_data.get("completion_output_cap_tokens", 0) or 0
+                ),
+                cumulative_token_budget=int(context_data.get("cumulative_token_budget", 0) or 0),
+                capacity_margin_tokens=int(context_data.get("capacity_margin_tokens", 0) or 0),
+            ),
+            window=WindowResolution(
+                target_tokens=int(window_data.get("target_tokens", 0) or 0),
+                adopted_tokens=int(window_data.get("adopted_tokens", 0) or 0),
+                clamped_by_capacity=bool(window_data.get("clamped_by_capacity", False)),
+                capacity_tokens=int(window_data.get("capacity_tokens", 0) or 0),
+                capacity_checked=bool(window_data.get("capacity_checked", False)),
+                capacity_ceiling_tokens=int(window_data.get("capacity_ceiling_tokens", 0) or 0),
+            ),
+        )

@@ -502,15 +502,15 @@ def test_verify_double_run_mismatch_converges_needs_review(
 def test_verify_double_run_disabled_runs_pytest_four_times(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """verify_double_run=False:回归为 4 次拉起,行为与引入 double-run 之前一致。"""
+    """verify_double_run=False:回归为 4 次拉起,行为与引入 double-run 之前一致。
+
+    G16 收口 G07 后开关在受理时冻结进 effective_policy,节点读冻结策略 —— 补丁打在
+    受理读取的缓存 Settings 上(nodes.get_settings 拦不住契约冻结,那是新语义)。
+    """
     from app.config import get_settings
 
     calls = _count_node_pytest(monkeypatch)
-    real_settings = get_settings()
-    monkeypatch.setattr(
-        "app.graph.nodes.get_settings",
-        lambda: real_settings.model_copy(update={"verify_double_run": False}),
-    )
+    monkeypatch.setattr(get_settings(), "verify_double_run", False)
     bug = load_bug("BUG-001", BUG_ROOT)
     model = FakeLLM(_localize_script() + _propose_script(_fix_diff()))
     result = run_task_graph(bug, model, runs_root=tmp_path / "runs")
