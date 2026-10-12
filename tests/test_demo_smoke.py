@@ -25,8 +25,12 @@ def _dir_hash(root: Path) -> str:
     return digest.hexdigest()
 
 
-def _run_module(module: str, out: Path) -> subprocess.CompletedProcess[str]:
+def _run_module(
+    module: str, out: Path, *, extra_env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "PATCHPILOT_LLM_ENABLED": "false", "PYTHONIOENCODING": "utf-8"}
+    if extra_env:
+        env.update(extra_env)
     return subprocess.run(
         [sys.executable, "-m", module, "--out", str(out)],
         cwd=str(REPO_ROOT),
@@ -79,3 +83,76 @@ def test_dirty_ticket_demo_fails_nonzero_on_broken_replay(tmp_path: Path) -> Non
     out.write_text("block the out dir creation\n", encoding="utf-8")
     proc = _run_module("demo.run_dirty_ticket", out)
     assert proc.returncode != 0, "输出目录不可创建时必须非零退出"
+
+
+# ---------- G16:四个新演示的 subprocess 冒烟(每个演示钉一条,不混装) ----------
+
+
+def test_issue_only_demo_subprocess_resolves(tmp_path: Path) -> None:
+    """issue-only 全流程:批准后生产、门禁拒绝反馈重试、报告记验收清单与 repair_v2 身份。"""
+    before = _dir_hash(DEMO_WS)
+    out = tmp_path / "demo-out"
+    proc = _run_module("demo.run_issue_only_ticket", out)
+    assert proc.returncode == 0, (proc.returncode, proc.stdout[-800:], proc.stderr[-800:])
+    assert _dir_hash(DEMO_WS) == before, "演示源目录必须零写入"
+
+    reports = sorted(out.glob("runs/*/report.json"))
+    assert reports, proc.stdout[-400:]
+    report = json.loads(reports[-1].read_text(encoding="utf-8"))
+    assert report["verdict"] == "resolved"
+    evidence = report["evidence"]
+    assert evidence["acceptance"]["frozen"] is True
+    assert evidence["run_identity"]["agent_profile"] == "repair_v2"
+    assert report["rounds"] >= 2, "门禁拒绝后的反馈重试必须留下轮次事实"
+
+
+def test_steer_demo_subprocess_resolves(tmp_path: Path) -> None:
+    """澄清与纠偏:报告 inputs 记 1 问已答 + 1 纠偏已消费。"""
+    before = _dir_hash(DEMO_WS)
+    out = tmp_path / "demo-out"
+    proc = _run_module("demo.run_steer_ticket", out)
+    assert proc.returncode == 0, (proc.returncode, proc.stdout[-800:], proc.stderr[-800:])
+    assert _dir_hash(DEMO_WS) == before, "演示源目录必须零写入"
+
+    reports = sorted(out.glob("runs/*/report.json"))
+    assert reports, proc.stdout[-400:]
+    inputs = json.loads(reports[-1].read_text(encoding="utf-8"))["evidence"]["inputs"]
+    assert [q for q in inputs["questions"] if q["status"] in ("answered", "consumed")]
+    assert [s for s in inputs["steers"] if s["consumed"]]
+
+
+def test_delegate_demo_subprocess_resolves(tmp_path: Path) -> None:
+    """子任务委派:主线 resolved,报告 subtasks 登记 researcher 贡献。"""
+    before = _dir_hash(DEMO_WS)
+    out = tmp_path / "demo-out"
+    env_extra = {"PATCHPILOT_DELEGATION_ENABLED": "true"}
+    proc = _run_module("demo.run_delegate_ticket", out, extra_env=env_extra)
+    assert proc.returncode == 0, (proc.returncode, proc.stdout[-800:], proc.stderr[-800:])
+    assert _dir_hash(DEMO_WS) == before, "演示源目录必须零写入"
+
+    reports = sorted(out.glob("runs/*/report.json"))
+    assert reports, proc.stdout[-400:]
+    report = json.loads(reports[-1].read_text(encoding="utf-8"))
+    assert report["verdict"] == "resolved"
+    assert len(report["subtasks"]) == 1
+    assert report["subtasks"][0]["role"] == "researcher" and report["subtasks"][0]["ok"]
+
+
+def test_restart_resume_demo_subprocess_resolves(tmp_path: Path) -> None:
+    """崩溃恢复:续跑 resolved,轨迹留 resume_from_checkpoint 与复位事件。"""
+    before = _dir_hash(DEMO_WS)
+    out = tmp_path / "demo-out"
+    proc = _run_module("demo.run_restart_resume_ticket", out)
+    assert proc.returncode == 0, (proc.returncode, proc.stdout[-800:], proc.stderr[-800:])
+    assert _dir_hash(DEMO_WS) == before, "演示源目录必须零写入"
+
+    run_dir = out / "runs" / "DEMO-RESUME"
+    report = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
+    assert report["verdict"] == "resolved"
+    tools = [
+        json.loads(line)["tool"]
+        for line in (run_dir / "trajectory.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert "resume_from_checkpoint" in tools and "resume_reset_workspace" in tools
+    assert tools.count("create_workspace") == 1, "已完成阶段不得重跑"
