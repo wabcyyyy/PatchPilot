@@ -8,6 +8,9 @@ POST /tasks/{id}/messages、POST /tasks/{id}/cancel),本 CLI 是它的一个薄�
 
 用法(默认连本机 127.0.0.1:8001;服务启动见 demo/README.md §3):
 
+    python -m app.agent.cli submit --bug-id BUG-001 [--profile repair_v2]
+    python -m app.agent.cli submit --repo-path PATH --issue "缺陷描述" \\
+        [--failed-tests a,b] [--regression-tests x,y] [--replay-script replay.json]
     python -m app.agent.cli status  --task-id <id>
     python -m app.agent.cli question --task-id <id>
     python -m app.agent.cli answer --task-id <id> --question-id <qid> \\
@@ -18,6 +21,8 @@ POST /tasks/{id}/messages、POST /tasks/{id}/cancel),本 CLI 是它的一个薄�
     python -m app.agent.cli approve --task-id <id> --proposal-id <pid> \\
         --hash <content_hash> --revision <n> [--token <bearer>]
 
+submit(G16):创建任务的新产品入口,默认 profile=repair_v2(显式随请求发送,
+不靠服务端环境变量猜新旧客户端);老口径用 --profile legacy_v1 显式退回。
 status 在任务处于等待时额外拉取 /question,把问题与选项一起打印,并给出回答/取消
 的命令提示;不改变原有 JSON 输出形状。
 
@@ -31,8 +36,57 @@ import json
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 DEFAULT_API = "http://127.0.0.1:8001"
+
+
+def _split_tests(raw: str) -> list[str]:
+    return [item.strip() for item in (raw or "").split(",") if item.strip()]
+
+
+def _validate_submit(args: argparse.Namespace) -> None:
+    """submit 入参的矛盾在客户端就地报错(exit 2),不打到服务端才 422。"""
+    bad = ""
+    if (args.bug_id is None) == (args.repo_path is None):
+        bad = "exactly one of --bug-id or --repo-path is required"
+    elif args.repo_path is not None and not args.issue:
+        bad = "--repo-path requires --issue"
+    elif bool(args.failed_tests) != bool(args.regression_tests):
+        bad = "--failed-tests and --regression-tests must be provided together"
+    if bad:
+        print(f"argument error: {bad}", file=sys.stderr)
+        raise SystemExit(2)
+
+
+def _submit_payload(args: argparse.Namespace) -> dict[str, object]:
+    """submit → POST /api/tasks 请求体;profile 显式随请求发送(G16)。"""
+    payload: dict[str, object] = {
+        "engine": args.engine,
+        "model": args.model,
+        "agent_profile": args.profile,
+        "arm": "agent",
+    }
+    if args.bug_id:
+        payload["bug_id"] = args.bug_id
+    else:
+        payload["repo_path"] = args.repo_path
+        payload["issue_text"] = args.issue
+        failed = _split_tests(args.failed_tests)
+        if failed:
+            payload["failed_tests"] = failed
+            payload["regression_tests"] = _split_tests(args.regression_tests)
+        if args.replay_script:
+            try:
+                payload["replay_script"] = json.loads(
+                    Path(args.replay_script).read_text(encoding="utf-8")
+                )
+            except (OSError, json.JSONDecodeError) as exc:
+                print(f"argument error: cannot read --replay-script: {exc}", file=sys.stderr)
+                raise SystemExit(2) from None
+    if args.max_rounds is not None:
+        payload["max_rounds"] = args.max_rounds
+    return payload
 
 
 def build_request(
@@ -46,6 +100,33 @@ def build_request(
     common.add_argument("--api", default=DEFAULT_API, help="服务基址(默认本机 8001)")
     common.add_argument("--token", default="", help="Bearer token(服务端启用鉴权时必填)")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    submit = sub.add_parser(
+        "submit", parents=[common], help="创建任务(新产品入口;默认 profile=repair_v2)"
+    )
+    submit.add_argument("--bug-id", default=None, help="bugs/ 下的题目编号,如 BUG-001")
+    submit.add_argument(
+        "--repo-path", default=None, help="自定义 Git 仓库路径;与 --bug-id 恰好一个"
+    )
+    submit.add_argument("--issue", default=None, help="缺陷描述(repo_path 时必填)")
+    submit.add_argument(
+        "--failed-tests", default="", help="逗号分隔的基线失败测试;与 --regression-tests 成对"
+    )
+    submit.add_argument(
+        "--regression-tests", default="", help="逗号分隔的基线通过测试;双缺 = issue-only 受理"
+    )
+    submit.add_argument(
+        "--replay-script", default="", help="fake 自定义任务的回放脚本 JSON 文件路径"
+    )
+    submit.add_argument("--engine", choices=["graph", "plain"], default="graph")
+    submit.add_argument("--model", choices=["fake", "openai"], default="fake")
+    submit.add_argument(
+        "--profile",
+        choices=["repair_v2", "legacy_v1"],
+        default="repair_v2",
+        help="运行 profile;MVP 新任务默认 repair_v2(显式发送,不靠服务端猜)",
+    )
+    submit.add_argument("--max-rounds", type=int, default=None)
 
     status = sub.add_parser(
         "status", parents=[common], help="查询任务状态(diagnose 任务可见 WAITING_INPUT)"
@@ -96,6 +177,10 @@ def build_request(
     if args.token:
         headers["Authorization"] = f"Bearer {args.token}"
     base = str(args.api).rstrip("/")
+    if args.command == "submit":
+        _validate_submit(args)
+        headers["Content-Type"] = "application/json"
+        return "POST", f"{base}/api/tasks", _submit_payload(args), headers
     if args.command == "status":
         return "GET", f"{base}/api/tasks/{args.task_id}", None, headers
     if args.command == "question":
@@ -172,6 +257,8 @@ def main(argv: list[str] | None = None) -> int:
     # G11:status 在等待时补一屏"问题/选项/怎么回答/怎么取消"(原地打印,不改 JSON 形状)
     if raw and raw[0] == "status" and 200 <= status < 300 and isinstance(body, dict):
         _print_waiting_hint(url, headers, body)
+    if raw and raw[0] == "submit" and 200 <= status < 300 and isinstance(body, dict):
+        _print_submit_hint(body)
     print(json.dumps(body, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if 200 <= status < 300 else 3
 
@@ -228,6 +315,14 @@ def _print_frame(event_type: str, data: str) -> None:
     verdict = payload.get("verdict") or ""
     tail = f"  {status}/{verdict}" if event_type == "task_status" else ""
     print(f"{event_type:14s} {stage:12s} {tool}{tail}{error}")
+
+
+def _print_submit_hint(task: dict[str, object]) -> None:
+    """submit 成功后给两条后续命令;失败(3xx/4xx/5xx)时什么都不加。"""
+    task_id = task.get("task_id")
+    print(f"== 已受理 {task_id} ==")
+    print(f"跟踪: python -m app.agent.cli events --task-id {task_id}")
+    print(f"状态: python -m app.agent.cli status --task-id {task_id}")
 
 
 def _print_waiting_hint(url: str, headers: dict[str, str], task: dict[str, object]) -> None:

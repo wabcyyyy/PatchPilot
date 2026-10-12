@@ -36,6 +36,18 @@ class TaskCreateIn(BaseModel):
     engine: Literal["graph", "plain"] = "graph"
     model: Literal["fake", "openai"] = "fake"
     max_rounds: int | None = Field(None, ge=1, le=20)
+    # G16:运行 profile 由请求**显式**选择(旧客户端不传 = 服务端 Settings,语义不变);
+    # 新旧客户端靠这个显式字段区分,不靠环境变量猜测。profile 进 task_spec 身份,
+    # 不同 profile 的同题任务不 coalesce。repair_v2 要求 llm_max_tokens>0,受理时校验。
+    agent_profile: Literal["legacy_v1", "repair_v2"] | None = Field(
+        None,
+        description="运行 profile;None = 服务端默认(legacy_v1)。新产品入口显式传 repair_v2",
+    )
+    # G16:实验臂在 API 面只受理 agent;one_shot 是评测 CLI 的消融臂,没有接线到
+    # 服务受理 —— 传了就在 schema 校验处 422 显式拒绝,不静默忽略后按 agent 跑。
+    arm: Literal["agent"] = Field(
+        "agent", description="实验臂;API 只受理 agent(one_shot 仅评测 CLI)"
+    )
 
     @model_validator(mode="after")
     def _exactly_one_source(self) -> TaskCreateIn:

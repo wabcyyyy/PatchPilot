@@ -52,6 +52,8 @@ def create_task(payload: TaskCreateIn, request: Request):
             regression_tests=payload.regression_tests,
             allowed_paths=payload.allowed_paths,
             replay_script=payload.replay_script,
+            agent_profile=payload.agent_profile,
+            arm=payload.arm,
         )
     except InvalidRequestError as exc:
         # 请求参数自相矛盾:422(资源不存在仍走 TaskError→404)
@@ -143,6 +145,19 @@ def approve_acceptance(task_id: str, payload: AcceptanceApproveIn, request: Requ
 @router.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@router.get("/capabilities")
+def get_capabilities(request: Request):
+    """G16:engine/profile/arm/role/model/预算的真实有效值,一个出口可查。
+
+    读数与受理层同源(app/api/capabilities.py 从各登记处现取);客户端在提交前
+    就能查到"什么能受理、什么被显式拒绝",而不是靠试错。
+    """
+    from app.api.capabilities import capabilities
+    from app.config import get_settings
+
+    return capabilities(get_settings())
 
 
 @router.post("/tasks/{task_id}/messages", response_model=MessageOut)

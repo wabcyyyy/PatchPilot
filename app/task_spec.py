@@ -154,8 +154,13 @@ def validate_budget_policy(settings: Any, model_name: str, *, online: bool) -> N
         )
 
 
-def _effective_policy(settings: Any) -> dict[str, Any]:
-    """受理时冻结的有效策略(全部具名;getattr 兜底让测试替身落在关闭/默认侧)。"""
+def _effective_policy(settings: Any, *, profile: str | None = None) -> dict[str, Any]:
+    """受理时冻结的有效策略(全部具名;getattr 兜底让测试替身落在关闭/默认侧)。
+
+    `profile`(G16):请求显式指定的运行 profile;None = 沿用 Settings(旧客户端
+    语义不变)。生效名字以 TaskRuntime.build 的裁决为准并回写进这份策略——查询面
+    (capabilities)、受理冻结与报告读的是同一个值,不维护第二份清单。
+    """
     keys = (
         "token_budget",
         "budget_mode",
@@ -221,7 +226,9 @@ def _effective_policy(settings: Any) -> dict[str, Any]:
     # 的那个数(以及它被夹过这件事),否则"配置写着 64k"会被读成"跑了 64k"。
     from app.agent.runtime import TaskRuntime
 
-    policy["runtime_profile"] = TaskRuntime.build(settings).as_dict()
+    runtime = TaskRuntime.build(settings, profile_name=profile)
+    policy["agent_runtime_profile"] = runtime.profile_name
+    policy["runtime_profile"] = runtime.as_dict()
     return policy
 
 
@@ -341,6 +348,7 @@ def build_task_spec(
     platform_commit: str = "",
     source_snapshot_ref: str = "",
     mode: str = MODE_REPAIR,
+    profile: str | None = None,
 ) -> TaskSpec:
     """从 BugTask + 执行参数构建冻结契约(S05a 唯一构建口径,两引擎共用)。
 
@@ -348,6 +356,8 @@ def build_task_spec(
     真实模型传 None。allowed_paths 的空列表按 None 规范化(与既有 scope 语义一致)。
     mode:repair 要求失败/回归集非空(既有受理前提,此处兜底校验);
     diagnose_then_repair 允许双集为空,但该模式只能先诊断(G10)。
+    profile(G16):请求显式运行 profile;None = Settings 默认。profile 进
+    effective_policy ⇒ 进 task_spec_hash,不同 profile 的同题任务不 coalesce。
     """
     if settings is None:
         from app.config import get_settings
@@ -395,7 +405,7 @@ def build_task_spec(
         model_name=model_name,
         max_rounds=int(max_rounds if max_rounds is not None else bug.max_rounds),
         max_turns=int(max_turns),
-        effective_policy=_effective_policy(settings),
+        effective_policy=_effective_policy(settings, profile=profile),
         trusted_env={
             "execution_backend": getattr(settings, "execution_backend", "local"),
             "docker_image": getattr(settings, "docker_image", ""),

@@ -156,12 +156,16 @@ class TaskService:
         regression_tests: list[str] | None = None,
         allowed_paths: list[str] | None = None,
         replay_script: list[dict[str, Any]] | None = None,
+        agent_profile: str | None = None,
+        arm: str = "agent",
     ) -> tuple[dict[str, Any], bool]:
         """创建任务;返回 (任务, 是否本次新建)。
 
         幂等键 = bug_id + engine + model,同键任务未到终态时返回 (原任务, False)。
         G10:repo_path 且双测试集皆空 = issue-only 受理(diagnose_then_repair 模式,
         仅 graph 引擎);失败/回归集必须经诊断提议与 trusted_user 批准后才冻结生产。
+        G16:agent_profile 请求显式选运行 profile(None = Settings);arm 在 API 面
+        只受理 agent —— one_shot 是评测 CLI 的消融臂,这里显式拒绝,不静默降级。
         """
         mode = MODE_REPAIR
         if repo_path is not None:
@@ -209,6 +213,13 @@ class TaskService:
             from app.llm.openai_client import build_model
 
             build_model(model, get_settings())
+        if arm != "agent":
+            # G16:one_shot 未接线到 API 受理 —— 显式拒绝并登记(评测 CLI 才可用),
+            # 不静默按 agent 跑(schema Literal 已拦 HTTP 面,这里兜直连调用)。
+            raise InvalidRequestError(
+                f"the API accepts only arm='agent', got {arm!r}; one_shot is an"
+                " eval-CLI-only ablation arm (未接线组合在受理处显式拒绝)"
+            )
         # S05b/F4:幂等键 = 受理时冻结的 TaskSpec **完整哈希**(字段边界由具名 JSON
         # 结构表达,不再是裸拼接的 bug_id|engine|model)——执行参数(max_rounds)与
         # fake 回放脚本进身份,不同不得 coalesce;同输入同源码同策略才命中在途任务。
@@ -216,7 +227,7 @@ class TaskService:
         spec = build_task_spec(
             bug,
             engine=engine,
-            arm="agent",
+            arm=arm,
             model_provider=model,
             model_name=self._real_model_name(model),
             max_turns=DEFAULT_MAX_TURNS,
@@ -224,6 +235,7 @@ class TaskService:
             replay=replay_for_spec,
             source_snapshot_ref=SNAPSHOT_DIRNAME if repo_path is not None else "",
             mode=mode,
+            profile=agent_profile or None,
         )
         idem_key = spec.task_spec_hash
 
