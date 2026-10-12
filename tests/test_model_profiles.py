@@ -280,11 +280,14 @@ def test_legacy_v1_is_verbatim_todays_settings() -> None:
     settings = Settings()
     runtime = TaskRuntime.build(settings)
     assert runtime.profile_name == "legacy_v1" == settings.agent_runtime_profile
+    # G16 收口 G07:loop_settings 增加 runtime_policy_hash(profile 读数的指纹,
+    # 快照绑定用);legacy 的四项口径数字仍逐字照搬 Settings,且不做容量比较。
     assert runtime.loop_settings() == {
         "context_window_tokens": settings.context_window_tokens,
         "context_keep_recent_turns": settings.context_keep_recent_turns,
         "capacity_ceiling_tokens": 0,
         "runtime_profile": "legacy_v1",
+        "runtime_policy_hash": runtime.policy_hash,
     }
     context = runtime.context
     assert context.soft_compaction_target_tokens == settings.context_window_tokens

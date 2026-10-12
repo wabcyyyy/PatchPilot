@@ -91,6 +91,7 @@ def one_shot_agent(
     context_keep_recent_turns: int | None = None,
     capacity_ceiling_tokens: int = 0,
     runtime_profile: str = "",
+    runtime_policy_hash: str = "",
 ) -> LoopOutcome:
     """定位 → 提交补丁;无执行反馈,无第二轮。
 
@@ -120,6 +121,7 @@ def one_shot_agent(
         context_keep_recent_turns=context_keep_recent_turns,
         capacity_ceiling_tokens=capacity_ceiling_tokens,
         runtime_profile=runtime_profile,
+        runtime_policy_hash=runtime_policy_hash,
     )
 
     prompt = ONE_SHOT_PROPOSE_PROMPT.format(
@@ -142,6 +144,7 @@ def one_shot_agent(
             context_keep_recent_turns=context_keep_recent_turns,
             capacity_ceiling_tokens=capacity_ceiling_tokens,
             runtime_profile=runtime_profile,
+            runtime_policy_hash=runtime_policy_hash,
         )
     except BudgetError as exc:
         # N-11 同源:补丁阶段超预算时,定位阶段已烧的用量必须记回任务级账本,

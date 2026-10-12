@@ -54,6 +54,16 @@
   **观测结果**(verdict/token/轮数/耗时/费用)分开——结果不同合法,配置漂移即报错,
   同题重复按 `(task, arm, repetition)` 一条不折;批定义由可 hash 的实验 manifest 承载
   (`docs/adr/0011`,模板 `docs/work-notes/experiment-manifest-template-2026-10-11.json`);
+- **离线收口与产品面(2026-10-12 升级 SPEC G16)**:能力查询面 `GET /api/capabilities`
+  (engine/profile/arm/role/model/预算的真实有效值,与受理层同源,one_shot 如实登记为
+  评测 CLI 专用);请求可显式选运行 profile(`agent_profile`,新旧客户端靠显式字段区分,
+  不靠环境变量猜),MVP CLI 建任务入口 `python -m app.agent.cli submit` 新任务默认
+  repair_v2;执行与恢复一律从**受理时冻结的 TaskSpec** 重建有效策略(同名 profile 数值
+  漂移不改变已受理任务口径,快照绑定比 profile 指纹而不只比名字);report.json v2 补齐
+  验收清单/候选/命令/输入事件/运行身份,Markdown 把三态显式呈现为"已验证/未运行/不确定";
+  六个离线演示覆盖 issue-only 全流程/澄清纠偏/子任务委派/崩溃恢复(`demo/README.md`),
+  离线场景对齐表见 `docs/evidence/agent-upgrade/offline-scenarios.md`,发布收据见
+  `docs/evidence/agent-upgrade/release-evidence-2026-10-12.md`;
 - **运行中进度**:轨迹事件实时入 SQLite,任务行带独立 stage/last_event_at 进度列
   (终态不可被迟到事件复活);
 - **外部基准接入(v2)**:SWE-bench Verified 元数据 → 本地任务(`app/evals/swebench.py` +
@@ -80,6 +90,17 @@ pytest -q                                        # CI 全集(含 stress 并发�
 
 # 回放模式跑一个完整修复任务(验证平台闭环)
 python -m app.evals.run_single --bug BUG-001 --model fake --engine graph --out runs
+
+# 建任务入口(MVP CLI;新任务默认 profile=repair_v2,显式随请求发送;
+# 老口径用 --profile legacy_v1 显式退回)
+python -m app.agent.cli submit --bug-id BUG-001
+python -m app.agent.cli submit --repo-path <path> --issue "缺陷描述"
+
+# 服务启动后查询可受理能力(engine/profile/arm/role/model/预算,与受理层同源)
+curl -s http://127.0.0.1:8001/api/capabilities
+
+# 六个离线演示(全流程/澄清纠偏/委派/崩溃恢复等),分工表见 demo/README.md
+python -m demo.run_issue_only_ticket --out runs/demo-issue-only
 
 # 批量评测 + 生成报告
 python -m app.evals.report --runs runs/m9 --out docs/work-notes/eval-report.md

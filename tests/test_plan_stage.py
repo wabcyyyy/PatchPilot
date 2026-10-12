@@ -170,12 +170,10 @@ def test_plan_sits_between_localize_and_propose_and_eats_no_script_step(
     assert states.index("PLAN") < states.index("PROPOSE_PATCH")
     assert len(on.plan_requests) == 1 and "### 定位阶段结论" in on.plan_requests[0]
 
-    # 关闭臂:零计划请求、零 PLAN 事件,结论与开启臂一致
-    real = get_settings()
-    monkeypatch.setattr(
-        "app.graph.nodes.get_settings",
-        lambda: real.model_copy(update={"plan_stage_enabled": False}),
-    )
+    # 关闭臂:零计划请求、零 PLAN 事件,结论与开启臂一致。
+    # G16 收口 G07 后开关在受理时冻结进 effective_policy,节点读冻结策略 ——
+    # 补丁打在受理读取的缓存 Settings 上(nodes.get_settings 拦不住契约冻结)。
+    monkeypatch.setattr(get_settings(), "plan_stage_enabled", False)
     off = _Recording(list(script))
     off_result = run_task_graph(bug, off, runs_root=tmp_path / "runs-off")
     assert off_result.status == "FINISHED" and off_result.verdict == "resolved"
