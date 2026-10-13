@@ -94,6 +94,10 @@ plain损坏TaskSpec不再静默丢弃契约改读当前配置。
 
 ## Tests Updated
 
+后续收尾的接口补修：plain消融臂漏接驱动器冻结token预算，已补两阶段同额度传递与显式0护栏；
+旧deadline夹具改用完整ToolContext/Settings，保留原期望与断言。详情与本地预算停止记录见
+`docs/work-notes/closeout-2026-10-12.md`，补修完整回归交CI。
+
 test_frozen_policy新增graph/plain真实Git/pytest链的后端、超时、双跑、预算与报告身份漂移回归，
 并拒损坏plain契约。test_preflight新增Docker无题目镜像时禁止宿主执行的正反两例。
 test_budget_reservations加强原损坏快照用例：保留原有读数断言，新增unknown/拒请求/拒验收/保全文件。

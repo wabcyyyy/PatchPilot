@@ -66,15 +66,14 @@ ONE_SHOT_TOOLS = [
 ]
 
 
-def _budget_for(spent: int) -> int | None:
+def _budget_for(spent: int, limit: int) -> int:
     """本阶段可用的 token 余量(与 graph 的 N-11 口径一致:任务级共享一份预算)。
 
     plain 引擎历史上每个循环各拿满 Settings.token_budget;对照臂两阶段是我们自己
     串的,这里按任务级扣减,否则与 agent 臂的 token 对照失真。
     """
-    limit = get_settings().token_budget
     if limit <= 0:
-        return None
+        return 0
     return max(limit - spent, 1)
 
 
@@ -87,6 +86,7 @@ def one_shot_agent(
     deadline_epoch: float | None = None,
     cancel_event: threading.Event | None = None,
     ledger: ResourceLedger | None = None,
+    token_budget: int | None = None,
     context_window_tokens: int | None = None,
     context_keep_recent_turns: int | None = None,
     capacity_ceiling_tokens: int = 0,
@@ -100,9 +100,11 @@ def one_shot_agent(
     轮次差会把结论变成实验参数的函数。补丁阶段内仍可因协议/门禁拒绝而自纠多次,
     但模型看到的东西只有 Bug 描述 + 定位阶段自己写下的结论,永远看不到测试结果。
     ledger(S02/F1)与默认臂同源:两臂共用任务级账本,对照才可比。
+    token_budget接收驱动器的冻结额度；直接调用未指定时只在入口读取一次Settings。
     上下文四个参数(G07)同样原样转给两次循环:两臂必须跑在同一份冻结的运行 profile 上,
     这一臂少接一边就等于给对照臂偷偷换了软窗口与容量判据。
     """
+    limit = get_settings().token_budget if token_budget is None else token_budget
     localize = run_plain_loop(
         ctx,
         model,
@@ -114,7 +116,7 @@ def one_shot_agent(
         state_label="LOCALIZE",
         allowed_tools=READ_TOOLS,
         deadline_epoch=deadline_epoch,
-        token_budget=_budget_for(0),
+        token_budget=_budget_for(0, limit),
         cancel_event=cancel_event,
         ledger=ledger,
         context_window_tokens=context_window_tokens,
@@ -137,7 +139,7 @@ def one_shot_agent(
             state_label="PROPOSE_ONE_SHOT",
             allowed_tools=ONE_SHOT_TOOLS,
             deadline_epoch=deadline_epoch,
-            token_budget=_budget_for(localize.tokens_used),
+            token_budget=_budget_for(localize.tokens_used, limit),
             cancel_event=cancel_event,
             ledger=ledger,
             context_window_tokens=context_window_tokens,

@@ -164,6 +164,35 @@ def test_one_shot_agent_tool_sets_and_budget_wiring(monkeypatch: pytest.MonkeyPa
     assert outcome.patch_applied and outcome.finish_declared
 
 
+@pytest.mark.parametrize("accepted_budget", [2300, 0])
+def test_one_shot_keeps_explicit_budget_across_environment_drift(
+    monkeypatch: pytest.MonkeyPatch, accepted_budget: int
+) -> None:
+    """驱动器的冻结额度两阶段共用，显式0不回退到当前环境的有限额度。"""
+    monkeypatch.setenv("PATCHPILOT_TOKEN_BUDGET", "50000")
+    calls: list[int] = []
+
+    def _fake_loop(ctx: Any, model: Any, text: str, **kwargs: Any) -> LoopOutcome:
+        calls.append(kwargs["token_budget"])
+        monkeypatch.setenv("PATCHPILOT_TOKEN_BUDGET", "9000")
+        get_settings.cache_clear()
+        return LoopOutcome(
+            success=True,
+            summary="s",
+            turns=1,
+            tokens_used=600,
+            patch_applied=len(calls) == 2,
+            finish_declared=True,
+        )
+
+    monkeypatch.setattr("app.evals.single_shot.run_plain_loop", _fake_loop)
+    outcome = one_shot_agent(
+        None, None, load_bug("BUG-001", BUG_ROOT), token_budget=accepted_budget
+    )  # type: ignore[arg-type]
+    assert calls == [accepted_budget, accepted_budget - 600 if accepted_budget else 0]
+    assert outcome.tokens_used == 1200
+
+
 def test_patch_phase_budget_error_keeps_localize_usage(monkeypatch: pytest.MonkeyPatch) -> None:
     """补丁阶段超预算时,定位阶段已烧的 token/turns 必须记回任务级账本(N-11 同源)。"""
     localize = LoopOutcome(

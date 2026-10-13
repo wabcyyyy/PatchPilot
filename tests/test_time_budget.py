@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.adapters.pytest_adapter import PytestReport
+from app.config import Settings
 from app.evals.bugset import load_bug
 from app.evals.driver import run_task
 from app.gitops.testing import materialize_repo
@@ -22,6 +23,7 @@ from app.graph.checkpoint import make_sqlite_checkpointer
 from app.graph.nodes import TaskNodes
 from app.graph.runner import run_task_graph
 from app.llm.fake import FakeLLM
+from app.tools.base import ToolContext
 from app.tools.tracker import Tracker
 
 BUG_ROOT = Path("bugs")
@@ -135,7 +137,7 @@ def test_verify_after_last_rerun_over_deadline_keeps_evidence_not_resolved(
     monkeypatch.setattr("app.graph.nodes.time", SimpleNamespace(time=lambda: clock["now"]))
     monkeypatch.setattr(
         "app.graph.nodes.get_settings",
-        lambda: SimpleNamespace(task_timeout_seconds=900, verify_double_run=True),
+        lambda: Settings(task_timeout_seconds=900, verify_double_run=True),
     )
     green = _green_report(["tests/test_a.py::test_x"])
 
@@ -158,7 +160,15 @@ def test_verify_after_last_rerun_over_deadline_keeps_evidence_not_resolved(
         max_turns=5,
         deadline_epoch=clock["now"] + 900,
     )
-    nodes.ctx = SimpleNamespace(python_exe="python", env=None)  # type: ignore[assignment]
+    nodes.ctx = ToolContext(
+        task_id="T-RERUN",
+        workspace=tmp_path,
+        baseline_commit="",
+        tracker=nodes.tracker,
+        report_dir=tmp_path,
+        python_exe="python",
+        execution_backend="local",
+    )
 
     update = nodes.verify({"round_no": 1})  # type: ignore[arg-type]
     assert update["status"] == "BUDGET_EXCEEDED"
@@ -183,7 +193,7 @@ def test_plain_driver_verify_skipped_when_deadline_passed(
     monkeypatch.setattr(
         driver_mod,
         "get_settings",
-        lambda: SimpleNamespace(
+        lambda: Settings(
             llm_enabled=False,
             token_budget=200_000,
             llm_max_tokens=0,

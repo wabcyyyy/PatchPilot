@@ -679,7 +679,15 @@ def test_verify_deadline_overrun_returns_budget_terminal(
         max_turns=5,
         deadline_epoch=time.time() - 1,  # 截止时刻早已过去
     )
-    nodes.ctx = SimpleNamespace(python_exe="python", env=None)  # type: ignore[assignment]
+    nodes.ctx = ToolContext(
+        task_id="T-DL",
+        workspace=tmp_path,
+        baseline_commit="",
+        tracker=nodes.tracker,
+        report_dir=tmp_path,
+        python_exe="python",
+        execution_backend="local",
+    )
 
     update = nodes.verify({"round_no": 1})  # type: ignore[arg-type]
     assert update["status"] == "BUDGET_EXCEEDED"
@@ -714,7 +722,15 @@ def test_verify_deadline_hits_midway_keeps_partial_flags(
         max_turns=5,
         deadline_epoch=1000.0,  # 持久化的墙钟截止时刻(S02b)
     )
-    nodes.ctx = SimpleNamespace(python_exe="python", env=None)  # type: ignore[assignment]
+    nodes.ctx = ToolContext(
+        task_id="T-DL2",
+        workspace=tmp_path,
+        baseline_commit="",
+        tracker=nodes.tracker,
+        report_dir=tmp_path,
+        python_exe="python",
+        execution_backend="local",
+    )
 
     update = nodes.verify({"round_no": 1})  # type: ignore[arg-type]
     assert update["status"] == "BUDGET_EXCEEDED"
