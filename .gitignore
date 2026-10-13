@@ -41,3 +41,6 @@ build/
 
 # IDE
 .idea/
+
+# Local validation receipts and process lock
+.validation/

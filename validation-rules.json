@@ -1,0 +1,188 @@
+{
+  "exclude": [
+    "*/node_modules/*",
+    "node_modules/*",
+    "*/.venv/*",
+    ".venv/*",
+    "*/__pycache__/*",
+    ".validation/*",
+    "tests/fixtures/*",
+    "Ultralytics/*",
+    "runs/*",
+    ".uv-cache/*",
+    ".tmp*/*",
+    ".claude/*"
+  ],
+  "docs": [
+    "*.md",
+    "*.rst",
+    "docs/*.png",
+    "docs/*.jpg"
+  ],
+  "inputs": [
+    "*.py",
+    "*.toml",
+    "*.json",
+    "*.yaml",
+    "*.yml",
+    "*.ini",
+    "*.cfg",
+    "*.txt",
+    "*.md",
+    "*.ps1",
+    "*.ts",
+    "*.tsx",
+    "*.js",
+    "*.mjs",
+    "*.css",
+    "*.vue",
+    "justfile",
+    ".github/*",
+    ".env.example",
+    "*.lock"
+  ],
+  "high_risk": [
+    "pyproject.toml",
+    "uv.lock",
+    "*requirements*.txt",
+    "*conftest.py",
+    "*__init__.py",
+    ".github/*",
+    "validation-rules.json",
+    "scripts/ai_validate.py",
+    "ruff.toml",
+    "tests/slow_tests.txt",
+    "app/config.py",
+    "app/graph/*",
+    "app/gitops/*",
+    "app/executor/*",
+    "app/tools/*",
+    "app/adapters/*",
+    "app/evals/metrics.py",
+    "app/api/auth*"
+  ],
+  "module_static": [],
+  "frontend": "<none>",
+  "frontend_static": [],
+  "frontend_full": [],
+  "frontend_tests": [],
+  "frontend_node_tests": [],
+  "frontend_related": false,
+  "python_prefix": "",
+  "python_cwd": ".",
+  "ruff": true,
+  "ruff_flags": [
+    "--config",
+    "ruff.toml"
+  ],
+  "pytest_args": [],
+  "tests": [
+    "tests/test_*.py"
+  ],
+  "groups": [
+    {
+      "name": "api",
+      "files": [
+        "app/api/*"
+      ],
+      "tests": [
+        "tests/test_api*.py",
+        "tests/test_service*.py",
+        "tests/test_offline_scenarios.py"
+      ]
+    },
+    {
+      "name": "retrieval",
+      "files": [
+        "app/retrieval/*",
+        "app/index*/*"
+      ],
+      "tests": [
+        "tests/test_retriev*.py",
+        "tests/test_index*.py"
+      ]
+    },
+    {
+      "name": "llm",
+      "files": [
+        "app/llm/*"
+      ],
+      "tests": [
+        "tests/test_llm*.py",
+        "tests/test_propose*.py"
+      ]
+    },
+    {
+      "name": "docs",
+      "files": [
+        "*.md"
+      ],
+      "tests": [
+        "tests/test_docs_anchors.py"
+      ]
+    },
+    {
+      "name": "validation",
+      "files": [
+        "scripts/ai_validate*.py",
+        "verify.ps1",
+        "validation-rules.json"
+      ],
+      "tests": [
+        "tests/test_ai_validation.py"
+      ]
+    }
+  ],
+  "project": "PatchPilot",
+  "full": [
+    {
+      "cwd": ".",
+      "argv": [
+        "$PY",
+        "-m",
+        "ruff",
+        "check",
+        "."
+      ]
+    },
+    {
+      "cwd": ".",
+      "argv": [
+        "$PY",
+        "-m",
+        "ruff",
+        "format",
+        "--check",
+        "."
+      ]
+    },
+    {
+      "cwd": ".",
+      "argv": [
+        "$PY",
+        "-m",
+        "pytest",
+        "-q",
+        "-m",
+        "not stress",
+        "--durations=30",
+        "--basetemp=$TEMP/pytest"
+      ]
+    }
+  ],
+  "python_sources": [
+    "app/*.py",
+    "tests/*.py",
+    "scripts/*.py"
+  ],
+  "quick_test_files": 6,
+  "quick_budget_seconds": 90,
+  "cache_max_age_seconds": 86400,
+  "quick_critical_names": [
+    "auth",
+    "gates",
+    "executor",
+    "default_deny",
+    "ai_validation"
+  ]
+}

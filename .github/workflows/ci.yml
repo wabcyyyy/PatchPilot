@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     # 固定镜像版本:ubuntu-latest 自 2026-10-19 起迁到 Ubuntu 26,docker 用例对宿主 uid/属主敏感

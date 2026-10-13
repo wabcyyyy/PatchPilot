@@ -30,8 +30,8 @@ testpaths = ["tests"]
 # CI 用系统临时目录,直接 pytest -q 即可。
 addopts = "-ra"
 # 分档(登记表见 tests/slow_tests.txt,跑法见 AGENTS.md「提交规范」):
-#   快档   pytest -q -m "not slow" --basetemp=D:/tmp/pt        —— 每个 commit 前
-#   本地全量 pytest -q -m "not stress" --basetemp=D:/tmp/pt    —— 每张卡收尾 / push 前
+#   快档   pytest -q -m "not slow" --basetemp=D:/tmp/pt        —— 需要广泛快回归时的 L2 补充
+#   本地全量 pytest -q -m "not stress" --basetemp=D:/tmp/pt    —— 用户明确要求的本地全量；日常全集交 CI
 #   CI     pytest -q                                          —— 全集(含 stress),最终闸
 markers = [
     "slow: 单条 >=2s 的端到端用例(由 tests/slow_tests.txt 登记,conftest 自动打标)",
