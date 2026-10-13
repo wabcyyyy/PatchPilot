@@ -398,7 +398,9 @@ def build() -> int:
     )
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(doc, encoding="utf-8", newline="\n")
-    print(f"wrote {OUT.relative_to(ROOT)} ({len(doc):,} bytes, {len(arts)} docs)")
+    # OUT 可被指向仓库外(对账用例重建到 tmp),打印时别再假设它一定在 ROOT 下
+    shown = OUT.relative_to(ROOT) if OUT.is_relative_to(ROOT) else OUT
+    print(f"wrote {shown} ({len(doc):,} bytes, {len(arts)} docs)")
     return 0
 
 

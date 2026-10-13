@@ -50,7 +50,6 @@
     ".github/*",
     "validation-rules.json",
     "scripts/ai_validate.py",
-    "ruff.toml",
     "tests/slow_tests.txt",
     "app/config.py",
     "app/graph/*",
@@ -71,10 +70,7 @@
   "python_prefix": "",
   "python_cwd": ".",
   "ruff": true,
-  "ruff_flags": [
-    "--config",
-    "ruff.toml"
-  ],
+  "ruff_flags": [],
   "pytest_args": [],
   "tests": [
     "tests/test_*.py"

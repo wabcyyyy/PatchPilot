@@ -9,15 +9,21 @@
    2026-10-11 起不再钉行号:行号锚点每插一行代码就漂移,历史上约 30 个 commit
    只是在"重钉行号",没有一次抓到真实的文档/代码矛盾;旧的 `路径:行号` 写法当场报错;
 3. 已知的假命题文案禁止在任何文档/源码中复活(黑名单);
-4. README 的能力清单(工具条数与名单)以代码里的注册表为准绳逐名对齐。
+4. README 的能力清单(工具条数与名单)以代码里的注册表为准绳逐名对齐;
+5. 依赖声明的两个入口(pyproject 与 requirements*)必须逐条对得上;
+6. 提交进仓库的生成物(interview-guide 站点 HTML)必须与它的 Markdown 事实源逐字节一致。
 
 夜间 GOAL 的「全量 pytest 绿」红线由此物理卡住"改代码不改文档"。
 """
 
 from __future__ import annotations
 
+import importlib.util
 import re
+import tomllib
 from pathlib import Path
+
+import pytest
 
 from app.tools.registry import FINISH_TOOL, REGISTRY
 
@@ -204,3 +210,54 @@ def test_markdown_links_point_at_existing_files() -> None:
             if not (path.parent / link).exists():
                 broken.append(f"{path.relative_to(REPO_ROOT).as_posix()} -> {link}")
     assert not broken, f"链接指向不存在的文件:{'; '.join(broken)}"
+
+
+def _req_specs(relpath: str) -> set[str]:
+    """requirements*.txt 里的依赖条目(去掉行尾注释与空行)。"""
+    return {
+        line.split("#")[0].strip()
+        for line in _read(relpath)
+        if line.strip() and not line.strip().startswith(("#", "-"))
+    }
+
+
+def test_requirements_files_match_pyproject() -> None:
+    """依赖声明的两个入口必须逐条一致:pyproject 是唯一声明源。
+
+    同一份依赖此前漂过一次:`httpx` 只写在 requirements-dev.txt,pyproject 的 dev
+    extra 里没有——照 pyproject 装出来的环境跑不起 starlette TestClient 用例。
+    CI 与镜像走 requirements(`pip install -r requirements.txt -r requirements-dev.txt`),
+    人手装环境走 `.[dev,llm]`,两条路径装出来的集合必须相同,所以在这里对账。
+    """
+    cfg = tomllib.loads("\n".join(_read("pyproject.toml")))
+    extras = {name: set(specs) for name, specs in cfg["project"]["optional-dependencies"].items()}
+
+    assert _req_specs("requirements.txt") == set(cfg["project"]["dependencies"])
+    assert _req_specs("requirements-dev.txt") == extras["dev"] | extras["llm"]
+
+
+def test_interview_site_html_matches_its_markdown(tmp_path: Path) -> None:
+    """提交进仓库的站点 HTML 必须与它的 Markdown 事实源逐字节一致。
+
+    `docs/interview-guide/site/index.html` 是 `scripts/build_interview_site.py` 从
+    同目录 *.md 生成的,进仓库是为了双击就能读;但它一改 md 就过期,而页面里写着
+    "Markdown 为唯一事实源"——这正是 P3-7 那类"文档说的和实际的不是同一份"的复现形态。
+    这里把生成物重建到 tmp_path 比对,不动仓库里的文件。
+    """
+    committed = REPO_ROOT / "docs" / "interview-guide" / "site" / "index.html"
+    if not committed.exists():
+        pytest.skip("站点 HTML 不在仓库里,无需对账")
+
+    spec = importlib.util.spec_from_file_location(
+        "build_interview_site", REPO_ROOT / "scripts" / "build_interview_site.py"
+    )
+    assert spec and spec.loader
+    builder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(builder)
+    builder.OUT = tmp_path / "index.html"
+    builder.build()
+
+    assert builder.OUT.read_bytes() == committed.read_bytes(), (
+        "docs/interview-guide/site/index.html 与 docs/interview-guide/*.md 不同步:"
+        "跑 python scripts/build_interview_site.py 重新生成后一并提交"
+    )
