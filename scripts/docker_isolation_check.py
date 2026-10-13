@@ -1,7 +1,7 @@
 """Docker 隔离边界实验(T8.2 验收):联网、宿主文件访问、文件系统可见性、正常执行。
 
 用法:python scripts/docker_isolation_check.py
-输出供 docs/docker-isolation-notes.md 记录。
+输出供 docs/archive/docker-isolation-notes.md 记录。
 """
 
 from __future__ import annotations

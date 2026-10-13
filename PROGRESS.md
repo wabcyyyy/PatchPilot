@@ -1887,3 +1887,12 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
 删除无调用私有wrapper/响应schema；README/企划书/索引/interview-guide按实现校准并重建HTML。
 不新增功能、不付费、不本地全量。提交为本卡所在fix(realignment)，完整审查/遗留地图与测试收据见
 `docs/work-notes/realignment-2026-10-12.md`；最终快速收据`.validation/20261012-135906-ff7df0ee.json`（105项），文档/生成器补检收据`.validation/20261012-140231-0101364f.json`（10项）；本地相关检查通过，完整回归交CI。
+
+## 2026-10-12 · 收尾整合
+
+按用户授权将剩余验证工具、四篇历史归档、引用修复和零调用 ResourceLedger.to_state 删除整合提交；
+验证入口补暂存重命名/删除识别回归，防止合法旧路径被当作拼写错误；威胁模型按当前命令 profile、
+费用预算与宿主子进程边界校准，面试材料同步重建 HTML。验证工具提交 `28134fc`，
+收据 `.validation/20261012-215519-f91e8645.json`（22项）；清理提交以本段所在 chore(cleanup) 定位，
+清理收据 `.validation/20261012-215706-d292cdf4.json`（73项，含真实Docker）及HTML链接smoke通过，
+73个其他候选测试文件留给CI，详见 `docs/work-notes/closeout-2026-10-12.md`。不本地全量、不付费；完整回归交最终提交 CI。

@@ -13,11 +13,11 @@ PatchPilot 是**单机个人工具**:给定本地 Git 仓库与 Bug 描述,Agent
 | 资产 | 说明 |
 |---|---|
 | 宿主文件系统 | `repo_path` 指向的目录及其可达文件、环境变量(含 LLM key) |
-| 宿主计算资源 | 测试执行的 CPU/内存/磁盘(预算门禁只管 token/轮数/时长,不限带宽) |
+| 宿主计算资源 | 测试执行的 CPU/内存/磁盘；任务预算覆盖 token/费用/调用数/轮数/时长，执行器限额依后端而定，不保证磁盘或带宽配额 |
 | 钱包 | LLM API 调用费用 |
 
-信任边界:`API 客户端 → API 服务 → Agent(LLM 输出不可信)→ 七个受控工具 + 七项门禁
-→ 执行器(local=进程级 / docker=容器级)`。LLM 生成的补丁与工具参数**一律视为不可信输入**。
+信任边界:`API 客户端 → API 服务 → Agent(LLM 输出不可信)→ 16 个受控工具 + 七项门禁
+→ 执行器(local=宿主子进程，共享宿主权限 / docker=容器级)`。LLM 生成的补丁与工具参数**一律视为不可信输入**。
 API 响应(TaskOut)刻意收敛:不含 idem_key/repo_path/内部主键,但**保留 run_dir
 服务端路径**(单机定位产物需要)——多租户部署前必须去掉(R2 整改注记)。
 
@@ -26,8 +26,9 @@ API 响应(TaskOut)刻意收敛:不含 idem_key/repo_path/内部主键,但**保�
 ### R1 任意 repo_path = 任意目录读 + 任意代码执行
 
 `POST /api/tasks` 的 `repo_path` 可指向宿主任意目录:Agent 可读该目录下文件
-(read_file/search_code/list_files),并**在该目录执行 pytest**——而 pytest 会 import
-被测包,等价于执行该目录及其 import 链上的代码。
+(read_file/search_code/list_files)，并在任务工作区执行 pytest、在诊断副本执行受控命令。
+自定义任务冻结源副本和工作区副本用于身份与文件范围控制，**不是进程沙箱**；
+local 下 pytest 会 import 被测包，目标仓库及其 import 链上的代码仍以宿主权限执行。
 缓解:compose 仅绑回环;可选 `PATCHPILOT_API_TOKEN` 鉴权;`PATCHPILOT_ALLOWED_REPO_ROOTS`
 根白名单(T12.2);容器部署时 API 容器只见 `/data` 与 `bugs/`
 (例外:`/var/run/docker.sock`,为 M11 隔离闭环所必需,代价与前置条件见 R6)。
@@ -43,7 +44,8 @@ API 响应(TaskOut)刻意收敛:不含 idem_key/repo_path/内部主键,但**保�
 
 1. 静态门禁:禁改测试文件 / 路径越界 / allowed_paths 范围 / 文件数上限 / 影子模块
    / diff 格式 / `git apply --check`,攻击样例 10 个拦截(`bugs/attacks/`,回归于 `tests/test_attacks.py`);
-2. 命令边界:Agent 只能跑 manifest 预定义测试集,无 shell,参数列表 + 白名单;
+2. 命令边界:run_tests 使用任务受理时冻结的测试集；run_command 使用受理的命令 profile，
+   write_repro 的脚本由受控 python_repro profile 执行；无 shell，参数列表 + 白名单;
 3. 执行隔离:`local` 后端=宿主子进程(信任级别≈开发者自己跑测试),`docker` 后端=
    容器级(`--network=none`、内存/CPU 限额、非 root uid 1000、`--rm` 用后即焚);
 4. 判定不信任模型声明:resolved 由平台重跑双测试集 + 门禁自动判定。
@@ -59,14 +61,16 @@ API 响应(TaskOut)刻意收敛:不含 idem_key/repo_path/内部主键,但**保�
 
 `PATCHPILOT_LLM_API_KEY` 经环境变量/.env 注入,不入库不入日志;.env 已 gitignore。
 真实调用有三重闸:`PATCHPILOT_LLM_ENABLED` 总开关(默认关)、单请求
-max_tokens/超时/重试、单任务 token 预算门禁(BUDGET_EXCEEDED)。
+max_tokens/超时/重试、单任务预算门禁(BUDGET_EXCEEDED)。预算模式为 tokens/cost/hybrid，
+另有调用数/轮数/时长约束；cost/hybrid 受理要求已知价格和正费用上限。
+费用按版本价目与 usage 来源折算或估计，不代表供应商最终账单；未知调用保留占额。
 
 ### R6 docker.sock 挂载与无密码 redis = 宿主等价权限(复盘 P1-8 补记)
 
 `execution_backend=docker` 的 compose 部署需挂载 `/var/run/docker.sock`,
 能操作守护进程≈能操作宿主(API 进程沦陷即宿主 root);同 compose 内 redis
 未设密码,API 沦陷时锁状态可被任意篡改。这是把执行隔离从"进程"升级为
-"容器"的代价,仅在信任 API 调用方的前提下使用(见 docs/docker-backend-notes.md)。
+"容器"的代价,仅在信任 API 调用方的前提下使用(见 docs/archive/docker-backend-notes.md)。
 缓解建议(按性价比):compose 绑回环 + 必设 `PATCHPILOT_API_TOKEN`;
 redis 仅本机回环监听、不跨机暴露;更高隔离要求时改用 docker socket proxy
 (白名单化 docker API)或独立执行机,而不是直接挂 sock。
@@ -98,26 +102,27 @@ ATTACK-009 的自述范围是「越界路径」(落点 `../escape.txt`,被静态
 - 恶意/越权的宿主本机用户(回环端口谁都能连,见 R2 的 token 缓解);
 - 物理访问、内存窃听、侧信道;
 - Agent 补丁的"语义恶意"——平台判定的是"测试通过 + 范围合法",不是"代码善良";
-- **被测代码与判定器同进程**(audit-2026-09-20 N-1 残余):verify 阶段运行的是
-  Agent 改过的代码,它理论上可伪造 junit/退出码。影子门禁(新增文件不得与
+- **被测代码与 JUnit 产生端同 pytest 进程**(audit-2026-09-20 N-1 残余)：平台在父进程
+  解析测试产物并判定；verify 子进程运行 Agent 改过的代码，理论上可伪造 junit/退出码。
+  影子门禁(新增文件不得与
   pytest/stdlib 同名)封掉了最直接的伪造通道,但"恶意仓库作者在基线里预置
   伪造逻辑"(基线仓库本身不可信)不在防线上——自定义任务请确保基线仓库可信,
   或用 docker 后端 + 可信基线;
   verify 双跑复核(E3)的价值边界如实声明(P3-5/R3-Q7):防的是**非自适应偶发
   伪绿**(收集集漂移/flaky/偶发伪造);对基线预置伪造的自适应对手无实质检出力
-  ——同一伪造逻辑在同进程对两次运行同样生效,两次产出完全一致。E3 是结构性
+  ——同一伪造逻辑在两次 pytest 运行中同样生效，两次产出完全一致。E3 是结构性
   冒烟复核,不是防线。
 
 ## 5. 部署形态与适用边界
 
 | 形态 | 执行隔离 | 适用 |
 |---|---|---|
-| 本机进程(local 后端) | 进程级 | 完全自用,目标仓库本来就会在本机跑测试 |
+| 本机进程(local 后端) | 宿主子进程，共享宿主权限 | 完全自用,目标仓库本来就会在本机跑测试 |
 | 本机进程(docker 后端) | 容器级 | 想隔离被测代码执行的个人开发机 |
 | compose(回环 + 可选 token) | 容器级(挂 sock) | 单人服务的长期部署;**不要**暴露到非回环网络 |
 
 ## 6. 已知边界与残余风险的其他记录
 
-见 `docs/design.md` §8(单进程架构、协作式取消粒度等)、
+见 `docs/archive/design.md` §8(单进程架构、协作式取消粒度等)、
 `docs/archive/2026-09-18-改进计划M10-M13.md`(已完成并归档)与
-`docs/work-notes/audit-2026-09-19.md`(全量自检的**未整改**风险清单,按 P0–P3 分级)。
+`docs/archive/audit-2026-09-19.md`(全量自检的**未整改**风险清单,按 P0–P3 分级)。

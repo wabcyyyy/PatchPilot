@@ -75,7 +75,7 @@ regression 必须绿)由生成器与测试双重把关——回归集在基线�
   价值边界如实声明(P3-5/R3-Q7):防**非自适应偶发伪绿**(收集集漂移/flaky/
   偶发伪造),对基线预置伪造的自适应对手无实质检出力——定位是结构性冒烟复核,
   不是防线;graph 批次佐证已产出(2026-09-26:35/35 题触发双跑三件套,
-  见 docs/work-notes/e3-and-provenance-evidence-2026-09-26.md),真实模型批次佐证亦已补齐
+  见 docs/archive/e3-and-provenance-evidence-2026-09-26.md),真实模型批次佐证亦已补齐
   (2026-10-09 L01/Q0:8 个 resolved run 全部触发双跑复核,mismatch 全 null,
   runs/q0-noise-2026-10-08/);
 - **容量模型(E4,如实陈述)**:单进程架构;任务并发上限 = `task_max_workers`

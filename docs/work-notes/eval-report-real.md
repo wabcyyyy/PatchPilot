@@ -11,7 +11,7 @@
 > 因此下方原文"report.json 内含 token 明细与成本"一句**不成立**(成本一项都没有),
 > 且**无法回答"哪个模型、哪个引擎、花了多少钱"**。根因是 `app/evals/run_single.py` 从 CLI 调用时
 > 不传 `model_name`;provenance 缺失说明本批次早于 T10.1 落地后未重生成。
-> 缺陷与整改见 `docs/work-notes/audit-2026-09-19.md` P1-2。
+> 缺陷与整改见 `docs/archive/audit-2026-09-19.md` P1-2。
 
 > **历史批次溯源缺失(2026-09-25 补注,与 E2 整改呼应)**:本批次的 28 份 report.json
 > `model_name` 全空、provenance 全缺,属历史遗留,**不回填、不重生成**(零花费红线)。

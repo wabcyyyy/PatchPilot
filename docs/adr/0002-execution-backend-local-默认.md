@@ -1,7 +1,7 @@
 # ADR 0002:执行后端默认值 —— local 默认,Docker 可选
 
 日期:2026-09-25 | 状态:已采纳 | 素材:interview-audit-2026-09-24.md 2-Q5;
-docs/docker-isolation-notes.md 五项实验(2026-09-16 实测)
+docs/archive/docker-isolation-notes.md 五项实验(2026-09-16 实测)
 
 ## 背景
 

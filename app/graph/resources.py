@@ -674,10 +674,6 @@ class ResourceLedger:
 
     # ---------- 持久化(恢复不重授的前提) ----------
 
-    def to_state(self) -> dict[str, Any]:
-        with self._lock:
-            return self._state_locked()
-
     def _state_locked(self) -> dict[str, Any]:
         """可 checkpoint 的账本状态:明细 + 在途/未知预留 + 上限(调用方必须已持锁)。"""
         return {

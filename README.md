@@ -19,9 +19,9 @@
 - **七项质量门禁**:格式 / 禁改测试文件 / 路径越界 / 修改范围 / 影子模块 / 命令白名单 / 资源预算,
   附 10 个攻击样例(`bugs/attacks/`)验证拦截;
 - **双执行引擎**:plain 单轮驱动与 graph 分阶段、多候选状态机，共享模型工具循环、工具、pytest 适配器与终局验收；候选工件、审批/澄清与自动恢复编排在 graph 路径。两者不声明功能等价;
-- **服务化**:FastAPI 七个端点 + SQLite 持久化 + Redis 任务锁(可退化内存锁)+ 幂等 + 崩溃恢复;
+- **服务化**:FastAPI 12 个端点(`app/api/routes.py`,条数由 `tests/test_docs_anchors.py` 对路由装饰器核数) + SQLite 持久化 + Redis 任务锁(可退化内存锁)+ 幂等 + 崩溃恢复;
 - **容器执行后端（默认 local）**:pytest 临时容器带 `--network=none`、内存/CPU 限额、`--rm`；受控诊断命令另加 PID 限额与 `no-new-privileges`，
-  5 项隔离实验见 `docs/docker-isolation-notes.md`;
+  5 项隔离实验见 `docs/archive/docker-isolation-notes.md`;
 - **自建评测集**:正式集 35 题(28 题简单/中等 + 7 题 hard,BUG-029..035),
   另有候选 1 道待审(`bugs/candidates/`),
   七项指标自动判定;T10.1 起报告自带批次 provenance 与自动归并的复现命令
@@ -132,7 +132,7 @@ curl -X POST http://localhost:8001/api/tasks -H "Content-Type: application/json"
 app/
 ├── api/        # FastAPI 路由、任务服务、报告渲染
 ├── graph/      # LangGraph 状态、节点、门禁、checkpoint、plain 循环
-├── tools/      # 七个 Agent 工具、轨迹记录、路径安全
+├── tools/      # 16 个受控 Agent 工具、轨迹记录、路径安全
 ├── executor/   # 本地 / Docker 测试执行器、命令白名单
 ├── gitops/     # 快照、diff、应用补丁、回滚
 ├── adapters/   # pytest 报告解析(预留其他语言)
@@ -157,15 +157,15 @@ tests/          # 项目自身测试(全离线,模型交互用 FakeLLM 回放;�
 | `docs/PatchPilot项目企划书.md` | 项目范围与当前架构概要；早期规划另标历史，升级行为以当前 SPEC/ADR 为准 |
 | `docs/work-notes/realignment-2026-10-12.md` | 本轮真实链路审查、遗留分类、修复范围及验证收据 |
 | `docs/interview-guide/README.md` | 对应当前实现的面试材料及证据边界 |
-| `docs/design.md` | 设计决策与已知边界 |
+| `docs/archive/design.md` | 设计决策与已知边界(已归档,仍被 ADR 锚点引用) |
 | `docs/threat-model.md` | 威胁模型:风险清单、缓解与"明确不防"清单 |
-| `docs/work-notes/audit-2026-09-19.md` | 全量自检:死代码/冗余架构、安全与逻辑漏洞、承诺落地核查,按 P0–P3 分级 |
+| `docs/archive/audit-2026-09-19.md` | 全量自检:死代码/冗余架构、安全与逻辑漏洞、承诺落地核查,按 P0–P3 分级 |
 | `docs/work-notes/eval-report.md` | fake 回放批次快照(混合引擎;读数前先读文首口径补注) |
 | `docs/work-notes/eval-report-real.md` | 真实模型批次快照(缺模型名/成本;读数前先读文首口径补注) |
 | `docs/work-notes/swe-ablation-evidence-2026-10-07.md` | 真实 SWE-bench 批次 + 两臂消融对照:预登记题单与判据、负面结果、瓶颈定位与协议边界 |
 | `docs/work-notes/interview-evidence-2026-10-07.md` | 同一批实测的"能写 / 不能写"清单:每条主张附证据路径与强度上限 |
 | `docs/postmortems/` | 失败复盘(6 篇) |
-| `docs/docker-isolation-notes.md` / `docs/docker-backend-notes.md` | 容器隔离边界实验 / 执行后端与部署闭环 |
+| `docs/archive/docker-isolation-notes.md` / `docs/archive/docker-backend-notes.md` | 容器隔离边界实验 / 执行后端与部署闭环 |
 | `docs/archive/README.md` | 历史计划、执行状态与收口记录 |
-| `docs/PatchPilot学习计划.md` | 学习路线 |
+| `docs/archive/PatchPilot学习计划.md` | 学习路线 |
 | `docs/archive/` | 一次性历史:夜跑任务单与晨会报告、M10–M13 改进计划(均已完成) |

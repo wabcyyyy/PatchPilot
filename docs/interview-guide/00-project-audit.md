@@ -59,6 +59,8 @@ LEGACY BUT REQUIRED：legacy_v1、FakeLLM 旧计划回放、旧报告/SQLite 迁
 DEAD（本轮删除）：_matches_requested 私有 wrapper 与未接线 ErrorResponse。
 UNCERTAIN（保留）：reset_workspace（plain 默认工具表可达、graph 阶段不开放）、装配缓存辅助方法。
 ResourceLedger.to_state 的删除是本轮开始前的已有工作，不计为本轮删除。
+后续经用户授权在收尾提交中整合；核对无执行调用，实际持久化走 _state_locked，见
+[收尾任务卡](../work-notes/closeout-2026-10-12.md)。
 
 ## 6. Claim vs Reality
 

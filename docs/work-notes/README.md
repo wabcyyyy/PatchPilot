@@ -19,12 +19,12 @@
 
 | 文件 | 用途 |
 |---|---|
-| [2026-09-19 自检](audit-2026-09-19.md) | 当时风险清单 |
-| [2026-09-20 LOOP 审查](audit-2026-09-20.md) | 当时审查与整改过程 |
+| [2026-09-19 自检](../archive/audit-2026-09-19.md) | 当时风险清单 |
+| [2026-09-20 LOOP 审查](../archive/audit-2026-09-20.md) | 当时审查与整改过程 |
 | [2026-09-24 面试审查](interview-audit-2026-09-24.md) | 第一轮对抗审查 |
 | [2026-09-26 面试审查](interview-audit-2026-09-26.md) | 第二轮对抗审查 |
 | [2026-09-26 整改对照](audit-2026-09-26-remediation.md) | 问题与整改记录 |
-| [E3 与 provenance 补证](e3-and-provenance-evidence-2026-09-26.md) | 连通性与历史来源核验 |
+| [E3 与 provenance 补证](../archive/e3-and-provenance-evidence-2026-09-26.md) | 连通性与历史来源核验 |
 | [SWE 批次与消融记录](swe-ablation-evidence-2026-10-07.md) | 当时题单、负结果和瓶颈 |
 | [简历证据](resume-evidence-2026-10-08.md) | 可用主张与证明上限 |
 | [面试证据清单](interview-evidence-2026-10-07.md) | 表述与追问材料 |

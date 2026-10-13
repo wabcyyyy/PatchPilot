@@ -11,7 +11,7 @@
 
 junit 报告通过挂载的 reports 目录传回宿主(不落在被验证的工作区内)。
 容器身份与宿主目录属主必须对齐,否则宿主是原生 Linux 时容器写不进 reports——
-见 `_container_identity_cmd_flags` 与 docs/docker-backend-notes.md。
+见 `_container_identity_cmd_flags` 与 docs/archive/docker-backend-notes.md。
 """
 
 from __future__ import annotations

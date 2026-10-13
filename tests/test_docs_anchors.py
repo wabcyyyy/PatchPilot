@@ -163,3 +163,44 @@ def test_readme_dataset_counts_match_the_fixtures() -> None:
     assert f"{len(attacks)} 个攻击样例" in readme, f"README 的攻击样例条数与目录不符:{attacks}"
     assert f"攻击样例 {len(attacks)} 个拦截" in threat, "threat-model 的条数与目录不符"
     assert f"正式集 {len(bugs)} 题" in readme, f"README 的题目数与 bugs/ 不符:{len(bugs)}"
+
+
+_ROUTE_DECORATOR = re.compile(r"^@router\.(?:get|post|put|patch|delete)\(", re.M)
+_FENCE_BLOCK = re.compile(r"```.*?```", re.S)
+_MD_LINK = re.compile(r"\]\(([^)#\s]+)(?:#[^)]*)?\)")
+_LINK_CHECK_ROOTS = ("README.md", "AGENTS.md", "VALIDATION.md")
+
+
+def test_readme_endpoint_count_matches_routes_py() -> None:
+    """README「FastAPI N 个端点」必须以 app/api/routes.py 的路由装饰器条数为准。
+
+    2026-10-12 全库考古查出的漂移:README 写「七个端点」而实际 12 个。工具清单与
+    数据集计数早有对应用例,端点数是当时漏网的同一类漂移,这里补上对账口径。
+    """
+    routes = _ROUTE_DECORATOR.findall("\n".join(_read("app/api/routes.py")))
+    readme = "\n".join(_read("README.md"))
+    assert f"FastAPI {len(routes)} 个端点" in readme, (
+        f"README 的端点数与 app/api/routes.py 不符:实际 {len(routes)} 个"
+    )
+
+
+def test_markdown_links_point_at_existing_files() -> None:
+    """根文档与 docs/ 下的每个相对链接都必须指向真实文件。
+
+    归档 4 篇过期文档时发现 `docs/archive/README.md` 有一条 `../x.md` 指错目录:
+    锚点用例只管「那句话还在不在」,管不到「链接指没指对」。
+    PROGRESS.md / TODO.md 是按天追加的历史日志,其中路径属于当时事实,不纳入本用例
+    ——否则任何后续删除都会把历史日志钉红。
+    """
+    targets = [REPO_ROOT / name for name in _LINK_CHECK_ROOTS]
+    targets += sorted((REPO_ROOT / "docs").rglob("*.md"))
+    broken: list[str] = []
+    for path in targets:
+        body = _FENCE_BLOCK.sub("", path.read_text(encoding="utf-8"))
+        for match in _MD_LINK.finditer(body):
+            link = match.group(1)
+            if link.startswith(("http", "mailto:", "/", "file:")):
+                continue
+            if not (path.parent / link).exists():
+                broken.append(f"{path.relative_to(REPO_ROOT).as_posix()} -> {link}")
+    assert not broken, f"链接指向不存在的文件:{'; '.join(broken)}"

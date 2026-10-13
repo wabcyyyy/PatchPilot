@@ -17,7 +17,7 @@ docs 顶层保留长期规范、设计与当前升级规格。当前交接、审
 | [项目企划书](PatchPilot项目企划书.md) | 项目范围、架构、状态机、门禁和评测定义 |
 | [历史设计说明](archive/design.md) | 当时设计取舍、接线现状和已知边界；当前行为按源码与 SPEC 核对 |
 | [威胁模型](threat-model.md) | 信任边界、已防护及未覆盖的风险 |
-| [学习计划](PatchPilot学习计划.md) | 学习路线与自查标准 |
+| [学习计划](archive/PatchPilot学习计划.md) | 学习路线与自查标准 |
 | [历史 Docker 后端说明](archive/docker-backend-notes.md) | 当时执行后端接线和环境要求 |
 | [历史 Docker 隔离记录](archive/docker-isolation-notes.md) | 当时容器隔离实验及其边界 |
 | [历史实验预登记 v2](archive/experiment-preregistration-v2-2026-10-08.md) | 当时实验设计；文档存在不构成付费授权 |
@@ -45,7 +45,7 @@ docs/
 
 - [阶段材料索引](work-notes/README.md)：当前交接、审查、报告快照和参考证据。
 - [历史计划索引](archive/README.md)：已完成计划、停手批次、已替代清单及对应执行记录。
-- `adr/`：保留现有决策编号和行号锚点，不按日期搬到阶段目录。
+- `adr/`：保留现有决策编号；验证锚点格式为 `` `路径` — `期望子串` ``，**不写行号**（行号写法由 `tests/test_docs_anchors.py` 拒绝）。
 - `postmortems/`：保留 PM 编号，按失败主题查找。
 - `evidence/`：原始产物保留生成身份、分母和失败结果，不手改数字、不重生成历史批次。
 - `archive/`：完成、停手或被替代的计划放入历史目录；原始正文保留，索引注明完成范围与未执行项。
