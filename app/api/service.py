@@ -67,15 +67,22 @@ log = logging.getLogger(__name__)
 DEFAULT_MAX_TURNS = 20
 
 
-def ensure_repo_allowed(resolved: Path) -> None:
+def ensure_repo_allowed(resolved: Path, *, deployment_mode: str | None = None) -> None:
     """repo_path 根白名单(T12.2):配置 PATCHPILOT_ALLOWED_REPO_ROOTS(逗号分隔绝对
-    路径)后,自定义任务只允许指向这些根之内;空配置不限制(个人本地模式,兼容现状)。
+    路径)后,自定义任务只允许指向这些根之内;空配置在开发模式下不限制(个人本地模式,兼容现状),
+    但在生产模式下强制要求配置白名单且目标路径必须在白名单内。
 
     比较经 os.path.normcase:Windows 路径大小写/斜杠不敏感,否则大小写不同的
     合法配置(如 `d:\\repos` vs `D:\\repos\\proj`)会被误拒。
     """
-    raw = get_settings().allowed_repo_roots
+    settings = get_settings()
+    mode = deployment_mode or settings.deployment_mode
+    raw = settings.allowed_repo_roots
     if not raw:
+        if mode == "production":
+            raise InvalidRequestError(
+                "production mode requires non-empty PATCHPILOT_ALLOWED_REPO_ROOTS"
+            )
         return
     resolved_n = os.path.normcase(str(resolved))
     for part in raw.split(","):
@@ -170,6 +177,26 @@ class TaskService:
         只受理 agent —— one_shot 是评测 CLI 的消融臂,这里显式拒绝,不静默降级。
         """
         mode = MODE_REPAIR
+        settings = get_settings()
+        if settings.deployment_mode == "production":
+            if settings.execution_backend != "docker":
+                raise InvalidRequestError(
+                    "production mode requires execution_backend='docker'; "
+                    "local execution is strictly forbidden in production"
+                )
+            if not settings.allowed_repo_roots.strip():
+                raise InvalidRequestError(
+                    "production mode requires non-empty PATCHPILOT_ALLOWED_REPO_ROOTS"
+                )
+            if settings.token_budget <= 0:
+                raise InvalidRequestError("production mode requires positive token_budget")
+            trusted_images = settings.get_trusted_docker_images()
+            docker_image = settings.docker_image.strip()
+            if not docker_image or (trusted_images and docker_image not in trusted_images):
+                raise InvalidRequestError(
+                    f"docker_image '{docker_image}' is not in trusted_docker_images in production mode"
+                )
+
         if repo_path is not None:
             resolved = Path(repo_path).resolve()
             if not resolved.is_dir():
@@ -205,6 +232,8 @@ class TaskService:
             bugs_root_resolved = Path(self.bugs_root).resolve()
             if not bug.root.resolve().is_relative_to(bugs_root_resolved):
                 raise TaskError(f"bug directory outside bugs root: {bug_id}")
+            if settings.deployment_mode == "production":
+                ensure_repo_allowed(bug.root.resolve())
         if max_rounds is not None:
             # N-9 整改:max_rounds 此前只落库不生效(假活键);
             # 引擎两路(graph 的 ensure_budget/plain 的驱动器)都读 bug.max_rounds,
@@ -277,9 +306,14 @@ class TaskService:
                     workspace=run_dir / SNAPSHOT_DIRNAME,
                     failed_tests=list(bug.failed_tests),
                     regression_tests=list(bug.regression_tests),
-                    container_image=bug.env.image if bug.env else None,
+                    container_image=bug.env.image
+                    if bug.env
+                    else getattr(settings, "docker_image", None),
                     execution_backend=str(spec.effective_policy["execution_backend"]),
-                    timeout_seconds=max(get_settings().intake_timeout_seconds // 2, 30),
+                    timeout_seconds=max(settings.intake_timeout_seconds // 2, 30),
+                    deployment_mode=settings.deployment_mode,
+                    allowed_repo_roots=settings.get_allowed_repo_roots(),
+                    trusted_docker_images=settings.get_trusted_docker_images(),
                 )
                 log.info(
                     "intake done for %s in %d ms (snapshot=%s)",

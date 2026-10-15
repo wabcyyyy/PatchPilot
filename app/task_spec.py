@@ -223,6 +223,8 @@ def _effective_policy(settings: Any, *, profile: str | None = None) -> dict[str,
         # Settings 重建时会漂。补进策略快照;旧契约缺键时恢复侧按 Settings 回退(兼容)。
         "verify_double_run",
         "max_identical_failures",
+        # P04: 生产模式标识冻结进有效策略
+        "deployment_mode",
     )
     policy = {k: getattr(settings, k, None) for k in keys}
     from app.executor.command_profiles import profiles_digest
@@ -402,6 +404,49 @@ def build_task_spec(
         model_name,
         online=bool(getattr(settings, "llm_enabled", False)) and model_provider != "fake-replay",
     )
+    if getattr(settings, "deployment_mode", "development") == "production":
+        if getattr(settings, "execution_backend", "local") != "docker":
+            raise TaskError(
+                "production mode requires execution_backend='docker'; "
+                "local execution is strictly forbidden in production"
+            )
+        allowed_roots = (
+            settings.get_allowed_repo_roots()
+            if hasattr(settings, "get_allowed_repo_roots")
+            else [
+                Path(p.strip()).resolve()
+                for p in getattr(settings, "allowed_repo_roots", "").split(",")
+                if p.strip()
+            ]
+        )
+        if not allowed_roots:
+            raise TaskError("production mode requires non-empty allowed_repo_roots")
+        repo_abs = Path(bug.repo_dir).resolve()
+        repo_norm = os.path.normcase(str(repo_abs))
+        if not any(
+            repo_norm == os.path.normcase(str(r))
+            or repo_norm.startswith(os.path.normcase(str(r)) + os.sep)
+            for r in allowed_roots
+        ):
+            raise TaskError(
+                f"repo path {repo_abs} is outside allowed_repo_roots in production mode"
+            )
+        if int(getattr(settings, "token_budget", 0) or 0) <= 0:
+            raise TaskError("production mode requires positive token_budget")
+        docker_image = getattr(settings, "docker_image", "").strip()
+        trusted_images = (
+            settings.get_trusted_docker_images()
+            if hasattr(settings, "get_trusted_docker_images")
+            else {
+                img.strip()
+                for img in getattr(settings, "trusted_docker_images", "").split(",")
+                if img.strip()
+            }
+        )
+        if not docker_image or (trusted_images and docker_image not in trusted_images):
+            raise TaskError(
+                f"docker_image '{docker_image}' is not in trusted_docker_images in production mode"
+            )
     allowed = bug.allowed_paths
     if allowed is not None and not allowed:
         allowed = None

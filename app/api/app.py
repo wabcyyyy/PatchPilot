@@ -97,6 +97,13 @@ def create_app(
                 " — set a token before binding to a non-loopback interface"
                 " (threat-model §2/§5)"
             )
+        if settings.deployment_mode == "production":
+            readiness_issues = settings.validate_production_readiness()
+            if readiness_issues:
+                log.error(
+                    "Production readiness issues detected: %s",
+                    "; ".join(readiness_issues),
+                )
         repo = Repository(db_path or settings.db_path)
         service = TaskService(
             repo=repo,

@@ -30,8 +30,18 @@ _PROFILE_NOTES = {
 def capabilities(settings: Any) -> dict[str, Any]:
     """构建能力读数;settings 传调用方的 Settings(与受理同源,不另取全局)。"""
     default_profile = str(getattr(settings, "agent_runtime_profile", "") or "")
+    issues = (
+        settings.validate_production_readiness()
+        if hasattr(settings, "validate_production_readiness")
+        else []
+    )
     return {
         "schema_version": CAPABILITIES_SCHEMA_VERSION,
+        "deployment_mode": getattr(settings, "deployment_mode", "development"),
+        "production_readiness": {
+            "ready": len(issues) == 0,
+            "issues": issues,
+        },
         "engines": {
             "graph": {
                 "modes": ["repair", "diagnose_then_repair"],

@@ -25,7 +25,8 @@ from app.storage.repository import Repository
 
 @pytest.fixture()
 def auth_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("PATCHPILOT_DEPLOYMENT_MODE", "production")
+    monkeypatch.setenv("PATCHPILOT_DEPLOYMENT_MODE", "development")
+    monkeypatch.setenv("PATCHPILOT_API_TOKEN", "test-token-guard")
     get_settings.cache_clear()
 
     db_path = tmp_path / "p03_auth.sqlite3"

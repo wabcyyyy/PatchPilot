@@ -1961,6 +1961,17 @@ tasks 表新增 `owner` 与 `principal_id`，旧任务升级回填 `legacy-unown
 在 `app/api/events.py` 为 SSE 长连接增加凭据生命周期校验，凭据被吊销时即刻输出 error 帧并正常断开连接；
 新增 `tests/test_resource_authorization.py` 覆盖跨主体防泄漏、列表过滤、reviewer/admin 权限、越权审计与 SSE 吊销。
 验证：定向权限测试 `tests/test_resource_authorization.py` 3 项全过（0.95s）；认证与流式测试 `tests/test_auth.py` + `tests/test_event_stream.py` 12 项全过（14.92s）；快速收据 `.validation/20261015-235932-4b35cd29.json`（静态检查与 Ruff 全过，6 个测试达 90 秒预算停止记 budget_exhausted，不自动重启扩大，完整回归留 CI）。
-提交以本段所在 `feat(auth)` 定位；下一卡进入 P04。
+提交以 `ffab2de` 定位；下一卡进入 P04。
 
+## 2026-10-16 · P04 显式生产模式与安全准入
 
+在 `app/config.py` 增加 `trusted_docker_images` 配置项，提供 `get_trusted_docker_images()`、`get_allowed_repo_roots()` 与 `validate_production_readiness()` 就绪检查（校验 docker 执行后端、非空白名单、受信任镜像、有限 token 预算）；
+在 `app/task_spec.py` 的 `effective_policy` 中冻结 `deployment_mode`，并在 `build_task_spec` 中前置生产准入防御，严禁 local 执行、空白名单、越界代码目录、无限预算或未知镜像；
+在 `app/api/preflight.py` 的 `run_preflight` 接入 `deployment_mode`、`allowed_repo_roots` 与 `trusted_docker_images`，生产模式未满足直接收敛为 `InvalidRequestError` 拒绝受理；
+在 `app/api/capabilities.py` 暴露 `deployment_mode` 与 `production_readiness`（含 `ready: bool` 与 `issues: list[str]`）；
+在 `app/api/service.py` 的 `create_task` 和 `ensure_repo_allowed` 前置生产模式准入校验；
+在 `app/api/app.py` lifespan 在生产模式下输出就绪告警日志；
+在 `.env.example` 登记 `PATCHPILOT_DEPLOYMENT_MODE` 与 `PATCHPILOT_TRUSTED_DOCKER_IMAGES`；
+新增 `tests/test_production_mode.py` 覆盖就绪检查、能力面、契约冻结、preflight 阻断与 service 准入拦截。
+验证：定向测试 `tests/test_production_mode.py` 7 项通过（0.43s）；`verify.ps1` 收据 `.validation/20261016-001717-09ebcad3.json`（exit 0，6 个测试文件共 60 项测试全部通过，耗时 40.5s）；81 个未变动测试 deferred to CI。
+提交以本段所在 `feat(admission)` 定位；下一卡进入 P05。

@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     deployment_mode: str = "development"  # development | production
     redis_url: str = ""
     docker_image: str = "python:3.11-slim"
+    trusted_docker_images: str = "python:3.11-slim"  # 生产模式受信任 Docker 镜像列表(逗号分隔)
     api_token: str = ""  # API Bearer Token;空 = 不鉴权(本地与现有测试不受影响)
     allowed_repo_roots: str = ""  # repo_path 根白名单(逗号分隔绝对路径);空 = 不限制(个人本地模式)
     price_overrides: str = ""  # 可选 JSON 文件路径(同构 PRICES,优先级高于内置价目)
@@ -514,6 +515,29 @@ class Settings(BaseSettings):
         if not 0.0 < value <= 1.0:
             raise ValueError(f"plan_budget_share must be in (0, 1], got {value}")
         return value
+
+    def get_trusted_docker_images(self) -> set[str]:
+        return {img.strip() for img in self.trusted_docker_images.split(",") if img.strip()}
+
+    def get_allowed_repo_roots(self) -> list[Path]:
+        if not self.allowed_repo_roots.strip():
+            return []
+        return [Path(p.strip()).resolve() for p in self.allowed_repo_roots.split(",") if p.strip()]
+
+    def validate_production_readiness(self) -> list[str]:
+        """检查生产模式就绪状态，返回未满足的问题列表。若为空则说明就绪。"""
+        issues: list[str] = []
+        if self.execution_backend != "docker":
+            issues.append("execution_backend must be 'docker' in production mode")
+        if not self.allowed_repo_roots.strip():
+            issues.append("allowed_repo_roots must not be empty in production mode")
+        if self.token_budget <= 0:
+            issues.append("token_budget must be positive in production mode")
+        if not self.docker_image.strip():
+            issues.append("docker_image must not be empty in production mode")
+        elif self.docker_image.strip() not in self.get_trusted_docker_images():
+            issues.append(f"docker_image '{self.docker_image}' is not in trusted_docker_images")
+        return issues
 
 
 @lru_cache

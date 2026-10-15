@@ -107,8 +107,29 @@
   - 定向权限测试：`tests/test_resource_authorization.py` 3 项全部通过（0.95s）；
   - 既有认证与流式测试：`tests/test_auth.py` + `tests/test_event_stream.py` 12 项全部通过（14.92s）；
   - 快速验证收据：`.validation/20261015-235932-4b35cd29.json`（静态检查与 Ruff 全部通过，6 个被选测试达 90 秒预算停止记 budget_exhausted，不自动重启扩大，完整回归留 CI）。
-- Commit：待提交定位。
+- Commit：`ffab2de` (`feat(auth): resource-level authorization and auditing (P03)`).
 - 下一张卡：P04（显式生产模式与安全受理）。
+
+### P04 — 显式生产模式与安全受理 (2026-10-16)
+
+- 目标与范围：
+  - `app/config.py`、`app/api/{app,service,preflight,capabilities}.py`、`app/task_spec.py`、`.env.example`；
+  - tests：`tests/test_production_mode.py`、`tests/test_capabilities.py`、`tests/test_preflight.py`、`tests/test_resource_authorization.py`。
+- 实现：
+  1. `app/config.py` 增加 `trusted_docker_images` 配置项，提供 `get_trusted_docker_images()`、`get_allowed_repo_roots()` 与 `validate_production_readiness()` 就绪检查（校验 docker 执行后端、非空白名单、受信任镜像、有限 token 预算）；
+  2. `app/task_spec.py` 在 `effective_policy` 中冻结 `deployment_mode`，并在 `build_task_spec` 中前置生产准入防御，严禁 local 执行、空白名单、越界代码目录、无限预算或未知镜像；
+  3. `app/api/preflight.py` 的 `run_preflight` 接入 `deployment_mode`、`allowed_repo_roots` 与 `trusted_docker_images`，生产模式未满足直接收敛为 `InvalidRequestError` 拒绝受理；
+  4. `app/api/capabilities.py` 暴露 `deployment_mode` 与 `production_readiness`（含 `ready: bool` 与 `issues: list[str]`）；
+  5. `app/api/service.py` 在 `create_task` 和 `ensure_repo_allowed` 前置生产模式准入校验；
+  6. `app/api/app.py` lifespan 在生产模式下输出就绪告警日志；
+  7. `.env.example` 登记 `PATCHPILOT_DEPLOYMENT_MODE` 与 `PATCHPILOT_TRUSTED_DOCKER_IMAGES`；
+  8. 新增 `tests/test_production_mode.py` 覆盖就绪检查、能力面、契约冻结、preflight 阻断与 service 准入拦截。
+- 验证：
+  - 定向测试：`tests/test_production_mode.py` 7 项通过（0.43s）；
+  - `verify.ps1` 快速检查：收据 `.validation/20261016-001717-09ebcad3.json`（exit 0，6 个测试文件共 60 项测试全部通过，耗时 40.5s）；
+  - 81 个未变动测试 deferred to CI。
+- Commit：待提交。
+- 下一张卡：P05（有界输入冻结与可重建环境）。
 
 ## 任务状态
 
@@ -117,8 +138,8 @@
 | P00 | DONE | 无 | 本卡 / 8b64907 / .validation/20261015-231752-36018573.json |
 | P01 | DONE | P00 | 本卡 / 5186085 / .validation/20261015-232638-318cd0d5.json + targeted 16 passed |
 | P02 | DONE | P01 | 本卡 / e8a67b1 / .validation/20261015-233538-601dd7a5.json (11 passed) |
-| P03 | DONE | P02 | 本卡 / feat(auth) / .validation/20261015-235932-4b35cd29.json + targeted 15 passed |
-| P04 | TODO | P00/P02 | — |
+| P03 | DONE | P02 | 本卡 / ffab2de / .validation/20261015-235932-4b35cd29.json + targeted 15 passed |
+| P04 | DONE | P00/P02 | 本卡 / feat(admission) / .validation/20261016-001717-09ebcad3.json (60 passed) |
 | P05 | TODO | P00/P04 | — |
 | P06 | TODO | P03/P05 | — |
 | P07 | DONE | P00 | 本卡 / 01b4bf7 / .validation/20261015-234428-ddb46fe6.json (35 passed) |

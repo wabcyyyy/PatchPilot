@@ -102,20 +102,85 @@ def run_preflight(
     container_image: str | None = None,
     execution_backend: str = "local",
     timeout_seconds: int = 60,
+    deployment_mode: str = "development",
+    allowed_repo_roots: list[Path] | None = None,
+    trusted_docker_images: set[str] | None = None,
 ) -> PreflightReport:
     """对冻结输入做受理预检;任一项不过即抛 InvalidRequestError(带全部失败原因)。
 
     收集检查在**一次性临时副本**上执行:pytest import conftest 会写 `__pycache__`,
     直接在冻结副本上跑会污染其内容指纹(实测踩中)——副本用完即删,冻结正本零写入。
     """
+    import os
     import shutil
     import tempfile
 
     started = time.monotonic()
+    checks: list[PreflightCheck] = []
+
+    if deployment_mode == "production":
+        if execution_backend != "docker":
+            checks.append(
+                PreflightCheck(
+                    name="execution_backend",
+                    ok=False,
+                    detail=(
+                        "local execution is strictly forbidden in production mode; "
+                        "execution_backend must be 'docker'"
+                    ),
+                )
+            )
+        if not allowed_repo_roots:
+            checks.append(
+                PreflightCheck(
+                    name="allowed_repo_roots",
+                    ok=False,
+                    detail="production mode requires non-empty allowed_repo_roots",
+                )
+            )
+        else:
+            ws_norm = os.path.normcase(str(workspace.resolve()))
+            if not any(
+                ws_norm == os.path.normcase(str(r))
+                or ws_norm.startswith(os.path.normcase(str(r)) + os.sep)
+                for r in allowed_repo_roots
+            ):
+                checks.append(
+                    PreflightCheck(
+                        name="allowed_repo_roots",
+                        ok=False,
+                        detail=f"workspace {workspace} is outside allowed_repo_roots",
+                    )
+                )
+        if not container_image:
+            checks.append(
+                PreflightCheck(
+                    name="container_image",
+                    ok=False,
+                    detail="production mode requires container_image",
+                )
+            )
+        elif trusted_docker_images is not None and container_image not in trusted_docker_images:
+            checks.append(
+                PreflightCheck(
+                    name="container_image",
+                    ok=False,
+                    detail=f"container_image '{container_image}' is not in trusted_docker_images",
+                )
+            )
+
+    if any(not c.ok for c in checks):
+        report = PreflightReport(
+            ok=False,
+            checks=checks,
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+        raise InvalidRequestError("preflight failed: " + "; ".join(report.failures()))
+
     scratch = Path(tempfile.mkdtemp(prefix="preflight-collect-"))
     try:
         shutil.copytree(workspace, scratch / "ws", symlinks=True)
-        checks = _run_checks(
+        more_checks = _run_checks(
             python_exe=python_exe,
             workspace=scratch / "ws",
             failed_tests=failed_tests,
@@ -124,6 +189,7 @@ def run_preflight(
             or ("configured" if execution_backend == "docker" else None),
             timeout_seconds=timeout_seconds,
         )
+        checks.extend(more_checks)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     report = PreflightReport(

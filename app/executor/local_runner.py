@@ -209,10 +209,8 @@ def run_tests(
                     # proc.kill() 尝试强杀直接子进程，超时改走关管道回收兜底
                     proc.kill()
                     pipe_hung = True
-                    try:
+                    with contextlib.suppress(subprocess.TimeoutExpired):
                         proc.wait(timeout=2.0)
-                    except subprocess.TimeoutExpired:
-                        pass
                     if proc.stdout and not getattr(proc.stdout, "closed", False):
                         proc.stdout.close()
                     if proc.stderr and not getattr(proc.stderr, "closed", False):
