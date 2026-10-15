@@ -596,3 +596,175 @@ INSERT INTO audit_events (
         with self._lock:
             rows = self._conn.execute(query, tuple(params)).fetchall()
         return [dict(r) for r in rows]
+
+    # ---------- P10-2: 主体/组织额度预留、结算与对账 ----------
+
+    def reserve_quota(
+        self,
+        *,
+        task_id: str,
+        principal_id: str,
+        amount_usd: float = 0.0,
+        tokens: int = 0,
+        daily_budget_usd: float = 0.0,
+        daily_token_budget: int = 0,
+    ) -> dict[str, Any]:
+        """原子预留主体配额 (P10-2)。
+
+        在同一锁与事务内统计当日累计已占用额度 (reserved + settled),
+        并发抢最后额度只有一方能成功。超限抛出 QuotaExceededError。
+        """
+        start_of_today = datetime.now(UTC).strftime("%Y-%m-%d 00:00:00")
+        reservation_id = f"res-{uuid.uuid4().hex[:12]}"
+        now = _now()
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                """
+                SELECT
+                    COALESCE(SUM(reserved_amount), 0.0) AS total_amount,
+                    COALESCE(SUM(reserved_tokens), 0) AS total_tokens
+                FROM quota_reservations
+                WHERE principal_id = ?
+                  AND status IN ('reserved', 'settled')
+                  AND created_at >= ?
+                """,
+                (principal_id, start_of_today),
+            ).fetchone()
+            used_amount = float(row[0]) if row else 0.0
+            used_tokens = int(row[1]) if row else 0
+
+            if daily_budget_usd > 0.0 and (used_amount + amount_usd) > daily_budget_usd:
+                from app.errors import QuotaExceededError
+
+                raise QuotaExceededError(
+                    f"principal '{principal_id}' daily budget exceeded: "
+                    f"requested {amount_usd:.4f} USD, currently used {used_amount:.4f} USD, "
+                    f"daily limit {daily_budget_usd:.4f} USD"
+                )
+
+            if daily_token_budget > 0 and (used_tokens + tokens) > daily_token_budget:
+                from app.errors import QuotaExceededError
+
+                raise QuotaExceededError(
+                    f"principal '{principal_id}' daily token budget exceeded: "
+                    f"requested {tokens} tokens, currently used {used_tokens} tokens, "
+                    f"daily limit {daily_token_budget} tokens"
+                )
+
+            self._conn.execute(
+                """
+                INSERT INTO quota_reservations (
+                    id, task_id, principal_id, reserved_amount, reserved_tokens, status, created_at
+                ) VALUES (?, ?, ?, ?, ?, 'reserved', ?)
+                """,
+                (reservation_id, task_id, principal_id, amount_usd, tokens, now),
+            )
+        return {
+            "id": reservation_id,
+            "task_id": task_id,
+            "principal_id": principal_id,
+            "reserved_amount": amount_usd,
+            "reserved_tokens": tokens,
+            "status": "reserved",
+            "created_at": now,
+        }
+
+    def settle_quota(
+        self,
+        *,
+        task_id: str,
+        actual_amount_usd: float,
+        actual_tokens: int,
+    ) -> dict[str, Any] | None:
+        """结算任务配额 (P10-2)。"""
+        now = _now()
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT id FROM quota_reservations WHERE task_id = ? AND status = 'reserved'",
+                (task_id,),
+            ).fetchone()
+            if not row:
+                return None
+            res_id = row[0]
+            self._conn.execute(
+                """
+                UPDATE quota_reservations
+                SET status = 'settled',
+                    reserved_amount = ?,
+                    reserved_tokens = ?,
+                    settled_at = ?
+                WHERE id = ?
+                """,
+                (actual_amount_usd, actual_tokens, now, res_id),
+            )
+            updated = self._conn.execute(
+                "SELECT * FROM quota_reservations WHERE id = ?", (res_id,)
+            ).fetchone()
+            return dict(updated) if updated else None
+
+    def release_quota(
+        self,
+        task_id: str,
+    ) -> dict[str, Any] | None:
+        """释放未使用的预留配额 (P10-2)。"""
+        now = _now()
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT id FROM quota_reservations WHERE task_id = ? AND status = 'reserved'",
+                (task_id,),
+            ).fetchone()
+            if not row:
+                return None
+            res_id = row[0]
+            self._conn.execute(
+                """
+                UPDATE quota_reservations
+                SET status = 'released',
+                    reserved_amount = 0.0,
+                    reserved_tokens = 0,
+                    settled_at = ?
+                WHERE id = ?
+                """,
+                (now, res_id),
+            )
+            updated = self._conn.execute(
+                "SELECT * FROM quota_reservations WHERE id = ?", (res_id,)
+            ).fetchone()
+            return dict(updated) if updated else None
+
+    def get_quota_reservation(self, task_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM quota_reservations WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+                (task_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_principal_quota_usage(
+        self,
+        principal_id: str,
+        *,
+        since: str | None = None,
+    ) -> dict[str, Any]:
+        since_ts = since or datetime.now(UTC).strftime("%Y-%m-%d 00:00:00")
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT
+                    COALESCE(SUM(reserved_amount), 0.0) AS used_amount_usd,
+                    COALESCE(SUM(reserved_tokens), 0) AS total_tokens,
+                    COUNT(*) AS count
+                FROM quota_reservations
+                WHERE principal_id = ?
+                  AND status IN ('reserved', 'settled')
+                  AND created_at >= ?
+                """,
+                (principal_id, since_ts),
+            ).fetchone()
+        return {
+            "principal_id": principal_id,
+            "since": since_ts,
+            "used_amount_usd": float(row["used_amount_usd"]) if row else 0.0,
+            "used_tokens": int(row["total_tokens"]) if row else 0,
+            "count": int(row["count"]) if row else 0,
+        }

@@ -39,7 +39,7 @@ from app.api.schemas import (
     TaskOut,
     TrajectoryPage,
 )
-from app.errors import InvalidRequestError, PatchPilotError, TaskError
+from app.errors import InvalidRequestError, PatchPilotError, QuotaExceededError, TaskError
 from app.security.data_policy import redact_data
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_token)])
@@ -80,6 +80,8 @@ def create_task(payload: TaskCreateIn, request: Request):
                 arm=payload.arm,
                 owner=owner,
                 principal_id=owner,
+                budget_usd=payload.budget_usd,
+                token_budget=payload.token_budget,
             )
             if created and hasattr(_service(request).repo, "record_audit_event"):
                 p_hash = hashlib.sha256(payload.model_dump_json().encode("utf-8")).hexdigest()
@@ -105,6 +107,12 @@ def create_task(payload: TaskCreateIn, request: Request):
             status_code=503,
             headers={"Retry-After": "2"},
             content={"code": "admission_timeout", "message": str(exc), "task_id": None},
+        )
+    except QuotaExceededError as exc:
+        return JSONResponse(
+            status_code=429,
+            headers={"Retry-After": "60"},
+            content={"code": "quota_exceeded", "message": str(exc), "task_id": None},
         )
     except InvalidRequestError as exc:
         # 请求参数自相矛盾:422(资源不存在仍走 TaskError→404)

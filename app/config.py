@@ -529,6 +529,25 @@ class Settings(BaseSettings):
     admission_timeout_seconds: float = 5.0
     emergency_stop: bool = False
 
+    # ---------- P10-2:主体/组织额度与任务限额 ----------
+    principal_daily_budget_usd: float = 100.0  # 主体每日预算(美元), 0.0 = 不限制
+    principal_daily_token_budget: int = 10_000_000  # 主体每日 token 预算, 0 = 不限制
+    task_budget_cap_usd: float = 10.0  # 单任务预算金额上限, 0.0 = 不限制
+
+    @field_validator("principal_daily_budget_usd", "task_budget_cap_usd")
+    @classmethod
+    def _check_budget_limits_usd(cls, value: float) -> float:
+        if value < 0.0:
+            raise ValueError(f"budget limits must be >= 0.0, got {value}")
+        return value
+
+    @field_validator("principal_daily_token_budget")
+    @classmethod
+    def _check_token_budget_limit(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"principal_daily_token_budget must be >= 0, got {value}")
+        return value
+
     @field_validator("admission_concurrency_limit")
     @classmethod
     def _check_admission_concurrency(cls, value: int) -> int:

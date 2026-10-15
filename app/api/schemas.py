@@ -48,6 +48,13 @@ class TaskCreateIn(BaseModel):
     arm: Literal["agent"] = Field(
         "agent", description="实验臂;API 只受理 agent(one_shot 仅评测 CLI)"
     )
+    # P10-2: 请求显式指定预算(None = 沿用服务端 Settings)
+    budget_usd: float | None = Field(
+        None, ge=0.0, description="单任务现金预算(美元);None = 沿用服务端配置"
+    )
+    token_budget: int | None = Field(
+        None, ge=0, description="单任务 token 预算;None = 沿用服务端配置"
+    )
 
     @model_validator(mode="after")
     def _exactly_one_source(self) -> TaskCreateIn:

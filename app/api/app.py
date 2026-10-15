@@ -25,6 +25,7 @@ from app.api.recycle import recycle_finished_tasks
 from app.api.routes import router
 from app.api.service import TaskService
 from app.config import Settings, get_settings
+from app.errors import QuotaExceededError
 from app.logctx import TaskContextFilter, request_id_var
 from app.storage.repository import Repository
 
@@ -153,6 +154,14 @@ def create_app(
             status_code=503,
             headers={"Retry-After": "2"},
             content={"code": "admission_timeout", "message": str(exc), "task_id": None},
+        )
+
+    @app.exception_handler(QuotaExceededError)
+    async def quota_exceeded_handler(request: Request, exc: QuotaExceededError) -> JSONResponse:
+        return JSONResponse(
+            status_code=429,
+            headers={"Retry-After": "60"},
+            content={"code": "quota_exceeded", "message": str(exc), "task_id": None},
         )
 
     @app.exception_handler(UnauthorizedError)

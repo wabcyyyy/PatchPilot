@@ -112,3 +112,9 @@ class ModelTransportError(TaskError):
     def __init__(self, message: str, *, envelope: ModelResponseEnvelope) -> None:
         super().__init__(message)
         self.envelope = envelope
+
+
+class QuotaExceededError(PatchPilotError):
+    """主体或组织额度超限(QUOTA_EXCEEDED)。API 层转 429。"""
+
+    code = "quota_exceeded"

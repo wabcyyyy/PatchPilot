@@ -167,6 +167,8 @@ class TaskService:
         arm: str = "agent",
         owner: str = "legacy-unowned",
         principal_id: str = "legacy-unowned",
+        budget_usd: float | None = None,
+        token_budget: int | None = None,
     ) -> tuple[dict[str, Any], bool]:
         """创建任务;返回 (任务, 是否本次新建)。
 
@@ -282,6 +284,41 @@ class TaskService:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         task_id = f"{bug.id}-{stamp}-{uuid.uuid4().hex[:6]}"
         run_dir = self.runs_root / task_id
+
+        # P10-2: 主体/组织额度预留与任务现金上限校验
+        requested_cash = (
+            budget_usd
+            if budget_usd is not None
+            else (
+                settings.cost_budget_micro_usd / 1_000_000
+                if settings.cost_budget_micro_usd > 0
+                else 0.0
+            )
+        )
+        task_cap = settings.task_budget_cap_usd
+        if task_cap > 0.0 and requested_cash > task_cap:
+            self.lock.release(lock_key)
+            from app.errors import QuotaExceededError
+
+            raise QuotaExceededError(
+                f"requested task budget {requested_cash} USD exceeds task cap {task_cap} USD"
+            )
+
+        requested_tokens = token_budget if token_budget is not None else settings.token_budget
+        if hasattr(self.repo, "reserve_quota"):
+            try:
+                self.repo.reserve_quota(
+                    task_id=task_id,
+                    principal_id=principal_id,
+                    amount_usd=requested_cash,
+                    tokens=requested_tokens,
+                    daily_budget_usd=settings.principal_daily_budget_usd,
+                    daily_token_budget=settings.principal_daily_token_budget,
+                )
+            except Exception:
+                self.lock.release(lock_key)
+                raise
+
         try:
             run_dir.mkdir(parents=True, exist_ok=True)
             if repo_path is not None:
@@ -392,6 +429,11 @@ class TaskService:
         except Exception:
             log.exception("task %s rollback failed", task_id)
         finally:
+            try:
+                if hasattr(self.repo, "release_quota"):
+                    self.repo.release_quota(task_id)
+            except Exception:
+                log.exception("task %s quota release during rollback failed", task_id)
             self._cancels.unregister(task_id)
             self.lock.release(lock_key)
 
@@ -558,6 +600,7 @@ class TaskService:
             # 自然完成不得覆盖 CANCELLED(此前先读后写是 check-then-act,双向可打穿)
             self._persist_artifacts(task_id, result, run_dir)
             finalized = self.repo.finalize_task(task_id, result.status, result.verdict)
+            self._settle_quota(task_id, run_dir, result=result)
             # P3-12:终态回收——紧跟终态回写、仅在 FINISHED 且赢了终态竞争时
             # 回收可弃集(workspace/checkpoints);取证文件(report/diff/轨迹/
             # junit)永久保留,失败/取消现场一律不回收(策略见 app/api/recycle.py)。
@@ -579,6 +622,10 @@ class TaskService:
             log.exception("task %s crashed", task_id)
             _ = exc
         finally:
+            try:
+                self._settle_quota(task_id, run_dir)
+            except Exception:
+                log.exception("task %s quota settlement in finally failed", task_id)
             self._futures.pop(task_id, None)
             self._cancels.unregister(task_id)
             self.lock.release(lock_key)
@@ -626,6 +673,63 @@ class TaskService:
             if not report.get("gate_violations")
             else "; ".join(report["gate_violations"])[:500],
             applied=bool(report.get("changed_files")),
+        )
+
+    def _settle_quota(self, task_id: str, run_dir: Path, result: Any | None = None) -> None:
+        """P10-2: 结算任务配额。优先从 result 结算, fallback 从 run_dir 账本/报告读取。"""
+        if not hasattr(self.repo, "get_quota_reservation") or not hasattr(
+            self.repo, "settle_quota"
+        ):
+            return
+        reservation = self.repo.get_quota_reservation(task_id)
+        if not reservation or reservation.get("status") != "reserved":
+            return
+
+        actual_tokens = 0
+        actual_cost_usd = 0.0
+
+        if result is not None:
+            actual_tokens = getattr(result, "tokens_used", 0) or 0
+            actual_cost_usd = getattr(result, "cost_usd", 0.0) or 0.0
+            resources = getattr(result, "resources", None)
+            if isinstance(resources, dict):
+                actual_tokens += int(resources.get("unknown_held_tokens", 0) or 0)
+                actual_cost_usd += (
+                    int(resources.get("unknown_held_cost_micro_usd", 0) or 0)
+                ) / 1_000_000
+        else:
+            ledger_file = run_dir / "ledger_state.json"
+            report_file = run_dir / "report.json"
+            if ledger_file.exists():
+                try:
+                    ledger = json.loads(ledger_file.read_text(encoding="utf-8"))
+                    actual_tokens = int(ledger.get("tokens_used", 0) or 0) + int(
+                        ledger.get("unknown_held_tokens", 0) or 0
+                    )
+                    actual_cost_usd = (
+                        int(ledger.get("cost_micro_usd", 0) or 0)
+                        + int(ledger.get("unknown_held_cost_micro_usd", 0) or 0)
+                    ) / 1_000_000
+                except Exception:
+                    log.warning("failed to parse ledger_state.json for task %s", task_id)
+            elif report_file.exists():
+                try:
+                    rep = json.loads(report_file.read_text(encoding="utf-8"))
+                    actual_tokens = int(rep.get("tokens_used", 0) or 0)
+                    actual_cost_usd = float(rep.get("cost_usd", 0.0) or 0.0)
+                    res = rep.get("resources")
+                    if isinstance(res, dict):
+                        actual_tokens += int(res.get("unknown_held_tokens", 0) or 0)
+                        actual_cost_usd += (
+                            int(res.get("unknown_held_cost_micro_usd", 0) or 0)
+                        ) / 1_000_000
+                except Exception:
+                    log.warning("failed to parse report.json for task %s", task_id)
+
+        self.repo.settle_quota(
+            task_id=task_id,
+            actual_amount_usd=actual_cost_usd,
+            actual_tokens=actual_tokens,
         )
 
     # ---------- 查询与控制 ----------
