@@ -1940,4 +1940,15 @@ tasks 表新增 `owner` 与 `principal_id`，旧任务升级回填 `legacy-unown
 生产模式（`deployment_mode=production`）下强制拦截匿名访问与开发共享 Token，仅放行 DB 校验合法的活跃 Key；开发模式保持旧接口与共享 Token 兼容；
 `app/agent/cli.py` 扩展 `--api-key` 与 `PATCHPILOT_API_KEY` 环境变量支持，并提供本地受保护管理工具（`admin create-principal`、`issue-key`、`revoke-key`、`rotate-key`、`list-keys`），杜绝暴露未经授权的公网管理 HTTP 接口。
 验证：`verify.ps1 -Tests @('tests/test_credentials.py', 'tests/test_auth.py')` 收据 `.validation/20261015-233538-601dd7a5.json`（11项通过，4.55s）；CLI 消费者回归（`test_capabilities.py`、`test_diagnosis_intake.py`）14 项通过（18.56s）。
-提交以本段所在 `feat(auth)` 定位；下一卡进入 Batch A/B 后续任务。
+提交以 `e8a67b1` 定位；下一卡进入 P07。
+
+## 2026-10-15 · P07 pytest 输出边界与 JUnit 防护
+
+在 `app/executor/local_runner.py` 引入 `BoundedStreamDrainer`，采用后台多线程分块（64KB）流式消费子进程 stdout 与 stderr，保留有界尾部环形缓冲（按配置 `max_output_chars`），精准统计总字节数与丢弃字节数（`dropped_bytes`），彻底根治高吞吐输出击穿内存；
+`TestRunResult` 扩充 `stdout_bytes`、`stderr_bytes`、`stdout_dropped_bytes`、`stderr_dropped_bytes` 与 `@property dropped_bytes`，输出截断不再静默；
+`app/adapters/pytest_adapter.py` 设定 JUnit XML 最大解析上限 `MAX_JUNIT_BYTES = 10MB`，防止恶意或海量 XML 报告造成内存暴涨；
+`parse_junit_xml` 增加文件大小校验与解析异常保护，捕获 `ET.ParseError`、`OSError`、`ValueError`、`UnicodeDecodeError`，转换为结构化合成错误（`signature="error: invalid junit xml"` 或 `"error: junit xml too large"`），判定口径直接判未通过（`all_passed=False`），杜绝进程崩溃；
+新增 `tests/test_test_output_limits.py`，完整覆盖超大流式输出丢弃统计、无换行长流消费、超大 XML 拦截、畸形 XML 结构化容错与合规 XML 正常解析。
+验证：定向单元测试 `tests/test_test_output_limits.py` 5 项全过（0.21s）；执行器全集回归 `verify.ps1 -Tests @('tests/test_test_output_limits.py', 'tests/test_executor.py')` 收据 `.validation/20261015-234428-ddb46fe6.json`（5 步全绿，耗时 24.168s）。
+提交以本段所在 `feat(executor)` 定位；下一卡进入 P03。
+

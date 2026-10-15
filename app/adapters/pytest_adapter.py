@@ -27,6 +27,8 @@ RC_NO_TESTS_COLLECTED = 5
 
 # 合成 case 的原因尾巴上限,与 junit `<failure>` 正文的截断口径一致(见 parse_junit_xml)
 CAUSE_TAIL_CHARS = 4000
+# JUnit XML 最大解析字节上限(10MB),防海量输出/XML炸弹击穿内存
+MAX_JUNIT_BYTES = 10 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -171,7 +173,49 @@ def parse_junit_xml(path: Path) -> PytestReport:
         )
         return report
 
-    root = ET.parse(path).getroot()
+    try:
+        size = path.stat().st_size
+    except OSError as e:
+        report.errors = 1
+        report.failed_cases.append(
+            FailedCase(
+                "(report)",
+                "(report)",
+                "error",
+                f"failed to stat junit xml: {e}",
+                "error: invalid junit xml",
+            )
+        )
+        return report
+
+    if size > MAX_JUNIT_BYTES:
+        report.errors = 1
+        report.failed_cases.append(
+            FailedCase(
+                "(report)",
+                "(report)",
+                "error",
+                f"junit xml exceeds maximum size limit ({size} > {MAX_JUNIT_BYTES} bytes)",
+                "error: junit xml too large",
+            )
+        )
+        return report
+
+    try:
+        root = ET.parse(path).getroot()
+    except (ET.ParseError, OSError, ValueError, UnicodeDecodeError) as e:
+        report.errors = 1
+        report.failed_cases.append(
+            FailedCase(
+                "(report)",
+                "(report)",
+                "error",
+                f"malformed junit xml: {e}",
+                "error: invalid junit xml",
+            )
+        )
+        return report
+
     suites = [root] if root.tag == "testsuite" else root.findall("testsuite")
     for suite in suites:
         report.collected += int(suite.get("tests", "0"))

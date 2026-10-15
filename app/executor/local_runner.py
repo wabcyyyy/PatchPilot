@@ -12,9 +12,11 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from app.config import get_settings
 from app.errors import ExecError
@@ -66,7 +68,15 @@ class TestRunResult:
     stderr_tail: str
     duration_ms: int
     timed_out: bool = False
+    stdout_bytes: int = 0
+    stderr_bytes: int = 0
+    stdout_dropped_bytes: int = 0
+    stderr_dropped_bytes: int = 0
     extra: dict[str, object] = field(default_factory=dict)
+
+    @property
+    def dropped_bytes(self) -> int:
+        return self.stdout_dropped_bytes + self.stderr_dropped_bytes
 
 
 def _truncate(text: str) -> str:
@@ -74,6 +84,41 @@ def _truncate(text: str) -> str:
     if len(text) <= limit:
         return text
     return text[-limit:]
+
+
+class BoundedStreamDrainer:
+    """有界流式管道读取器: 独立线程分块读取，内存保留有界 tail，统计丢弃字节数。"""
+
+    def __init__(self, stream: Any, max_tail_bytes: int) -> None:
+        self.stream = stream
+        self.max_tail_bytes = max_tail_bytes
+        self.total_bytes = 0
+        self.dropped_bytes = 0
+        self._tail = bytearray()
+        self._lock = threading.Lock()
+        self._done = threading.Event()
+
+    def drain(self) -> None:
+        try:
+            while True:
+                chunk = self.stream.read(65536)
+                if not chunk:
+                    break
+                with self._lock:
+                    self.total_bytes += len(chunk)
+                    self._tail.extend(chunk)
+                    if len(self._tail) > self.max_tail_bytes:
+                        excess = len(self._tail) - self.max_tail_bytes
+                        del self._tail[:excess]
+                        self.dropped_bytes += excess
+        except (ValueError, OSError):
+            pass
+        finally:
+            self._done.set()
+
+    def get_tail_bytes(self) -> bytes:
+        with self._lock:
+            return bytes(self._tail)
 
 
 def _kill_tree(proc: subprocess.Popen[bytes]) -> None:
@@ -133,38 +178,77 @@ def run_tests(
     except OSError as exc:
         raise ExecError(f"cannot start {command[0]!r}: {exc}") from exc
 
-    try:
-        stdout_b, stderr_b = proc.communicate(timeout=timeout)
-        timed_out = False
-    except subprocess.TimeoutExpired:
-        _kill_tree(proc)
+    limit_chars = get_settings().max_output_chars
+    max_tail_bytes = max(limit_chars * 4, 65536)
+
+    stdout_drainer = BoundedStreamDrainer(proc.stdout, max_tail_bytes)
+    stderr_drainer = BoundedStreamDrainer(proc.stderr, max_tail_bytes)
+
+    t_out = threading.Thread(target=stdout_drainer.drain, daemon=True)
+    t_err = threading.Thread(target=stderr_drainer.drain, daemon=True)
+    t_out.start()
+    t_err.start()
+
+    timed_out = False
+    deadline = started + timeout
+    pipe_hung = False
+
+    while True:
         try:
-            stdout_b, stderr_b = proc.communicate(timeout=10)
+            proc.wait(timeout=0.1)
+            break
         except subprocess.TimeoutExpired:
-            # N-15/R2 整改:逃逸出进程组的分离孙子进程持有管道写端时,
-            # kill 杀不到它们;proc.kill() 只杀直接子进程,最后一次
-            # communicate 也必须限时,超时改走"关管道回收"兜底,
-            # 否则任务线程在此永久挂死
-            proc.kill()
-            try:
-                proc.communicate(timeout=10)
-            except subprocess.TimeoutExpired:
-                if proc.stdout:
-                    proc.stdout.close()
-                if proc.stderr:
-                    proc.stderr.close()
-            stdout_b, stderr_b = b"", b""
-        timed_out = True
-        log.warning("run_tests timed out after %ss: %s", timeout, command)
+            if time.monotonic() >= deadline:
+                timed_out = True
+                log.warning("run_tests timed out after %ss: %s", timeout, command)
+                _kill_tree(proc)
+                try:
+                    proc.wait(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    # N-15/R2 整改: 逃逸出进程组的进程持有管道写端时，kill 杀不到；
+                    # proc.kill() 尝试强杀直接子进程，超时改走关管道回收兜底
+                    proc.kill()
+                    pipe_hung = True
+                    try:
+                        proc.wait(timeout=2.0)
+                    except subprocess.TimeoutExpired:
+                        pass
+                    if proc.stdout and not getattr(proc.stdout, "closed", False):
+                        proc.stdout.close()
+                    if proc.stderr and not getattr(proc.stderr, "closed", False):
+                        proc.stderr.close()
+                break
+
+    t_out.join(timeout=2.0)
+    t_err.join(timeout=2.0)
+    if proc.stdout and not getattr(proc.stdout, "closed", False):
+        proc.stdout.close()
+    if proc.stderr and not getattr(proc.stderr, "closed", False):
+        proc.stderr.close()
 
     duration_ms = int((time.monotonic() - started) * 1000)
+    if pipe_hung:
+        stdout_tail_str = ""
+        stderr_tail_str = ""
+    else:
+        stdout_tail_str = _truncate(
+            stdout_drainer.get_tail_bytes().decode("utf-8", errors="replace")
+        )
+        stderr_tail_str = _truncate(
+            stderr_drainer.get_tail_bytes().decode("utf-8", errors="replace")
+        )
+
     result = TestRunResult(
         command=command,
         exit_code=proc.returncode if proc.returncode is not None else -1,
-        stdout_tail=_truncate(stdout_b.decode("utf-8", errors="replace")),
-        stderr_tail=_truncate(stderr_b.decode("utf-8", errors="replace")),
+        stdout_tail=stdout_tail_str,
+        stderr_tail=stderr_tail_str,
         duration_ms=duration_ms,
         timed_out=timed_out,
+        stdout_bytes=stdout_drainer.total_bytes,
+        stderr_bytes=stderr_drainer.total_bytes,
+        stdout_dropped_bytes=stdout_drainer.dropped_bytes,
+        stderr_dropped_bytes=stderr_drainer.dropped_bytes,
     )
     log.info(
         "run_tests done rc=%s in %sms (timed_out=%s)", result.exit_code, duration_ms, timed_out

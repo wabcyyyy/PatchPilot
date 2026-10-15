@@ -67,8 +67,25 @@
   5. `app/agent/cli.py` 扩充 `--api-key` 与环境变量（`PATCHPILOT_API_KEY`）支持，增加本地管理员受保护命令行工具（`admin create-principal`、`issue-key`、`revoke-key`、`rotate-key`、`list-keys`），杜绝暴露未经认证的网络管理 HTTP 端点；
   6. 新增 `tests/test_credentials.py`，并在 `tests/test_auth.py` 扩充生产模式准入与吊销校验。
 - 验证：`verify.ps1 -Tests @('tests/test_credentials.py', 'tests/test_auth.py')`，收据 `.validation/20261015-233538-601dd7a5.json`，11 项全部通过（耗时 4.55s）；CLI 消费者回归（`test_capabilities.py`、`test_diagnosis_intake.py`）14 项全部通过（18.56s）。
-- Commit：待提交定位。
+- Commit：`e8a67b1`。
 - 下一张卡：P07 或 P03（按 Batch A 推进，P07 无依赖，P03 依赖 P02）。
+
+## P07 — pytest 输出边界与 JUnit 防护（2026-10-15）
+
+- 开始 HEAD：`e8a67b1`。
+- 已有 dirty：`docs/interview-guide.zip`，不属于本卡，保留且不暂存。
+- 改动范围：`app/executor/local_runner.py`、`app/adapters/pytest_adapter.py`、`tests/test_test_output_limits.py`。
+- 工作：
+  1. `app/executor/local_runner.py` 引入 `BoundedStreamDrainer`，采用后台独立线程分块（64KB）流式消费子进程 stdout/stderr，内存中只保留有界尾部环形缓冲（按 `max_output_chars`），精准统计总字节数与丢弃字节数（`dropped_bytes`）；
+  2. `TestRunResult` 扩充 `stdout_bytes`、`stderr_bytes`、`stdout_dropped_bytes`、`stderr_dropped_bytes` 与 `@property dropped_bytes`，输出截断不再静默；
+  3. `app/adapters/pytest_adapter.py` 设定 JUnit XML 最大解析上限 `MAX_JUNIT_BYTES = 10MB`，防止恶意/超大 XML 报告造成 OOM；
+  4. `parse_junit_xml` 增加文件大小校验与解析异常保护，捕获 `ET.ParseError`、`OSError`、`ValueError`、`UnicodeDecodeError`，转为结构化合成错误（`signature="error: invalid junit xml"` 或 `"error: junit xml too large"`），判定口径直接判未通过（`all_passed=False`），杜绝进程崩溃；
+  5. 新增 `tests/test_test_output_limits.py`，完整覆盖超大流式输出丢弃统计、无换行长流消费、超大 XML 拦截、畸形 XML 结构化容错与合规 XML 正常解析。
+- 验证：
+  - 定向单元测试：`tests/test_test_output_limits.py` 5 项全部通过（0.21s）；
+  - 执行器全集回归：`verify.ps1 -Tests @('tests/test_test_output_limits.py', 'tests/test_executor.py')`，收据 `.validation/20261015-234428-ddb46fe6.json`，5 步全绿（耗时 24.168s）。
+- Commit：待提交定位。
+- 下一张卡：P03（资源级授权与审计跟踪）。
 
 ## 任务状态
 
@@ -76,12 +93,12 @@
 |---|---|---|---|
 | P00 | DONE | 无 | 本卡 / 8b64907 / .validation/20261015-231752-36018573.json |
 | P01 | DONE | P00 | 本卡 / 5186085 / .validation/20261015-232638-318cd0d5.json + targeted 16 passed |
-| P02 | DONE | P01 | 本卡 / feat(auth) / .validation/20261015-233538-601dd7a5.json (11 passed) |
+| P02 | DONE | P01 | 本卡 / e8a67b1 / .validation/20261015-233538-601dd7a5.json (11 passed) |
 | P03 | TODO | P02 | — |
 | P04 | TODO | P00/P02 | — |
 | P05 | TODO | P00/P04 | — |
 | P06 | TODO | P03/P05 | — |
-| P07 | TODO | P00 | — |
+| P07 | DONE | P00 | 本卡 / feat(executor) / .validation/20261015-234428-ddb46fe6.json (35 passed) |
 | P08 | TODO | P04/P07 | — |
 | P09 | TODO | P07/P08 | — |
 | P10 | TODO | P01/P03/P04 | — |
