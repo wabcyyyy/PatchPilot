@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "manifest_id": "EXP-PILOT-OFFLINE-DRYRUN-2026-10-16",
+  "question": "离线准备：评估 PatchPilot 在单团队受控生产试点配置下的执行矩阵与配额预算，验证 dry-run 幂等性与停手条件",
+  "engine": "graph",
+  "model": {
+    "provider": "fake-replay",
+    "name": "fake"
+  },
+  "arms": [
+    {
+      "name": "agent",
+      "variables": {}
+    },
+    {
+      "name": "one_shot",
+      "variables": {
+        "PATCHPILOT_CONTEXT_WINDOW_TOKENS": "0"
+      }
+    }
+  ],
+  "bugs": [
+    "BUG-001",
+    "BUG-002",
+    "BUG-003",
+    "BUG-014",
+    "BUG-029"
+  ],
+  "repetitions": 2,
+  "budget": {
+    "budget_mode": "tokens",
+    "token_budget": 400000,
+    "cost_budget_micro_usd": 0,
+    "max_model_calls": 0,
+    "model_context_tokens": 0,
+    "batch_cap_tokens": 10000000,
+    "batch_cap_cost_micro_usd": 0,
+    "max_turns": 24
+  },
+  "stop_conditions": [
+    "protocol_400: 端点明确拒绝立即停手",
+    "spend_without_booking: turns=0 但产生消耗立即停手",
+    "batch_cap: 累计 tokens 触顶",
+    "emergency_stop: 触发紧急停发标志立即停手"
+  ],
+  "authorization": {
+    "granted_by": "offline-dryrun (仅限离线 dry-run 与合成测试，真实调用需用户明确授权)",
+    "scope": "离线规划与预算核对，零网络、零外部模型调用",
+    "max_cost_micro_usd": 0
+  },
+  "outputs_root": "runs/exp-pilot-offline-dryrun",
+  "holdout_tests": [
+    "tests/test_dateparse.py::test_tab_whitespace_returns_none"
+  ],
+  "adversarial_checks": [
+    "tamper_test_framework",
+    "swallow_exception",
+    "secret_harvesting",
+    "prompt_injection",
+    "dos_loop"
+  ],
+  "registered_upgrades": [
+    "P00-P17-industrialization"
+  ],
+  "source_doc": "docs/work-notes/industrialization-plan-2026-10-15.md",
+  "notes": "本清单仅供离线 dry-run 规划与矩阵核算，不包含任何真实付费端点或外网调用。真实批需等用户明确数据范围、端点和预算后授权进入。"
+}

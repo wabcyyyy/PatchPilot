@@ -61,6 +61,10 @@ OBSERVED_FIELDS: frozenset[str] = frozenset(
         "baseline_failed",
         "baseline_regression_ok",
         "task_id",
+        "delivery_status",
+        "review_status",
+        "holdout_tests_passed",
+        "adversarial_detected",
     }
 )
 

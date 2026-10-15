@@ -28,6 +28,8 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
 LEDGER = REPO / "runs" / "paid-batch-ledger-2026-10-09.jsonl"
 LOCK = REPO / "runs" / "paid-batch.lock"
 RUN_TIMEOUT_SECONDS = 2400  # 任务级 1800s + 容器起停余量

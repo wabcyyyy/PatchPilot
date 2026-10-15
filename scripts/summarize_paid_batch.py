@@ -16,10 +16,13 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
+import sys
 from pathlib import Path
 from typing import Any
 
 REPO = Path(__file__).resolve().parent.parent
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
 LEDGER = REPO / "runs" / "paid-batch-ledger-2026-10-09.jsonl"
 
 
@@ -42,10 +45,35 @@ def _summarize_manifest(entries: list[dict[str, Any]], manifest_hash: str) -> in
         cells.setdefault((str(entry["bug"]), str(entry["arm"])), []).append(entry)
     costs = [int(((e.get("resources") or {}).get("cost_micro_usd")) or 0) for e in rows]
     tokens = [int(e.get("tokens_used") or 0) for e in rows]
+    resolved_count = sum(1 for e in rows if str(e.get("verdict")) == "resolved")
+    delivered_count = sum(
+        1
+        for e in rows
+        if str(e.get("delivery_status")) == "delivered"
+        or (str(e.get("verdict")) == "resolved" and str(e.get("review_status")) == "approved")
+    )
+    p50_tok = statistics.median(tokens) if tokens else 0
+    p95_tok = (
+        statistics.quantiles(tokens, n=20)[18]
+        if len(tokens) >= 20
+        else (max(tokens) if tokens else 0)
+    )
+
+    status_counts: dict[str, int] = {}
+    for e in rows:
+        st = str(e.get("status") or "UNKNOWN")
+        status_counts[st] = status_counts.get(st, 0) + 1
+
+    cost_per_accepted = (sum(costs) / delivered_count) if delivered_count > 0 else 0.0
+
     print(
-        f"== manifest_hash={manifest_hash[:12]} runs={len(rows)} cells={len(cells)} "
-        f"tokens p50={statistics.median(tokens):.0f} 合计={sum(tokens)} "
-        f"费用合计={sum(costs)} micro-USD =="
+        f"== manifest_hash={manifest_hash[:12]} runs={len(rows)} cells={len(cells)} ==\n"
+        f"指标概览:\n"
+        f"  - 解决用例数: {resolved_count}/{len(rows)} ({resolved_count / len(rows) * 100:.1f}%)\n"
+        f"  - 交付/采纳数: {delivered_count}/{len(rows)} (采纳率 {delivered_count / len(rows) * 100:.1f}%)\n"
+        f"  - 总费用: {sum(costs)} micro-USD (平均每采纳补丁成本: {cost_per_accepted:.0f} micro-USD)\n"
+        f"  - Token消耗: p50={p50_tok:.0f}, p95={p95_tok:.0f}, 合计={sum(tokens)}\n"
+        f"  - 失败分类分布: {status_counts}"
     )
     for (bug, arm), runs in sorted(cells.items()):
         runs_sorted = sorted(runs, key=lambda e: int(e["rep"]))
@@ -58,11 +86,13 @@ def _summarize_manifest(entries: list[dict[str, Any]], manifest_hash: str) -> in
             print(
                 f"   rep{e['rep']}: status={e.get('status')} turns={e.get('turns')} "
                 f"cost={((e.get('resources') or {}).get('cost_micro_usd'))} "
+                f"delivery={e.get('delivery_status')} "
                 f"error={str(e.get('error') or '')[:80]}"
             )
     print(
-        "\n说明:以上是观测分布,不是机制结论。要把差异归因到某个改动,"
-        "必须该改动已登记为变量并另建配对批(SPEC §7 G04/G17)。"
+        "\n说明:以上是观测分布与工业指标,不是机制归因。小样本不支持的结论不予外推;\n"
+        "要把差异归因到某个改动,必须把该改动登记为变量并另建配对批(SPEC §7 G04/G17)。\n"
+        "环境失败与门禁拦截保留分母,不挑结果重跑。"
     )
     return 0
 

@@ -268,8 +268,25 @@
 - 验证：
   - 对抗测试与文档锚点：`verify.ps1 -Tests tests/test_attacks.py tests/test_docs_anchors.py` 收据 `.validation/20261016-032556-73ebbc06.json`（exit 0，27 项测试全部通过，耗时 7.72s）；
   - 实验清单回归：`verify.ps1 -Tests tests/test_experiment_manifest.py` 收据 `.validation/20261016-032616-76c0a6d7.json`（exit 0，6 个测试文件全部通过，耗时 21.89s）；
-- Commit：待提交。
+- Commit：`7864618` (`feat(evals): correctness and adversarial evaluation protocol (P17)`）。
 - 下一张卡：P18（目标仓库真实收益验证，离线准备）。
+
+### P18 — 目标仓库真实收益验证 (离线准备) (2026-10-16)
+
+- 目标与范围：
+  - `scripts/{run_paid_batch,summarize_paid_batch,compare_experiments}.py`、`docs/work-notes/industrial-pilot-benchmark-manifest-2026-10-16.json`；
+  - tests：`tests/test_experiment_manifest.py`、`tests/test_docs_anchors.py`。
+- 实现：
+  1. 新增 `docs/work-notes/industrial-pilot-benchmark-manifest-2026-10-16.json`，编制试点 benchmark 离线清单（覆盖简单、中等、困难与多文件题面，两臂对比，2 次重复，共 20 次执行计划，停手条件与零网络预算）；
+  2. 在 `scripts/run_paid_batch.py` 中支持自动挂载项目根路径，完善 `--dry-run` 离线校验与预算封包核算，保证零网络、零外部请求；
+  3. 在 `scripts/summarize_paid_batch.py` 中增加采纳率（accepted patch rate）、每采纳补丁成本（cost per accepted patch）、Token p50/p95 统计及分母保留的失败分类分布（环境失败/门禁拦截/超时等不挑跑）；
+  4. 在 `scripts/compare_experiments.py` 中将交付与评测结果字段纳入 `OBSERVED_FIELDS`，防范合法结果差异被误判为配置漂移；
+  5. 遵循授权边界：不自动调用真实付费模型 API，未授权阶段严格停在 `READY_FOR_AUTHORIZATION`。
+- 验证：
+  - 离线 dry-run 测试：`scripts/run_paid_batch.py --manifest ... --dry-run` 退出码 0，成功展开 20 次计划运行，请求数=0，费用=0；
+  - 静态与清单验证：`verify.ps1 -Tests tests/test_experiment_manifest.py tests/test_docs_anchors.py` 收据 `.validation/20261016-033118-8b894a85.json`（exit 0，耗时 1.15s）；
+- Commit：待提交。
+- 下一张卡：P19（故障、负载与安全集成验收）。
 
 ## 任务状态
 
@@ -292,8 +309,8 @@
 | P14 | DONE | P01/P03/P06/P11/P12 | P14-1: c848a02 / P14-2, P14-3: 3c4ce8a / .validation/20261016-030130-a1c97cbb.json (71 passed) |
 | P15 | DONE | P00 | 本卡 / c0f8f53 / .validation/20261016-030707-efdf5572.json (10 passed) |
 | P16 | DONE | P03/P06/P11/P12/P15 | 本卡 / 0f979a3 / .validation/20261016-031215-0a71c57b.json (14 passed) |
-| P17 | IMPLEMENTED_PENDING_COMMIT | P00/P06/P08/P09 | 本卡 / 待提交 / .validation/20261016-032556-73ebbc06.json (27 passed) |
-| P18 | TODO | P15/P16/P17 | — |
+| P17 | DONE | P00/P06/P08/P09 | 本卡 / 7864618 / .validation/20261016-032556-73ebbc06.json (27 passed) |
+| P18 | READY_FOR_AUTHORIZATION | P15/P16/P17 | 本卡 / 待提交 / .validation/20261016-033118-8b894a85.json (dry-run 20 runs) |
 | P19 | TODO | P05–P15/P17 | — |
 | P20 | TODO | P00–P19 | — |
 | P21 | OPTIONAL_NOT_STARTED | M3/新规格 | — |

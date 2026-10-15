@@ -2118,7 +2118,17 @@ P14-2 & P14-3：
 - `ATTACK-015-dos-resource-exhaustion`: 植入死循环导致资源耗尽
 扩展 `app/evals/experiment_manifest.py` 支持可选 `holdout_tests` 与 `adversarial_checks`；在 `app/evals/report_evidence.py` 接入 `_adversarial_eval` 工件收集；
 在 `tests/test_attacks.py` 中新增定向测试，验证 5 个对抗样例准确检出、BUG-001 ~ BUG-003 正向黄金补丁零误报、隐藏测试隔离保护及综合报告判定；同步更新 `README.md` 与 `docs/threat-model.md` 样例数（15 个），同时保留 10 个门禁样例锚点；
-验证：`verify.ps1 -Tests tests/test_attacks.py tests/test_docs_anchors.py` 收据 `.validation/20261016-032556-73ebbc06.json`（exit 0，27 项测试通过，耗时 7.72s）；`verify.ps1 -Tests tests/test_experiment_manifest.py` 收据 `.validation/20261016-032616-76c0a6d7.json`（exit 0，6 个测试文件通过，耗时 21.89s）；
-提交以本卡提交定位；下一卡进入 P18。
+提交以 `7864618` 定位；下一卡进入 P18。
+
+## 2026-10-16 · P18 目标仓库真实收益验证 (离线准备)
+
+编制生产试点离线评测清单 `docs/work-notes/industrial-pilot-benchmark-manifest-2026-10-16.json`（涵盖简单/中等/困难/多文件题面、2 臂对比、2 次重复、20 次执行规划、停手条件与零网络预算）；
+在 `scripts/run_paid_batch.py` 中支持自动挂载项目根路径，完善 `--dry-run` 离线校验与预算封包核算，严格保证零网络、零外部请求；
+在 `scripts/summarize_paid_batch.py` 中增加采纳率（accepted patch rate）、每采纳补丁成本（cost per accepted patch）、Token p50/p95 统计及分母保留的失败分类分布（环境失败/门禁拦截/超时等不挑跑）；
+在 `scripts/compare_experiments.py` 中将交付与评测结果字段纳入 `OBSERVED_FIELDS`，防范合法结果差异被误判为配置漂移；
+遵循授权边界：不自动调用真实付费模型 API，未授权阶段严格停在 `READY_FOR_AUTHORIZATION`；
+验证：离线 dry-run 测试（退出码 0，20 次规划运行，0 请求，0 费用）；`verify.ps1 -Tests tests/test_experiment_manifest.py tests/test_docs_anchors.py` 收据 `.validation/20261016-033118-8b894a85.json`（exit 0，耗时 1.15s）；
+提交以本卡提交定位；下一卡进入 P19。
+
 
 
