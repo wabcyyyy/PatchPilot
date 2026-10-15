@@ -321,7 +321,7 @@
 - 验证：
   - 锚点与文档一致性：`tests/test_docs_anchors.py` 全部通过；
   - 验证所有相对链接真实有效（`test_markdown_links_point_at_existing_files` exit 0）；
-- Commit：待提交。
+- Commit：`44ee8ea` (`docs(release): pilot deployment runbook, operations guide, and release evidence (P20)`）。
 - 下一张卡：P21（可选多实例与多租户扩展，非首版必做，按需求触发）。
 
 ## 任务状态
@@ -348,7 +348,7 @@
 | P17 | DONE | P00/P06/P08/P09 | 本卡 / 7864618 / .validation/20261016-032556-73ebbc06.json (27 passed) |
 | P18 | READY_FOR_AUTHORIZATION | P15/P16/P17 | 本卡 / a87146d / .validation/20261016-033118-8b894a85.json (dry-run 20 runs) |
 | P19 | DONE | P05–P15/P17 | 本卡 / 090b741 / .validation/20261016-034320-f3f0023c.json (6 passed + drill 4/4) |
-| P20 | DONE | P00–P19 | 本卡 / 待提交 / docs/runbook.md + docs/pilot-release-evidence.md |
+| P20 | DONE | P00–P19 | 本卡 / 44ee8ea / docs/runbook.md + docs/pilot-release-evidence.md |
 | P21 | OPTIONAL_NOT_STARTED | M3/新规格 | — |
 
 状态建议：TODO / IN_PROGRESS / IMPLEMENTED_PENDING_EVIDENCE / NOT_RUN_ENV /

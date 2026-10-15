@@ -2149,7 +2149,7 @@ P14-2 & P14-3：
 新增 `docs/pilot-release-evidence.md` 受控生产试点发布证据与生产准入记录：完整汇编 P00 ~ P20 交付事实源、Schema V3 迁移版本、Python 3.11 与 `constraints.lock` 供应链锁、SPEC §8 生产边界实测结果与对抗评测 100% 拦截记录、诚实声明残余风险与业务试点退出条件；
 更新 `README.md` 与 `docs/README.md` 索引入口，使运维与发布文档对账可追溯；
 验证：`tests/test_docs_anchors.py` 全部通过，所有相对链接物理校验存在有效（exit 0）；
-提交以本卡提交定位。
+提交以 `44ee8ea` 定位。
 
 
 
