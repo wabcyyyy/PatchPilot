@@ -19,11 +19,27 @@
   最后仅登记本段收据，不为记账重跑检查；实现卡与最终版本完整回归交 CI。
 - Commit：本段所在 `docs(plan)` 提交；不为写自身 hash 再提交。
 
+## P00 — 固化生产契约与架构决定（2026-10-15）
+
+- 开始 HEAD：`45175a6`。
+- 已有 dirty：`docs/interview-guide.zip`，不属于本卡，保留且不暂存。
+- 改动范围：`docs/adr/0016-生产契约与架构边界.md`、`docs/workload-manifest.md`、`docs/threat-model.md`。
+- 工作：
+  1. 复核工业改进计划审查事实与 12 项架构风险；
+  2. 固化信任边界与双运行模式（development vs production），明确 API 进程不持 Docker socket，由独立 Worker 在专用环境执行不可信代码；
+  3. 定义主体、凭据、任务规格、作业租约、工件、预算权威源；
+  4. 冻结 workload manifest（执行并发 2、排队 20、受理并发 2、取消确认 5s、平稳演练 30m、API p95 ≤ 500ms、RPO ≤ 60s、RTO ≤ 120s）；
+  5. 产出 ADR-0016，更新威胁模型。
+- 验证：`verify.ps1 -Tests tests/test_docs_anchors.py`，收据 `.validation/20261015-231752-36018573.json`，11 项检查通过。
+- 未运行：产品代码回归、外部模型调用；本卡无产品代码修改。
+- Commit：待提交定位。
+- 下一张卡：P01（版本化迁移与持久化模型）。
+
 ## 任务状态
 
 | 卡 | 状态 | 依赖 | owner / commit / 收据 |
 |---|---|---|---|
-| P00 | TODO | 无 | — |
+| P00 | DONE | 无 | 本卡 / docs(adr) / .validation/20261015-231752-36018573.json |
 | P01 | TODO | P00 | — |
 | P02 | TODO | P01 | — |
 | P03 | TODO | P02 | — |

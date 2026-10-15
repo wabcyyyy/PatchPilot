@@ -1911,3 +1911,11 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
 仅编制文档，不实施产品改造；已有 `docs/interview-guide.zip` 保留且不收取。
 任务定义、进度与本卡收据见 `docs/work-notes/industrialization-progress-2026-10-15.md`；
 提交以本段所在 `docs(plan)` 定位。本地检查结果登记在配套进度，不为登记重跑产品测试。
+
+## 2026-10-15 · P00 生产契约与架构决定固化
+
+落实 D01–D08 架构决策：建立 ADR-0016 与 workload manifest，声明生产试点拓扑（API 与 Worker 分离，API 不持 Docker socket）；
+固化主体、凭据、任务规格、作业租约、工件、预算权威源与不可变原则；
+更新威胁模型支持内网受控生产试点。
+验证：`verify.ps1 -Tests tests/test_docs_anchors.py` 收据 `.validation/20261015-231752-36018573.json`（11项通过）。
+提交以本段所在 `docs(adr)` 定位；下一卡进入 P01。
