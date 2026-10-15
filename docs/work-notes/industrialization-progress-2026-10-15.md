@@ -32,15 +32,34 @@
   5. 产出 ADR-0016，更新威胁模型。
 - 验证：`verify.ps1 -Tests tests/test_docs_anchors.py`，收据 `.validation/20261015-231752-36018573.json`，11 项检查通过。
 - 未运行：产品代码回归、外部模型调用；本卡无产品代码修改。
-- Commit：待提交定位。
+- Commit：`8b64907`。
 - 下一张卡：P01（版本化迁移与持久化模型）。
+
+## P01 — 版本化迁移与持久化模型（2026-10-15）
+
+- 开始 HEAD：`8b64907`。
+- 已有 dirty：`docs/interview-guide.zip`，不属于本卡，保留且不暂存。
+- 改动范围：`app/storage/migrations.py`、`app/storage/db.py`、`app/storage/repository.py`、`tests/test_migrations.py`。
+- 工作：
+  1. 新增版本化向前迁移模块 `app/storage/migrations.py`，支持事务化运行与 SQLite IMMEDIATE 串行互斥；
+  2. 实现 `schema_migrations` 表与 v1（基线三表与契约列）、v2（工业持久化模型）迁移逻辑；
+  3. `tasks` 增加 `owner` 与 `principal_id` 列，旧任务回填为 `legacy-unowned`，杜绝未授权归属；
+  4. 建立活动任务唯一幂等索引（`uq_tasks_active_principal_idem`），仅约束未终态任务，支持终态安全重跑；
+  5. 预创建主体表（`principals`）、凭据表（`credentials`）、审计事件表（`audit_events`）、作业与租约表（`jobs`）、额度预留表（`quota_reservations`）、工件记录表（`artifact_records`）；
+  6. 修复多线程并发连接下 busy_timeout 在 WAL 前设置的互斥锁竞争问题。
+- 验证：
+  - 定向单元与迁移测试：`tests/test_migrations.py`、`tests/test_storage.py`（16 passed in 1.71s），`tests/test_legacy_migration.py`（4 passed in 14.94s）；
+  - 静态与代码规范：AST、Ruff check、Ruff format 全部通过；
+  - 快速验证收据：`.validation/20261015-232638-318cd0d5.json`（静态通过，6 个被选测试达 90 秒预算停止记 budget_exhausted，不自动重启扩大，完整回归留 CI）。
+- Commit：待提交定位。
+- 下一张卡：P02（主体认证与凭据生命周期）。
 
 ## 任务状态
 
 | 卡 | 状态 | 依赖 | owner / commit / 收据 |
 |---|---|---|---|
-| P00 | DONE | 无 | 本卡 / docs(adr) / .validation/20261015-231752-36018573.json |
-| P01 | TODO | P00 | — |
+| P00 | DONE | 无 | 本卡 / 8b64907 / .validation/20261015-231752-36018573.json |
+| P01 | DONE | P00 | 本卡 / feat(storage) / .validation/20261015-232638-318cd0d5.json + targeted 16 passed |
 | P02 | TODO | P01 | — |
 | P03 | TODO | P02 | — |
 | P04 | TODO | P00/P02 | — |

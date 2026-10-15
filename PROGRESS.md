@@ -1918,4 +1918,15 @@ reference 缺失退化与计数、汇总带版本与失败分类;既有 6 例全
 固化主体、凭据、任务规格、作业租约、工件、预算权威源与不可变原则；
 更新威胁模型支持内网受控生产试点。
 验证：`verify.ps1 -Tests tests/test_docs_anchors.py` 收据 `.validation/20261015-231752-36018573.json`（11项通过）。
-提交以本段所在 `docs(adr)` 定位；下一卡进入 P01。
+提交以 `8b64907` 定位；下一卡进入 P01。
+
+## 2026-10-15 · P01 版本化迁移与持久化模型
+
+引入 `app/storage/migrations.py` 版本化 forward 迁移框架，支持 IMMEDIATE 事务隔离与并发串行保护；
+建立 `schema_migrations` 管理 v1（基线及契约列）与 v2（工业持久化模型）；
+tasks 表新增 `owner` 与 `principal_id`，旧任务升级回填 `legacy-unowned`，杜绝未授权越权；
+建立活动任务条件唯一索引（`uq_tasks_active_principal_idem`），同主体同键在途任务物理互斥，终态任务允许重跑；
+预创建 principals、credentials、audit_events、jobs、quota_reservations、artifact_records 表结构；
+调整 SQLite 连接设置顺序，在 PRAGMA journal_mode=WAL 前设置 busy_timeout，彻底消除多连接并发竞争锁。
+验证：`tests/test_migrations.py` 与 `test_storage.py` 定向 16 项通过（1.71s），`test_legacy_migration.py` 4 项通过（14.94s）；AST/Ruff 静态检查全过；快速收据 `.validation/20261015-232638-318cd0d5.json`（静态通过，6 个被选测试达 90 秒预算停止记 budget_exhausted，不自动重启扩大，完整回归留 CI）。
+提交以本段所在 `feat(storage)` 定位；下一卡进入 P02。

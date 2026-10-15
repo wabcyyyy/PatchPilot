@@ -72,12 +72,14 @@ class Repository:
         engine: str,
         model_provider: str,
         run_dir: str,
+        owner: str = "legacy-unowned",
+        principal_id: str = "legacy-unowned",
     ) -> None:
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO tasks (id, idem_key, bug_id, repo_path, issue_text, max_rounds,"
-                " engine, model_provider, status, run_dir, created_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                " engine, model_provider, status, run_dir, created_at, owner, principal_id)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     task_id,
                     idem_key,
@@ -90,16 +92,27 @@ class Repository:
                     "QUEUED",
                     run_dir,
                     _now(),
+                    owner,
+                    principal_id,
                 ),
             )
 
-    def find_by_idem_key(self, idem_key: str) -> dict[str, Any] | None:
+    def find_by_idem_key(
+        self, idem_key: str, principal_id: str | None = None
+    ) -> dict[str, Any] | None:
         """返回最近一条同键任务;是否"在途"由调用方按状态判断(终态任务允许重跑)。"""
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM tasks WHERE idem_key = ? ORDER BY created_at DESC LIMIT 1",
-                (idem_key,),
-            ).fetchone()
+            if principal_id is not None:
+                row = self._conn.execute(
+                    "SELECT * FROM tasks WHERE idem_key = ? AND principal_id = ?"
+                    " ORDER BY created_at DESC LIMIT 1",
+                    (idem_key, principal_id),
+                ).fetchone()
+            else:
+                row = self._conn.execute(
+                    "SELECT * FROM tasks WHERE idem_key = ? ORDER BY created_at DESC LIMIT 1",
+                    (idem_key,),
+                ).fetchone()
         return _task_out(row)
 
     def set_task_spec(
@@ -181,11 +194,33 @@ class Repository:
             row = self._conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
         return _task_out(row)
 
-    def list_tasks(self, limit: int = 50) -> list[dict[str, Any]]:
+    def list_tasks(
+        self,
+        limit: int = 50,
+        owner: str | None = None,
+        principal_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?", (limit,)
-            ).fetchall()
+            if owner is not None and principal_id is not None:
+                rows = self._conn.execute(
+                    "SELECT * FROM tasks WHERE owner = ? AND principal_id = ?"
+                    " ORDER BY created_at DESC LIMIT ?",
+                    (owner, principal_id, limit),
+                ).fetchall()
+            elif owner is not None:
+                rows = self._conn.execute(
+                    "SELECT * FROM tasks WHERE owner = ? ORDER BY created_at DESC LIMIT ?",
+                    (owner, limit),
+                ).fetchall()
+            elif principal_id is not None:
+                rows = self._conn.execute(
+                    "SELECT * FROM tasks WHERE principal_id = ? ORDER BY created_at DESC LIMIT ?",
+                    (principal_id, limit),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?", (limit,)
+                ).fetchall()
         return [_task_out(r) for r in rows]
 
     def list_tasks_finished_before(self, status: str, finished_before: str) -> list[dict[str, Any]]:
