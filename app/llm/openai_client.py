@@ -128,6 +128,14 @@ class OpenAICompatModel:
                 f" got llm_max_retries={settings.llm_max_retries}"
                 "(SDK 与平台同时重试会让用量无法对账)"
             )
+        if getattr(settings, "deployment_mode", "development") == "production":
+            from app.security.data_policy import validate_model_endpoint
+
+            validate_model_endpoint(
+                settings.llm_base_url,
+                getattr(settings, "allowed_model_endpoints", ""),
+                deployment_mode="production",
+            )
         self._client = OpenAI(
             base_url=settings.llm_base_url,
             api_key=settings.llm_api_key,
@@ -171,9 +179,12 @@ class OpenAICompatModel:
     def complete(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
     ) -> AssistantTurn:
+        from app.security.data_policy import redact_data
+
+        scrubbed_messages = redact_data(messages)
         request: dict[str, Any] = {
             "model": self.model_name,
-            "messages": messages,  # type: ignore[arg-type]
+            "messages": scrubbed_messages,  # type: ignore[arg-type]
             "tools": [{"type": "function", "function": tool} for tool in tools] if tools else None,  # type: ignore[arg-type]
             "max_tokens": self._max_tokens or None,
             "extra_body": self._extra_body,

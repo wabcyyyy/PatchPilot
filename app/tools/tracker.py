@@ -28,7 +28,11 @@ _REDACTED_KEYS = frozenset({"reasoning_content", "api_key", "authorization", "x-
 
 
 def _redact(value: object) -> object:
-    """递归替换敏感键的值;结构与非 dict/list 的读数原样保留。"""
+    """递归替换敏感键的值，并对字符串应用秘密模式脱敏。"""
+    from app.security.data_policy import redact_secrets
+
+    if isinstance(value, str):
+        return redact_secrets(value)
     if isinstance(value, dict):
         return {
             key: (

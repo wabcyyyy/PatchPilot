@@ -240,6 +240,9 @@ def _effective_policy(settings: Any, *, profile: str | None = None) -> dict[str,
         "max_identical_failures",
         # P04: 生产模式标识冻结进有效策略
         "deployment_mode",
+        # P06: 数据策略版本与允许的模型端点
+        "data_policy_version",
+        "allowed_model_endpoints",
     )
     policy = {k: getattr(settings, k, None) for k in keys}
     from app.executor.command_profiles import profiles_digest
@@ -462,6 +465,12 @@ def build_task_spec(
             raise TaskError(
                 f"docker_image '{docker_image}' is not in trusted_docker_images in production mode"
             )
+        if getattr(settings, "llm_enabled", False) and model_provider != "fake-replay":
+            from app.security.data_policy import validate_model_endpoint
+
+            llm_base_url = str(getattr(settings, "llm_base_url", "") or "")
+            allowed_endpoints = str(getattr(settings, "allowed_model_endpoints", "") or "")
+            validate_model_endpoint(llm_base_url, allowed_endpoints, deployment_mode="production")
     allowed = bug.allowed_paths
     if allowed is not None and not allowed:
         allowed = None

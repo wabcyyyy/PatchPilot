@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     trusted_docker_images: str = "python:3.11-slim"  # 生产模式受信任 Docker 镜像列表(逗号分隔)
     api_token: str = ""  # API Bearer Token;空 = 不鉴权(本地与现有测试不受影响)
     allowed_repo_roots: str = ""  # repo_path 根白名单(逗号分隔绝对路径);空 = 不限制(个人本地模式)
+    allowed_model_endpoints: str = ""  # 生产模式允许的模型端点白名单(逗号分隔);空 = 未配置
+    data_policy_version: str = "1"
     price_overrides: str = ""  # 可选 JSON 文件路径(同构 PRICES,优先级高于内置价目)
     execution_backend: str = "local"  # 测试执行后端:local | docker
     # P3-7 如实化(2026-09-26):原注释「容器集成留待人工验证」与事实矛盾——
@@ -540,6 +542,10 @@ class Settings(BaseSettings):
             issues.append("docker_image must not be empty in production mode")
         elif self.docker_image.strip() not in self.get_trusted_docker_images():
             issues.append(f"docker_image '{self.docker_image}' is not in trusted_docker_images")
+        if self.llm_enabled and not self.allowed_model_endpoints.strip():
+            issues.append(
+                "allowed_model_endpoints must not be empty in production mode when llm is enabled"
+            )
         return issues
 
 

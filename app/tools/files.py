@@ -15,6 +15,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.context.evidence import EvidenceLookupError, build_store
+from app.security.data_policy import is_secret_path, redact_secrets
 from app.tools.base import ToolContext, ToolResult
 from app.tools.paths import looks_like_text, relpath_within
 from app.tools.search import ENGINE_KEY, compile_pattern, grep_files
@@ -43,6 +44,8 @@ def collect_repo_files(workspace: Path, glob: str | None, limit: int) -> tuple[l
             continue
         rel = path.relative_to(workspace).as_posix()
         if any(part in SKIP_DIRS for part in rel.split("/")):
+            continue
+        if is_secret_path(rel):
             continue
         if glob and not fnmatch.fnmatch(rel, glob):
             continue
@@ -100,6 +103,9 @@ def read_file(ctx: ToolContext, path: str, offset: int = 1, limit: int | None = 
     target = relpath_within(ctx.workspace, path)
     if target is None or not target.is_file():
         return ToolResult.fail(f"file not found or outside workspace: {path!r}")
+    rel = target.relative_to(ctx.workspace).as_posix()
+    if is_secret_path(rel):
+        return ToolResult.fail(f"refusing to read secret or sensitive path: {path!r}")
     if not looks_like_text(target):
         return ToolResult.fail(f"refusing to read binary file: {path!r}")
 
@@ -118,6 +124,7 @@ def read_file(ctx: ToolContext, path: str, offset: int = 1, limit: int | None = 
     start = max(1, offset)
     end = min(total, start + window - 1)
     content = "\n".join(lines[start - 1 : end])
+    content = redact_secrets(content)
     return ToolResult(
         ok=True,
         output={
