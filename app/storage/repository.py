@@ -1138,3 +1138,86 @@ INSERT INTO audit_events (
             task_dict = _task_out(t_row)
             assert task_dict is not None
             return task_dict, dict(j_row)
+
+    def check_health(self) -> tuple[bool, int, str]:
+        """检查数据库连通性及当前迁移版本 (P13)。
+
+        返回 (is_healthy, current_version, message)。
+        """
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1"
+                ).fetchone()
+                version = int(row[0]) if row else 0
+                return True, version, "ok"
+        except Exception as exc:
+            return False, -1, str(exc)
+
+    def get_queue_stats(self) -> dict[str, Any]:
+        """获取队列统计信息 (P13)。"""
+        with self._lock:
+            pending_row = self._conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE status = 'pending'"
+            ).fetchone()
+            claimed_row = self._conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE status = 'claimed'"
+            ).fetchone()
+            oldest_row = self._conn.execute(
+                "SELECT created_at FROM jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1"
+            ).fetchone()
+
+        pending_count = int(pending_row[0]) if pending_row else 0
+        claimed_count = int(claimed_row[0]) if claimed_row else 0
+        oldest_waiting_seconds = 0.0
+        if oldest_row and oldest_row[0]:
+            try:
+                created_dt = datetime.fromisoformat(str(oldest_row[0]))
+                oldest_waiting_seconds = max(0.0, (datetime.now(UTC) - created_dt).total_seconds())
+            except Exception:
+                oldest_waiting_seconds = 0.0
+
+        return {
+            "pending_count": pending_count,
+            "claimed_count": claimed_count,
+            "oldest_waiting_seconds": oldest_waiting_seconds,
+        }
+
+    def get_task_stats(self) -> dict[str, Any]:
+        """获取任务按状态与判定统计 (P13)。"""
+        with self._lock:
+            status_rows = self._conn.execute(
+                "SELECT status, COUNT(*) FROM tasks GROUP BY status"
+            ).fetchall()
+            verdict_rows = self._conn.execute(
+                "SELECT verdict, COUNT(*) FROM tasks WHERE verdict IS NOT NULL AND verdict != '' GROUP BY verdict"
+            ).fetchall()
+
+        status_counts = {str(row[0]): int(row[1]) for row in status_rows}
+        verdict_counts = {str(row[0]): int(row[1]) for row in verdict_rows}
+        active_statuses = {"QUEUED", "RUNNING", "WAITING_APPROVAL", "WAITING_INPUT"}
+        active_count = sum(cnt for st, cnt in status_counts.items() if st in active_statuses)
+
+        return {
+            "active_tasks": active_count,
+            "status_counts": status_counts,
+            "verdict_counts": verdict_counts,
+        }
+
+    def get_quota_stats(self) -> dict[str, Any]:
+        """获取当前未结算预留配额统计 (P13)。"""
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT COALESCE(SUM(reserved_amount), 0.0), COALESCE(SUM(reserved_tokens), 0)
+                FROM quota_reservations
+                WHERE status = 'reserved'
+                """
+            ).fetchone()
+
+        reserved_usd = float(row[0]) if row else 0.0
+        reserved_tokens = int(row[1]) if row else 0
+        return {
+            "total_reserved_usd": reserved_usd,
+            "total_reserved_tokens": reserved_tokens,
+        }

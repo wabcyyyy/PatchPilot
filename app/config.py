@@ -541,6 +541,24 @@ class Settings(BaseSettings):
     job_lease_duration_seconds: float = 60.0  # Job 租约超时时间 (秒)
     job_poll_interval_seconds: float = 1.0  # Worker 轮询作业间隔 (秒)
 
+    # ---------- P13: 运行指标、健康检查与可观测性 ----------
+    log_format: str = "text"  # text | json
+    readiness_min_disk_free_bytes: int = 100 * 1024 * 1024  # 100MB 就绪探针最低空闲磁盘要求
+
+    @field_validator("log_format")
+    @classmethod
+    def _check_log_format(cls, value: str) -> str:
+        if value not in {"text", "json"}:
+            raise ValueError(f"log_format must be 'text' or 'json', got {value!r}")
+        return value
+
+    @field_validator("readiness_min_disk_free_bytes")
+    @classmethod
+    def _check_readiness_min_disk_free_bytes(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"readiness_min_disk_free_bytes must be >= 0, got {value}")
+        return value
+
     @field_validator("job_lease_duration_seconds", "job_poll_interval_seconds")
     @classmethod
     def _check_positive_job_intervals(cls, value: float) -> float:

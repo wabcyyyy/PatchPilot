@@ -45,6 +45,11 @@ services:
       # P11-3: API 容器无 docker.sock 挂载，不执行目标代码
     depends_on:
       - redis
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/ready')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
     restart: unless-stopped
 
   worker:

@@ -17,7 +17,7 @@ from fastapi import Request
 
 from app.config import get_settings
 
-EXEMPT_PATHS = frozenset({"/api/health"})
+EXEMPT_PATHS = frozenset({"/api/health", "/api/health/live", "/api/health/ready", "/api/metrics"})
 
 
 class UnauthorizedError(Exception):

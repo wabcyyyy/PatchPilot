@@ -39,14 +39,16 @@ from app.api.schemas import (
     TaskOut,
     TrajectoryPage,
 )
+from app.config import get_settings
 from app.errors import InvalidRequestError, PatchPilotError, QuotaExceededError, TaskError
+from app.observability import MetricsRegistry, check_liveness, check_readiness
 from app.security.data_policy import redact_data
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_token)])
 
 
 def _service(request: Request) -> Any:
-    return request.app.state.service
+    return getattr(request.app.state, "service", None)
 
 
 def _error(status: int, code: str, message: str, task_id: str | None = None) -> JSONResponse:
@@ -257,6 +259,43 @@ def approve_acceptance(task_id: str, payload: AcceptanceApproveIn, request: Requ
 @router.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@router.get("/health/live")
+def health_live():
+    return JSONResponse(status_code=200, content=check_liveness())
+
+
+@router.get("/health/ready")
+def health_ready(request: Request):
+    service = _service(request)
+    settings = get_settings()
+    repo = getattr(service, "repo", None)
+    runs_root = getattr(service, "runs_root", settings.runs_root)
+    is_ready, details = check_readiness(
+        repo=repo,
+        runs_root=runs_root,
+        worker_enabled=getattr(settings, "worker_enabled", True),
+        min_free_disk_bytes=getattr(settings, "readiness_min_disk_free_bytes", 100 * 1024 * 1024),
+    )
+    status_code = 200 if is_ready else 503
+    return JSONResponse(status_code=status_code, content=details)
+
+
+@router.get("/metrics")
+def metrics(request: Request):
+    service = _service(request)
+    settings = get_settings()
+    repo = getattr(service, "repo", None)
+    runs_root = getattr(service, "runs_root", settings.runs_root)
+    reg = MetricsRegistry.get_instance()
+    accept_header = request.headers.get("accept", "")
+    if "application/json" in accept_header:
+        return JSONResponse(status_code=200, content=reg.collect(repo, runs_root))
+    return PlainTextResponse(
+        content=reg.render_prometheus(repo, runs_root),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 @router.get("/capabilities")

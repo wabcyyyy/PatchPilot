@@ -533,10 +533,19 @@ class TaskService:
         worker_id: str = "in-process-worker",
         fencing_token: int | None = None,
     ) -> None:
-        # P3-9:工作线程首行设置日志上下文——本任务在此线程内产生的业务日志
-        # 都带 task_id(AGENTS 约定的装配面);线程复用,finally 必须 reset。
-        # 复盘 P1-8:request_id 在提交前于请求上下文捕获并传入,日志 req= 随之生效
-        context_tokens = set_task_context(task_id, request_id)
+        # P3-9/P13: 工作线程首行设置日志上下文 (task_id, request_id, attempt_id, worker_id, actor)
+        task_info = self.repo.get_task(task_id) if hasattr(self.repo, "get_task") else None
+        actor = (
+            (task_info.get("principal_id", "") or task_info.get("owner", "")) if task_info else ""
+        )
+        attempt_id = str(fencing_token) if fencing_token is not None else ""
+        context_tokens = set_task_context(
+            task_id,
+            request_id=request_id,
+            attempt_id=attempt_id,
+            worker_id=worker_id,
+            actor=actor,
+        )
         try:
             self._execute_inner(
                 task_id,
