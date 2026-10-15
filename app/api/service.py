@@ -305,7 +305,7 @@ class TaskService:
             )
 
         requested_tokens = token_budget if token_budget is not None else settings.token_budget
-        if hasattr(self.repo, "reserve_quota"):
+        if not hasattr(self.repo, "submit_task_atomic") and hasattr(self.repo, "reserve_quota"):
             try:
                 self.repo.reserve_quota(
                     task_id=task_id,
@@ -366,47 +366,66 @@ class TaskService:
             # tasks 表三列(重启后可查)。两边哈希同源(spec.task_spec_hash);
             # _execute 开跑前再核一次,不一致不调模型。
             write_task_spec_file(run_dir, spec)
-            self.repo.create_task(
-                task_id=task_id,
-                idem_key=idem_key,
-                bug_id=bug.id,
-                repo_path=str(bug.repo_dir),
-                issue_text=bug.issue_text[:500],
-                max_rounds=max_rounds or bug.max_rounds,
-                engine=engine,
-                model_provider=model,
-                run_dir=str(run_dir),
-                owner=owner,
-                principal_id=principal_id,
-            )
-            self.repo.set_task_spec(
-                task_id,
-                spec_json=canonical_json(spec.to_json_dict()),
-                spec_hash=idem_key,
-                schema_version=SCHEMA_VERSION,
-            )
-            # N-7/R2 整改保留:RUNNING 置位已挪入 _execute 首行(P3-10)——
-            # 此前在 create_task 置 RUNNING,语义是"已受理进线程池"而非执行中,
-            # 池内排队在 DB 不可见;现在排队中如实保持 QUEUED
-            # 提交前先注册取消事件,保证 create 返回后的任何 cancel 都不会丢失
-            cancel_event = self._cancels.register(task_id)
-            # 复盘 P1-8:请求上下文里的 request_id 随任务下发(HTTP 中间件生成),
-            # 线程池线程不继承请求 contextvar,必须在提交前捕获
-            request_id = request_id_var.get()
-            future = self._pool.submit(
-                self._execute,
-                task_id,
-                bug,
-                engine,
-                model,
-                run_dir,
-                lock_key,
-                cancel_event,
-                replay_script,
-                request_id,
-            )
-            # N-21 整改:登记 future,停机时可识别"已受理但从未开始"的任务
-            self._futures[task_id] = (future, lock_key)
+            if hasattr(self.repo, "submit_task_atomic"):
+                self.repo.submit_task_atomic(
+                    task_id=task_id,
+                    idem_key=idem_key,
+                    bug_id=bug.id,
+                    repo_path=str(bug.repo_dir),
+                    issue_text=bug.issue_text[:500],
+                    max_rounds=max_rounds or bug.max_rounds,
+                    engine=engine,
+                    model_provider=model,
+                    run_dir=str(run_dir),
+                    owner=owner,
+                    principal_id=principal_id,
+                    spec_json=canonical_json(spec.to_json_dict()),
+                    schema_version=SCHEMA_VERSION,
+                    amount_usd=requested_cash,
+                    tokens=requested_tokens,
+                    daily_budget_usd=settings.principal_daily_budget_usd,
+                    daily_token_budget=settings.principal_daily_token_budget,
+                )
+            else:
+                self.repo.create_task(
+                    task_id=task_id,
+                    idem_key=idem_key,
+                    bug_id=bug.id,
+                    repo_path=str(bug.repo_dir),
+                    issue_text=bug.issue_text[:500],
+                    max_rounds=max_rounds or bug.max_rounds,
+                    engine=engine,
+                    model_provider=model,
+                    run_dir=str(run_dir),
+                    owner=owner,
+                    principal_id=principal_id,
+                )
+                self.repo.set_task_spec(
+                    task_id,
+                    spec_json=canonical_json(spec.to_json_dict()),
+                    spec_hash=idem_key,
+                    schema_version=SCHEMA_VERSION,
+                )
+            # P11: 根据 worker_enabled 决定是否在 API 进程内调度线程池
+            if getattr(settings, "worker_enabled", True):
+                cancel_event = self._cancels.register(task_id)
+                request_id = request_id_var.get()
+                future = self._pool.submit(
+                    self._execute,
+                    task_id,
+                    bug,
+                    engine,
+                    model,
+                    run_dir,
+                    lock_key,
+                    cancel_event,
+                    replay_script,
+                    request_id,
+                )
+                self._futures[task_id] = (future, lock_key)
+            else:
+                # 独立 Worker 模式: 任务持久保存在 jobs 队列，等待独立 worker claim
+                self.lock.release(lock_key)
         except Exception as exc:
             # 落库/提交失败必须回滚:否则锁要挂到 TTL(约 16 分钟),任务行卡死
             self._rollback_created(task_id, lock_key)
@@ -426,6 +445,8 @@ class TaskService:
                 # finalize_task 守卫任一终态不可覆写(P3-4):回滚不得覆盖
                 # 已到终态的任务(含并发取消与并发回滚)
                 self.repo.finalize_task(task_id, "NEEDS_REVIEW", "needs_review")
+            if hasattr(self.repo, "complete_job"):
+                self.repo.complete_job(task_id=task_id, worker_id="api", status="failed")
         except Exception:
             log.exception("task %s rollback failed", task_id)
         finally:
@@ -492,6 +513,11 @@ class TaskService:
             self._cancels.unregister(task_id)
             self.lock.release(lock_key)
             return
+
+        if hasattr(self.repo, "get_job_by_task_id") and hasattr(self.repo, "claim_next_job"):
+            job = self.repo.get_job_by_task_id(task_id)
+            if job and job.get("status") == "pending":
+                self.repo.claim_next_job(worker_id="in-process-worker")
         try:
             settings = get_settings()
             # S05b/F4:DB 与文件的契约哈希一致才调模型——不一致说明受理证据损坏
@@ -626,6 +652,21 @@ class TaskService:
                 self._settle_quota(task_id, run_dir)
             except Exception:
                 log.exception("task %s quota settlement in finally failed", task_id)
+            if hasattr(self.repo, "complete_job"):
+                try:
+                    task_row = self.repo.get_task(task_id)
+                    final_status = (
+                        "completed"
+                        if (task_row and task_row.get("status") == "FINISHED")
+                        else "failed"
+                    )
+                    self.repo.complete_job(
+                        task_id=task_id,
+                        worker_id="in-process-worker",
+                        status=final_status,
+                    )
+                except Exception:
+                    log.exception("task %s complete_job in finally failed", task_id)
             self._futures.pop(task_id, None)
             self._cancels.unregister(task_id)
             self.lock.release(lock_key)

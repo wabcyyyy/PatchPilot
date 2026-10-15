@@ -534,6 +534,20 @@ class Settings(BaseSettings):
     principal_daily_token_budget: int = 10_000_000  # 主体每日 token 预算, 0 = 不限制
     task_budget_cap_usd: float = 10.0  # 单任务预算金额上限, 0.0 = 不限制
 
+    # ---------- P11: 独立 Worker 与作业队列 ----------
+    worker_enabled: bool = (
+        True  # 是否在 API 进程内启动内置 worker 执行; False = 仅入队, 由独立 worker 进程 claim
+    )
+    job_lease_duration_seconds: float = 60.0  # Job 租约超时时间 (秒)
+    job_poll_interval_seconds: float = 1.0  # Worker 轮询作业间隔 (秒)
+
+    @field_validator("job_lease_duration_seconds", "job_poll_interval_seconds")
+    @classmethod
+    def _check_positive_job_intervals(cls, value: float) -> float:
+        if value <= 0.0:
+            raise ValueError(f"job intervals must be > 0.0, got {value}")
+        return value
+
     @field_validator("principal_daily_budget_usd", "task_budget_cap_usd")
     @classmethod
     def _check_budget_limits_usd(cls, value: float) -> float:

@@ -768,3 +768,278 @@ INSERT INTO audit_events (
             "used_tokens": int(row["total_tokens"]) if row else 0,
             "count": int(row["count"]) if row else 0,
         }
+
+    # ---------- P11-1: 持久入队、Job 管理与原子提交 ----------
+
+    def enqueue_job(
+        self,
+        *,
+        task_id: str,
+        priority: int = 0,
+    ) -> dict[str, Any]:
+        """将任务作业持久化插入 jobs 队列 (P11-1)。"""
+        job_id = f"job-{uuid.uuid4().hex[:12]}"
+        now = _now()
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO jobs (
+                    id, task_id, status, priority, worker_id, lease_expires_at, fencing_token, created_at, updated_at
+                ) VALUES (?, ?, 'pending', ?, NULL, NULL, 0, ?, ?)
+                """,
+                (job_id, task_id, priority, now, now),
+            )
+            row = self._conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            return dict(row)
+
+    def get_job(self, job_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            return dict(row) if row else None
+
+    def get_job_by_task_id(self, task_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM jobs WHERE task_id = ?", (task_id,)).fetchone()
+            return dict(row) if row else None
+
+    def list_jobs(self, *, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        query = "SELECT * FROM jobs"
+        params: list[Any] = []
+        if status:
+            query += " WHERE status = ?"
+            params.append(status)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(max(0, min(limit, 200)))
+        with self._lock:
+            rows = self._conn.execute(query, tuple(params)).fetchall()
+            return [dict(r) for r in rows]
+
+    def claim_next_job(
+        self,
+        *,
+        worker_id: str,
+        lease_duration_seconds: float = 60.0,
+    ) -> dict[str, Any] | None:
+        """从队列中原子领取待执行 Job (P11-1)。
+
+        支持按 priority 降序、created_at 升序领取处于 pending 状态，
+        或者租约已过期的 claimed 任务（自动回收超时任务并递增 fencing_token）。
+        同一锁与事务内完成，保证独占领取。
+        """
+        now = _now()
+        lease_exp = (datetime.now(UTC) + timedelta(seconds=lease_duration_seconds)).isoformat(
+            timespec="milliseconds"
+        )
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                """
+                SELECT id, task_id, priority, fencing_token
+                FROM jobs
+                WHERE status = 'pending'
+                   OR (status = 'claimed' AND lease_expires_at IS NOT NULL AND lease_expires_at < ?)
+                ORDER BY priority DESC, created_at ASC
+                LIMIT 1
+                """,
+                (now,),
+            ).fetchone()
+            if not row:
+                return None
+            job_id, task_id, _priority, token = row[0], row[1], row[2], int(row[3] or 0)
+            new_token = token + 1
+            self._conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'claimed',
+                    worker_id = ?,
+                    lease_expires_at = ?,
+                    fencing_token = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (worker_id, lease_exp, new_token, now, job_id),
+            )
+            self._conn.execute(
+                "UPDATE tasks SET status = 'RUNNING' WHERE id = ? AND status = 'QUEUED'",
+                (task_id,),
+            )
+            claimed = self._conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            return dict(claimed) if claimed else None
+
+    def renew_job_lease(
+        self,
+        *,
+        task_id: str,
+        worker_id: str,
+        lease_duration_seconds: float = 60.0,
+    ) -> bool:
+        """续期 Job 租约心跳 (P11-1)。仅当前持有 worker 且处于 claimed 状态时有效。"""
+        now = _now()
+        lease_exp = (datetime.now(UTC) + timedelta(seconds=lease_duration_seconds)).isoformat(
+            timespec="milliseconds"
+        )
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                """
+                UPDATE jobs
+                SET lease_expires_at = ?,
+                    updated_at = ?
+                WHERE task_id = ? AND worker_id = ? AND status = 'claimed'
+                """,
+                (lease_exp, now, task_id, worker_id),
+            )
+            return cur.rowcount > 0
+
+    def complete_job(
+        self,
+        *,
+        task_id: str,
+        worker_id: str,
+        status: str = "completed",
+    ) -> bool:
+        """完成/关闭 Job (P11-1)。清除租约。"""
+        now = _now()
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                """
+                UPDATE jobs
+                SET status = ?,
+                    lease_expires_at = NULL,
+                    updated_at = ?
+                WHERE task_id = ? AND worker_id = ?
+                """,
+                (status, now, task_id, worker_id),
+            )
+            return cur.rowcount > 0
+
+    def submit_task_atomic(
+        self,
+        *,
+        task_id: str,
+        idem_key: str,
+        bug_id: str,
+        repo_path: str,
+        issue_text: str,
+        max_rounds: int,
+        engine: str,
+        model_provider: str,
+        run_dir: str,
+        owner: str = "legacy-unowned",
+        principal_id: str = "legacy-unowned",
+        spec_json: str,
+        schema_version: int,
+        amount_usd: float = 0.0,
+        tokens: int = 0,
+        daily_budget_usd: float = 0.0,
+        daily_token_budget: int = 0,
+        priority: int = 0,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """原子提交任务、契约、额度预留与持久作业队列 (P11-1)。
+
+        在单个 SQLite 事务中完成全部 4 步:
+        1. 校验当日额度并预留 quota_reservations
+        2. 插入 tasks (受 uq_tasks_active_principal_idem 幂等约束)
+        3. 写入 task_spec_json / hash
+        4. 插入 jobs 待执行队列
+        返回 (task_dict, job_dict)。
+        任意一步失败（超额、唯一键冲突、SQL 错误）整个事务回滚，零残留。
+        """
+        start_of_today = datetime.now(UTC).strftime("%Y-%m-%d 00:00:00")
+        reservation_id = f"res-{uuid.uuid4().hex[:12]}"
+        job_id = f"job-{uuid.uuid4().hex[:12]}"
+        now = _now()
+
+        with self._lock, self._conn:
+            # 1. 额度检查
+            row = self._conn.execute(
+                """
+                SELECT
+                    COALESCE(SUM(reserved_amount), 0.0) AS total_amount,
+                    COALESCE(SUM(reserved_tokens), 0) AS total_tokens
+                FROM quota_reservations
+                WHERE principal_id = ?
+                  AND status IN ('reserved', 'settled')
+                  AND created_at >= ?
+                """,
+                (principal_id, start_of_today),
+            ).fetchone()
+            used_amount = float(row[0]) if row else 0.0
+            used_tokens = int(row[1]) if row else 0
+
+            if daily_budget_usd > 0.0 and (used_amount + amount_usd) > daily_budget_usd:
+                from app.errors import QuotaExceededError
+
+                raise QuotaExceededError(
+                    f"principal '{principal_id}' daily budget exceeded: "
+                    f"requested {amount_usd:.4f} USD, currently used {used_amount:.4f} USD, "
+                    f"daily limit {daily_budget_usd:.4f} USD"
+                )
+
+            if daily_token_budget > 0 and (used_tokens + tokens) > daily_token_budget:
+                from app.errors import QuotaExceededError
+
+                raise QuotaExceededError(
+                    f"principal '{principal_id}' daily token budget exceeded: "
+                    f"requested {tokens} tokens, currently used {used_tokens} tokens, "
+                    f"daily limit {daily_token_budget} tokens"
+                )
+
+            # 2. 插入额度预留
+            self._conn.execute(
+                """
+                INSERT INTO quota_reservations (
+                    id, task_id, principal_id, reserved_amount, reserved_tokens, status, created_at
+                ) VALUES (?, ?, ?, ?, ?, 'reserved', ?)
+                """,
+                (reservation_id, task_id, principal_id, amount_usd, tokens, now),
+            )
+
+            # 3. 插入任务与契约 (受 uq_tasks_active_principal_idem 幂等唯一约束)
+            try:
+                self._conn.execute(
+                    """
+                    INSERT INTO tasks (
+                        id, idem_key, bug_id, repo_path, issue_text, max_rounds,
+                        engine, model_provider, status, run_dir, created_at, owner, principal_id,
+                        task_spec_json, task_spec_hash, task_spec_schema_version
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'QUEUED', ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        task_id,
+                        idem_key,
+                        bug_id,
+                        repo_path,
+                        issue_text,
+                        max_rounds,
+                        engine,
+                        model_provider,
+                        run_dir,
+                        now,
+                        owner,
+                        principal_id,
+                        spec_json,
+                        idem_key,
+                        schema_version,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                from app.errors import PatchPilotError
+
+                raise PatchPilotError(
+                    f"active task for idem_key {idem_key[:12]} already running for principal {principal_id}"
+                ) from exc
+
+            # 4. 插入持久作业队列
+            self._conn.execute(
+                """
+                INSERT INTO jobs (
+                    id, task_id, status, priority, worker_id, lease_expires_at, fencing_token, created_at, updated_at
+                ) VALUES (?, ?, 'pending', ?, NULL, NULL, 0, ?, ?)
+                """,
+                (job_id, task_id, priority, now, now),
+            )
+
+            t_row = self._conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            j_row = self._conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            task_dict = _task_out(t_row)
+            assert task_dict is not None
+            return task_dict, dict(j_row)
