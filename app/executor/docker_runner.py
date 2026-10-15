@@ -31,6 +31,7 @@ from app.adapters.pytest_adapter import (
     parse_junit_xml,
 )
 from app.config import get_settings
+from app.errors import ExecError
 from app.executor.local_runner import run_tests
 
 log = logging.getLogger(__name__)
@@ -79,12 +80,12 @@ def _container_identity_cmd_flags(workspace: Path, reports: Path) -> list[str]:
     """
     is_posix, uid, gid = _host_identity()
     if not is_posix:
-        return []
+        return ["--user", f"{EXECUTOR_UID}:{EXECUTOR_UID}", "-e", "HOME=/tmp"]
     if uid != 0:
         return ["--user", f"{uid}:{gid}", "-e", "HOME=/tmp"]
     _chown_to_executor(workspace)
     _chown_to_executor(reports)
-    return []
+    return ["--user", f"{EXECUTOR_UID}:{EXECUTOR_UID}", "-e", "HOME=/tmp"]
 
 
 @functools.lru_cache(maxsize=1)
@@ -103,6 +104,66 @@ def docker_available() -> bool:
         return False
 
 
+def build_docker_test_cmd(
+    workspace: Path,
+    reports: Path,
+    junit_name: str,
+    test_ids: list[str],
+    *,
+    image: str,
+    container_name: str,
+    python_bin: str = "python",
+    workdir: str = "/ws",
+    network: str = "none",
+    memory: str | None = None,
+    cpus: str | None = None,
+) -> list[str]:
+    """组装执行测试的加固 docker run 命令。"""
+    settings = get_settings()
+    if settings.deployment_mode == "production":
+        trusted = settings.get_trusted_docker_images()
+        if not image or (trusted and image not in trusted):
+            raise ExecError(
+                f"docker image '{image}' is not in trusted_docker_images in production mode"
+            )
+
+    return [
+        "docker",
+        "run",
+        "--rm",
+        "--name",
+        container_name,
+        "--network",
+        network,
+        "--memory",
+        memory or settings.docker_memory,
+        "--cpus",
+        cpus or settings.docker_cpus,
+        f"--pids-limit={settings.docker_pids_limit}",
+        "--security-opt",
+        settings.docker_security_opt,
+        "--cap-drop",
+        settings.docker_cap_drop,
+        *_container_identity_cmd_flags(workspace, reports),
+        "-v",
+        f"{workspace}:{workdir}",
+        "-v",
+        f"{reports}:/reports",
+        "-w",
+        workdir,
+        image,
+        python_bin,
+        "-m",
+        "pytest",
+        "-q",
+        "--color=no",
+        "-o",
+        "junit_family=xunit1",
+        f"--junitxml=/reports/{junit_name}",
+        *test_ids,
+    ]
+
+
 def run_tests_in_container(
     workspace: Path | str,
     test_ids: list[str],
@@ -110,8 +171,8 @@ def run_tests_in_container(
     image: str | None = None,
     report_dir: Path | str,
     timeout_seconds: int | None = None,
-    memory: str = "1g",
-    cpus: str = "1.0",
+    memory: str | None = None,
+    cpus: str | None = None,
     python_bin: str = "python",
     workdir: str = "/ws",
     network: str = "none",
@@ -133,38 +194,30 @@ def run_tests_in_container(
     # 所以只有原生 Linux 宿主能看出这条契约有没有满足。
     reports.chmod(0o755)
     junit = reports / f"junit-{uuid.uuid4().hex}.xml"
-    image = image or get_settings().docker_image
-    timeout = timeout_seconds or get_settings().test_timeout_seconds
+    settings = get_settings()
+    image = image or settings.docker_image
+    timeout = timeout_seconds or settings.test_timeout_seconds
+    container_name = f"pp-test-{uuid.uuid4().hex[:12]}"
 
-    cmd = [
-        "docker",
-        "run",
-        "--rm",
-        "--network",
-        network,
-        "--memory",
-        memory,
-        "--cpus",
-        cpus,
-        *_container_identity_cmd_flags(ws, reports),
-        "-v",
-        f"{ws}:{workdir}",
-        "-v",
-        f"{reports}:/reports",
-        "-w",
-        workdir,
+    cmd = build_docker_test_cmd(
+        ws,
+        reports,
+        junit.name,
+        test_ids,
+        image=image,
+        container_name=container_name,
+        python_bin=python_bin,
+        workdir=workdir,
+        network=network,
+        memory=memory,
+        cpus=cpus,
+    )
+    log.info(
+        "docker run_tests: %s test(s) in image=%s (container=%s)",
+        len(test_ids),
         image,
-        python_bin,
-        "-m",
-        "pytest",
-        "-q",
-        "--color=no",
-        "-o",
-        "junit_family=xunit1",
-        f"--junitxml=/reports/{junit.name}",
-        *test_ids,
-    ]
-    log.info("docker run_tests: %s test(s) in image=%s", len(test_ids), image)
+        container_name,
+    )
     run = run_tests(cmd, cwd=ws, timeout_seconds=timeout)
     report = parse_junit_xml(junit)
     if not junit.exists():

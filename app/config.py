@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     data_policy_version: str = "1"
     price_overrides: str = ""  # 可选 JSON 文件路径(同构 PRICES,优先级高于内置价目)
     execution_backend: str = "local"  # 测试执行后端:local | docker
+    docker_pids_limit: int = 128  # 容器 PID 上限(防 fork 炸弹)
+    docker_security_opt: str = "no-new-privileges:true"  # 容器禁提权
+    docker_cap_drop: str = "ALL"  # 容器丢弃 Linux capabilities
+    docker_memory: str = "1g"  # 容器内存限额
+    docker_cpus: str = "1.0"  # 容器 CPU 限额
     # P3-7 如实化(2026-09-26):原注释「容器集成留待人工验证」与事实矛盾——
     # docker 后端已接线并有 09-18 端到端产物(runs/docker-e2e/、docker-backend-notes.md
     # 记「已接线并真机验证」,隔离边界见 docker-isolation-notes.md 五实验);
@@ -89,6 +94,13 @@ class Settings(BaseSettings):
     def _check_execution_backend(cls, value: str) -> str:
         if value not in {"local", "docker"}:
             raise ValueError(f"execution_backend must be 'local' or 'docker', got {value!r}")
+        return value
+
+    @field_validator("docker_pids_limit")
+    @classmethod
+    def _check_docker_pids_limit(cls, value: int) -> int:
+        if value < 16:
+            raise ValueError(f"docker_pids_limit must be >= 16, got {value}")
         return value
 
     # 预算与限制(企划书第 9 节资源门禁的默认值)

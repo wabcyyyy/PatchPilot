@@ -137,6 +137,16 @@ def _docker_run_argv(
     cwd 挂在 /ws 并作为容器工作目录:local 与 docker 两条路的命令形态因此同构。
     env_extra 是显式附加的容器变量(如 PYTHONPATH=/ws),逐条 -e 传入,不碰宿主环境。
     """
+    from app.config import get_settings
+
+    settings = get_settings()
+    if settings.deployment_mode == "production":
+        trusted = settings.get_trusted_docker_images()
+        if not image or (trusted and image not in trusted):
+            raise ExecError(
+                f"docker image '{image}' is not in trusted_docker_images in production mode"
+            )
+
     cmd = [
         "docker",
         "run",
@@ -146,12 +156,14 @@ def _docker_run_argv(
         "--network",
         "none",
         "--memory",
-        _CONTAINER_MEMORY,
+        getattr(settings, "docker_memory", _CONTAINER_MEMORY) or _CONTAINER_MEMORY,
         "--cpus",
-        _CONTAINER_CPUS,
-        f"--pids-limit={_CONTAINER_PIDS}",
+        getattr(settings, "docker_cpus", _CONTAINER_CPUS) or _CONTAINER_CPUS,
+        f"--pids-limit={getattr(settings, 'docker_pids_limit', _CONTAINER_PIDS) or _CONTAINER_PIDS}",
         "--security-opt",
-        "no-new-privileges",
+        getattr(settings, "docker_security_opt", "no-new-privileges:true"),
+        "--cap-drop",
+        getattr(settings, "docker_cap_drop", "ALL"),
         "-v",
         f"{cwd}:{workdir}",
         "-w",
@@ -162,6 +174,8 @@ def _docker_run_argv(
     if os.name == "posix" and os.getuid() != 0:
         # 宿主非 root:容器身份对齐本进程(与 docker_runner 的判定同源),HOME 指向 /tmp
         cmd += ["--user", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/tmp"]
+    else:
+        cmd += ["--user", "1000:1000", "-e", "HOME=/tmp"]
     return [*cmd, image, *argv]
 
 
