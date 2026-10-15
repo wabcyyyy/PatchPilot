@@ -521,10 +521,34 @@ class Settings(BaseSettings):
     # 置 false = 逐字退回旧行为:不发计划请求、不记轨迹、state.plan 恒空,
     # 于是 PROPOSE 的渲染与引入本阶段之前逐字节相同。
     plan_stage_enabled: bool = True
-    # 计划段占"任务剩余额度"的比例(与 localize_budget_share 同一口径,share 只切余量、
-    # 不放宽任何额度)。计划只产出一段文本,份额应当远小于定位;
-    # 份额耗尽属于**降级**(带暂定文本继续 propose),任务级总额耗尽仍是硬终点(N-5)。
     plan_budget_share: float = 0.15
+
+    # ---------- P10:有界受理与准入控制 ----------
+    admission_concurrency_limit: int = 2
+    admission_queue_limit: int = 20
+    admission_timeout_seconds: float = 5.0
+    emergency_stop: bool = False
+
+    @field_validator("admission_concurrency_limit")
+    @classmethod
+    def _check_admission_concurrency(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError(f"admission_concurrency_limit must be >= 1, got {value}")
+        return value
+
+    @field_validator("admission_queue_limit")
+    @classmethod
+    def _check_admission_queue(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"admission_queue_limit must be >= 0, got {value}")
+        return value
+
+    @field_validator("admission_timeout_seconds")
+    @classmethod
+    def _check_admission_timeout(cls, value: float) -> float:
+        if value <= 0.0:
+            raise ValueError(f"admission_timeout_seconds must be > 0.0, got {value}")
+        return value
 
     @field_validator("plan_budget_share")
     @classmethod

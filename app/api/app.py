@@ -14,6 +14,12 @@ from fastapi.responses import JSONResponse
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.api.admission import (
+    AdmissionController,
+    AdmissionQueueFullError,
+    AdmissionTimeoutError,
+    EmergencyStopError,
+)
 from app.api.auth import UnauthorizedError
 from app.api.recycle import recycle_finished_tasks
 from app.api.routes import router
@@ -118,12 +124,36 @@ def create_app(
                 recycle_finished_tasks(repo, settings.recycle_grace_seconds)
             except Exception:  # 回收失败不得阻断服务启动
                 log.exception("startup recycle scan failed")
+        app.state.admission_controller = AdmissionController.from_settings(settings)
         app.state.service = service
         yield
         service.shutdown()
 
     app = FastAPI(title="PatchPilot", version="0.1.0", lifespan=lifespan)
     app.add_middleware(RequestContextMiddleware)
+
+    @app.exception_handler(EmergencyStopError)
+    async def emergency_stop_handler(request: Request, exc: EmergencyStopError) -> JSONResponse:
+        return JSONResponse(
+            status_code=503,
+            content={"code": "emergency_stop", "message": str(exc), "task_id": None},
+        )
+
+    @app.exception_handler(AdmissionQueueFullError)
+    async def queue_full_handler(request: Request, exc: AdmissionQueueFullError) -> JSONResponse:
+        return JSONResponse(
+            status_code=429,
+            headers={"Retry-After": "5"},
+            content={"code": "queue_full", "message": str(exc), "task_id": None},
+        )
+
+    @app.exception_handler(AdmissionTimeoutError)
+    async def timeout_handler(request: Request, exc: AdmissionTimeoutError) -> JSONResponse:
+        return JSONResponse(
+            status_code=503,
+            headers={"Retry-After": "2"},
+            content={"code": "admission_timeout", "message": str(exc), "task_id": None},
+        )
 
     @app.exception_handler(UnauthorizedError)
     async def unauthorized_handler(request: Request, exc: UnauthorizedError) -> JSONResponse:

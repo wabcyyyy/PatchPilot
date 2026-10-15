@@ -10,6 +10,12 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
+from app.api.admission import (
+    AdmissionQueueFullError,
+    AdmissionTimeoutError,
+    EmergencyStopError,
+    get_admission_controller,
+)
 from app.api.auth import (
     ACTION_APPROVE,
     ACTION_CANCEL,
@@ -53,34 +59,53 @@ def _error(status: int, code: str, message: str, task_id: str | None = None) -> 
 def create_task(payload: TaskCreateIn, request: Request):
     principal = get_current_principal(request)
     owner = str(principal.get("id") or "legacy-unowned")
+    admission_ctrl = getattr(request.app.state, "admission_controller", None)
+    if admission_ctrl is None:
+        admission_ctrl = get_admission_controller()
+
     try:
-        task, created = _service(request).create_task(
-            bug_id=payload.bug_id,
-            engine=payload.engine,
-            model=payload.model,
-            max_rounds=payload.max_rounds,
-            repo_path=payload.repo_path,
-            issue_text=payload.issue_text,
-            failed_tests=payload.failed_tests,
-            regression_tests=payload.regression_tests,
-            allowed_paths=payload.allowed_paths,
-            replay_script=payload.replay_script,
-            agent_profile=payload.agent_profile,
-            arm=payload.arm,
-            owner=owner,
-            principal_id=owner,
-        )
-        if created and hasattr(_service(request).repo, "record_audit_event"):
-            p_hash = hashlib.sha256(payload.model_dump_json().encode("utf-8")).hexdigest()
-            _service(request).repo.record_audit_event(
-                actor_id=owner,
-                action=ACTION_CREATE,
-                task_id=task.get("id") or task.get("task_id"),
-                target_type="task",
-                target_id=task.get("id") or task.get("task_id"),
-                payload_hash=p_hash,
-                result="success",
+        with admission_ctrl.acquire_permit():
+            task, created = _service(request).create_task(
+                bug_id=payload.bug_id,
+                engine=payload.engine,
+                model=payload.model,
+                max_rounds=payload.max_rounds,
+                repo_path=payload.repo_path,
+                issue_text=payload.issue_text,
+                failed_tests=payload.failed_tests,
+                regression_tests=payload.regression_tests,
+                allowed_paths=payload.allowed_paths,
+                replay_script=payload.replay_script,
+                agent_profile=payload.agent_profile,
+                arm=payload.arm,
+                owner=owner,
+                principal_id=owner,
             )
+            if created and hasattr(_service(request).repo, "record_audit_event"):
+                p_hash = hashlib.sha256(payload.model_dump_json().encode("utf-8")).hexdigest()
+                _service(request).repo.record_audit_event(
+                    actor_id=owner,
+                    action=ACTION_CREATE,
+                    task_id=task.get("id") or task.get("task_id"),
+                    target_type="task",
+                    target_id=task.get("id") or task.get("task_id"),
+                    payload_hash=p_hash,
+                    result="success",
+                )
+    except EmergencyStopError as exc:
+        return _error(503, "emergency_stop", str(exc))
+    except AdmissionQueueFullError as exc:
+        return JSONResponse(
+            status_code=429,
+            headers={"Retry-After": "5"},
+            content={"code": "queue_full", "message": str(exc), "task_id": None},
+        )
+    except AdmissionTimeoutError as exc:
+        return JSONResponse(
+            status_code=503,
+            headers={"Retry-After": "2"},
+            content={"code": "admission_timeout", "message": str(exc), "task_id": None},
+        )
     except InvalidRequestError as exc:
         # 请求参数自相矛盾:422(资源不存在仍走 TaskError→404)
         return _error(422, "invalid_request", str(exc))
