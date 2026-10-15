@@ -51,16 +51,32 @@
   - 定向单元与迁移测试：`tests/test_migrations.py`、`tests/test_storage.py`（16 passed in 1.71s），`tests/test_legacy_migration.py`（4 passed in 14.94s）；
   - 静态与代码规范：AST、Ruff check、Ruff format 全部通过；
   - 快速验证收据：`.validation/20261015-232638-318cd0d5.json`（静态通过，6 个被选测试达 90 秒预算停止记 budget_exhausted，不自动重启扩大，完整回归留 CI）。
-- Commit：待提交定位。
+- Commit：`5186085`。
 - 下一张卡：P02（主体认证与凭据生命周期）。
+
+## P02 — 主体认证与凭据生命周期（2026-10-15）
+
+- 开始 HEAD：`5186085`。
+- 已有 dirty：`docs/interview-guide.zip`，不属于本卡，保留且不暂存。
+- 改动范围：`app/api/auth.py`、`app/config.py`、`app/storage/repository.py`、`app/agent/cli.py`、`tests/test_auth.py`、`tests/test_credentials.py`。
+- 工作：
+  1. `app/storage/repository.py` 实现主体创建与凭据签发、SHA-256 不可逆单向散列存储、认证、吊销与带宽限期轮换；明文仅签发时展示一次，数据库与日志绝不记录明文；
+  2. `app/config.py` 引入 `deployment_mode` 配置项（`development` / `production`）；
+  3. `app/api/auth.py` 重构凭据认证，支持 `Authorization: Bearer <key>` 与 `X-API-Key: <key>`，向 `request.state.principal` 注入已认证主体；
+  4. 生产模式（`deployment_mode=production`）下强制禁止匿名访问和开发共享 Token，仅放行活跃 DB API Key；开发模式保持旧接口与共享 Token 兼容；
+  5. `app/agent/cli.py` 扩充 `--api-key` 与环境变量（`PATCHPILOT_API_KEY`）支持，增加本地管理员受保护命令行工具（`admin create-principal`、`issue-key`、`revoke-key`、`rotate-key`、`list-keys`），杜绝暴露未经认证的网络管理 HTTP 端点；
+  6. 新增 `tests/test_credentials.py`，并在 `tests/test_auth.py` 扩充生产模式准入与吊销校验。
+- 验证：`verify.ps1 -Tests @('tests/test_credentials.py', 'tests/test_auth.py')`，收据 `.validation/20261015-233538-601dd7a5.json`，11 项全部通过（耗时 4.55s）；CLI 消费者回归（`test_capabilities.py`、`test_diagnosis_intake.py`）14 项全部通过（18.56s）。
+- Commit：待提交定位。
+- 下一张卡：P07 或 P03（按 Batch A 推进，P07 无依赖，P03 依赖 P02）。
 
 ## 任务状态
 
 | 卡 | 状态 | 依赖 | owner / commit / 收据 |
 |---|---|---|---|
 | P00 | DONE | 无 | 本卡 / 8b64907 / .validation/20261015-231752-36018573.json |
-| P01 | DONE | P00 | 本卡 / feat(storage) / .validation/20261015-232638-318cd0d5.json + targeted 16 passed |
-| P02 | TODO | P01 | — |
+| P01 | DONE | P00 | 本卡 / 5186085 / .validation/20261015-232638-318cd0d5.json + targeted 16 passed |
+| P02 | DONE | P01 | 本卡 / feat(auth) / .validation/20261015-233538-601dd7a5.json (11 passed) |
 | P03 | TODO | P02 | — |
 | P04 | TODO | P00/P02 | — |
 | P05 | TODO | P00/P04 | — |

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import secrets
 import sqlite3
 import threading
+import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -398,8 +401,126 @@ class Repository:
                 ),
             )
 
-    # insert_test_run 已删(P1-5 整改):test_runs 表零生产调用方,
-    # pytest 完整结果以 junit xml 形式落在 run_dir/reports/,不入库
-    # upsert_evaluation/list_evaluations 已删(P3-8 整改,P1-5 同先例):
-    # evaluations 表零生产读方,取消×自然完成时与 tasks/report.json 三处分裂;
-    # 读口径 tasks=生命周期真相、report.json=引擎取证(design.md §7)
+    # ---------- principals & credentials (P02) ----------
+
+    def create_principal(
+        self, *, principal_id: str, name: str, role: str = "member"
+    ) -> dict[str, Any]:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO principals (id, name, role, created_at, is_active) VALUES (?, ?, ?, ?, 1)",
+                (principal_id, name, role, _now()),
+            )
+        return self.get_principal(principal_id)  # type: ignore
+
+    def get_principal(self, principal_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM principals WHERE id = ?", (principal_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def issue_credential(
+        self,
+        *,
+        principal_id: str,
+        raw_key: str | None = None,
+        expires_at: str | None = None,
+    ) -> tuple[dict[str, Any], str]:
+        if not raw_key:
+            raw_key = f"pp_live_{secrets.token_urlsafe(32)}"
+        key_hash = hashlib.sha256(raw_key.strip().encode("utf-8")).hexdigest()
+        prefix = raw_key[:12]
+        cred_id = f"cr_{uuid.uuid4().hex[:12]}"
+        created = _now()
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO credentials (id, principal_id, key_hash, prefix, created_at, expires_at, revoked_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, NULL)",
+                (cred_id, principal_id, key_hash, prefix, created, expires_at),
+            )
+            row = self._conn.execute(
+                "SELECT id, principal_id, prefix, created_at, expires_at, revoked_at FROM credentials WHERE id = ?",
+                (cred_id,),
+            ).fetchone()
+        return dict(row), raw_key
+
+    def authenticate_credential(self, raw_key: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        if not raw_key or not isinstance(raw_key, str):
+            return None
+        key_hash = hashlib.sha256(raw_key.strip().encode("utf-8")).hexdigest()
+        now_str = _now()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM credentials WHERE key_hash = ? AND revoked_at IS NULL",
+                (key_hash,),
+            ).fetchone()
+            if not row:
+                return None
+            cred = dict(row)
+            if cred.get("expires_at") and cred["expires_at"] <= now_str:
+                return None
+            p_row = self._conn.execute(
+                "SELECT * FROM principals WHERE id = ? AND is_active = 1",
+                (cred["principal_id"],),
+            ).fetchone()
+            if not p_row:
+                return None
+            principal = dict(p_row)
+        return principal, cred
+
+    def revoke_credential(self, credential_id: str) -> bool:
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "UPDATE credentials SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+                (_now(), credential_id),
+            )
+        return cur.rowcount > 0
+
+    def rotate_credential(
+        self, old_credential_id: str, grace_seconds: int = 0
+    ) -> tuple[dict[str, Any], str]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM credentials WHERE id = ?", (old_credential_id,)
+            ).fetchone()
+            if not row:
+                raise ValueError(f"credential not found: {old_credential_id}")
+            old_cred = dict(row)
+            if old_cred.get("revoked_at") is not None:
+                raise ValueError(f"cannot rotate revoked credential: {old_credential_id}")
+
+        new_cred, new_raw_key = self.issue_credential(
+            principal_id=old_cred["principal_id"],
+            expires_at=old_cred.get("expires_at"),
+        )
+        with self._lock, self._conn:
+            if grace_seconds > 0:
+                grace_expiry = (datetime.now(UTC) + timedelta(seconds=grace_seconds)).isoformat(
+                    timespec="milliseconds"
+                )
+                self._conn.execute(
+                    "UPDATE credentials SET expires_at = ? WHERE id = ?",
+                    (grace_expiry, old_credential_id),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE credentials SET revoked_at = ? WHERE id = ?",
+                    (_now(), old_credential_id),
+                )
+        return new_cred, new_raw_key
+
+    def list_credentials(self, principal_id: str | None = None) -> list[dict[str, Any]]:
+        with self._lock:
+            if principal_id is not None:
+                rows = self._conn.execute(
+                    "SELECT id, principal_id, prefix, created_at, expires_at, revoked_at"
+                    " FROM credentials WHERE principal_id = ? ORDER BY created_at DESC",
+                    (principal_id,),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT id, principal_id, prefix, created_at, expires_at, revoked_at"
+                    " FROM credentials ORDER BY created_at DESC"
+                ).fetchall()
+        return [dict(r) for r in rows]

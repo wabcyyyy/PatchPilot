@@ -39,6 +39,7 @@ class Settings(BaseSettings):
         return value
 
     # 基础设施(可选)
+    deployment_mode: str = "development"  # development | production
     redis_url: str = ""
     docker_image: str = "python:3.11-slim"
     api_token: str = ""  # API Bearer Token;空 = 不鉴权(本地与现有测试不受影响)
@@ -67,6 +68,15 @@ class Settings(BaseSettings):
         if normalized not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
             raise ValueError(f"log_level must be a stdlib level name, got {value!r}")
         return normalized
+
+    @field_validator("deployment_mode")
+    @classmethod
+    def _check_deployment_mode(cls, value: str) -> str:
+        if value not in {"development", "production"}:
+            raise ValueError(
+                f"deployment_mode must be 'development' or 'production', got {value!r}"
+            )
+        return value
 
     @field_validator("execution_backend")
     @classmethod

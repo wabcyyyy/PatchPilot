@@ -76,3 +76,47 @@ def test_report_trajectory_cancel_protected(secured: TestClient) -> None:
         resp = getattr(secured, method.lower())(url)
         assert resp.status_code == 401, f"{method} {url}"
         assert resp.json()["code"] == "unauthorized"
+
+
+def test_production_mode_authentication_enforcement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """生产模式：拒绝匿名与开发共享 Token，仅放行 DB 校验合法的活跃 Key。"""
+    monkeypatch.setenv("PATCHPILOT_DEPLOYMENT_MODE", "production")
+    monkeypatch.setenv("PATCHPILOT_API_TOKEN", "shared-dev-secret")
+    get_settings.cache_clear()
+
+    db_path = tmp_path / "prod_auth.sqlite3"
+    from app.storage.repository import Repository
+
+    repo = Repository(db_path)
+    repo.create_principal(principal_id="pr_prod_user", name="Prod Admin", role="admin")
+    cred, raw_key = repo.issue_credential(principal_id="pr_prod_user")
+
+    app = create_app(db_path=db_path, runs_root=tmp_path / "runs")
+    with TestClient(app) as client:
+        # 1. 匿名访问：被拒 401
+        res = client.get("/api/tasks")
+        assert res.status_code == 401
+        assert "authentication required" in res.json()["message"]
+
+        # 2. 使用开发模式共享 token：明确拒绝 401
+        res_dev = client.get("/api/tasks", headers={"Authorization": "Bearer shared-dev-secret"})
+        assert res_dev.status_code == 401
+        assert "shared dev token forbidden" in res_dev.json()["message"]
+
+        # 3. 使用合法 DB API Key (Bearer 形式)：通过
+        res_auth_bearer = client.get("/api/tasks", headers={"Authorization": f"Bearer {raw_key}"})
+        assert res_auth_bearer.status_code == 200
+
+        # 4. 使用合法 DB API Key (X-API-Key 形式)：通过
+        res_auth_header = client.get("/api/tasks", headers={"X-API-Key": raw_key})
+        assert res_auth_header.status_code == 200
+
+        # 5. 吊销 Key 后访问：立即失效 401
+        repo.revoke_credential(cred["id"])
+        res_revoked = client.get("/api/tasks", headers={"Authorization": f"Bearer {raw_key}"})
+        assert res_revoked.status_code == 401
+        assert res_revoked.json()["code"] == "unauthorized"
+
+    get_settings.cache_clear()

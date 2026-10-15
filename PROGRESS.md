@@ -1929,4 +1929,15 @@ tasks 表新增 `owner` 与 `principal_id`，旧任务升级回填 `legacy-unown
 预创建 principals、credentials、audit_events、jobs、quota_reservations、artifact_records 表结构；
 调整 SQLite 连接设置顺序，在 PRAGMA journal_mode=WAL 前设置 busy_timeout，彻底消除多连接并发竞争锁。
 验证：`tests/test_migrations.py` 与 `test_storage.py` 定向 16 项通过（1.71s），`test_legacy_migration.py` 4 项通过（14.94s）；AST/Ruff 静态检查全过；快速收据 `.validation/20261015-232638-318cd0d5.json`（静态通过，6 个被选测试达 90 秒预算停止记 budget_exhausted，不自动重启扩大，完整回归留 CI）。
-提交以本段所在 `feat(storage)` 定位；下一卡进入 P02。
+提交以 `5186085` 定位；下一卡进入 P02。
+
+## 2026-10-15 · P02 主体认证与凭据生命周期
+
+在 `app/storage/repository.py` 实现主体（principals）与凭据（credentials）的签发、SHA-256 不可逆单向散列存储、认证、吊销与平滑轮换；
+明文 API Key 仅在签发时展示一次，数据库与日志绝不存储或打印明文凭据；
+`app/config.py` 引入 `deployment_mode`（`development` / `production`）并校验枚举合法性；
+`app/api/auth.py` 重构凭据认证，支持 `Authorization: Bearer <key>` 与 `X-API-Key: <key>`，向 `request.state.principal` 注入已认证主体；
+生产模式（`deployment_mode=production`）下强制拦截匿名访问与开发共享 Token，仅放行 DB 校验合法的活跃 Key；开发模式保持旧接口与共享 Token 兼容；
+`app/agent/cli.py` 扩展 `--api-key` 与 `PATCHPILOT_API_KEY` 环境变量支持，并提供本地受保护管理工具（`admin create-principal`、`issue-key`、`revoke-key`、`rotate-key`、`list-keys`），杜绝暴露未经授权的公网管理 HTTP 接口。
+验证：`verify.ps1 -Tests @('tests/test_credentials.py', 'tests/test_auth.py')` 收据 `.validation/20261015-233538-601dd7a5.json`（11项通过，4.55s）；CLI 消费者回归（`test_capabilities.py`、`test_diagnosis_intake.py`）14 项通过（18.56s）。
+提交以本段所在 `feat(auth)` 定位；下一卡进入 Batch A/B 后续任务。

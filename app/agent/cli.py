@@ -99,6 +99,7 @@ def build_request(
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--api", default=DEFAULT_API, help="服务基址(默认本机 8001)")
     common.add_argument("--token", default="", help="Bearer token(服务端启用鉴权时必填)")
+    common.add_argument("--api-key", default="", help="API Key(与 --token 互为别名)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     submit = sub.add_parser(
@@ -174,8 +175,15 @@ def build_request(
 
     args = parser.parse_args(argv)
     headers: dict[str, str] = {"Accept": "application/json"}
-    if args.token:
-        headers["Authorization"] = f"Bearer {args.token}"
+    auth_token = args.token or getattr(args, "api_key", "")
+    if not auth_token:
+        import os
+
+        auth_token = os.environ.get("PATCHPILOT_API_KEY", "") or os.environ.get(
+            "PATCHPILOT_API_TOKEN", ""
+        )
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
     base = str(args.api).rstrip("/")
     if args.command == "submit":
         _validate_submit(args)
@@ -241,8 +249,110 @@ def _send(
             return exc.code, {"code": "http_error", "message": body[:500]}
 
 
+def _handle_admin(argv: list[str]) -> int:
+    """本地受保护管理命令: 创建主体与凭据生命周期操作，禁止通过网络匿名操作。"""
+    from datetime import UTC, datetime, timedelta
+
+    from app.config import get_settings
+    from app.storage.repository import Repository
+
+    parser = argparse.ArgumentParser(
+        prog="app.agent.cli admin",
+        description="PatchPilot 本地管理命令 (主体与凭据管理，禁止开匿名 HTTP 口)",
+    )
+    parser.add_argument("--db", default="", help="SQLite 数据库路径 (默认读 Settings)")
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    p_create = sub.add_parser("create-principal", help="创建主体")
+    p_create.add_argument("--id", required=True, help="主体 ID")
+    p_create.add_argument("--name", required=True, help="主体名称")
+    p_create.add_argument(
+        "--role",
+        choices=["admin", "member", "service_account", "reviewer"],
+        default="member",
+        help="角色",
+    )
+
+    k_issue = sub.add_parser("issue-key", help="签发 API Key")
+    k_issue.add_argument("--principal-id", required=True, help="主体 ID")
+    k_issue.add_argument("--expires-days", type=int, default=None, help="有效期天数")
+
+    k_revoke = sub.add_parser("revoke-key", help="吊销 API Key")
+    k_revoke.add_argument("--key-id", required=True, help="凭据 ID (如 cr_...)")
+
+    k_rotate = sub.add_parser("rotate-key", help="轮换 API Key")
+    k_rotate.add_argument("--key-id", required=True, help="原凭据 ID")
+    k_rotate.add_argument("--grace-seconds", type=int, default=0, help="旧 Key 宽限存活秒数")
+
+    k_list = sub.add_parser("list-keys", help="列举凭据")
+    k_list.add_argument("--principal-id", default=None, help="按主体筛选")
+
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        return int(exc.code or 2)
+
+    db_path = args.db or get_settings().db_path
+    repo = Repository(db_path)
+
+    if args.action == "create-principal":
+        principal = repo.create_principal(principal_id=args.id, name=args.name, role=args.role)
+        print(json.dumps(principal, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.action == "issue-key":
+        expires_at = None
+        if args.expires_days:
+            expires_at = (datetime.now(UTC) + timedelta(days=args.expires_days)).isoformat(
+                timespec="milliseconds"
+            )
+        cred, raw_key = repo.issue_credential(principal_id=args.principal_id, expires_at=expires_at)
+        out = {
+            "credential": cred,
+            "api_key": raw_key,
+            "notice": "请妥善保管该 API Key，仅显示一次，无法找回。",
+        }
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.action == "revoke-key":
+        success = repo.revoke_credential(args.key_id)
+        if not success:
+            print(f"error: key not found or already revoked: {args.key_id}", file=sys.stderr)
+            return 3
+        print(json.dumps({"revoked": True, "credential_id": args.key_id}))
+        return 0
+
+    if args.action == "rotate-key":
+        try:
+            new_cred, new_raw_key = repo.rotate_credential(
+                args.key_id, grace_seconds=args.grace_seconds
+            )
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 3
+        out = {
+            "new_credential": new_cred,
+            "new_api_key": new_raw_key,
+            "rotated_from": args.key_id,
+            "grace_seconds": args.grace_seconds,
+            "notice": "请妥善保管新 API Key，仅显示一次。",
+        }
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.action == "list-keys":
+        keys = repo.list_credentials(principal_id=args.principal_id)
+        print(json.dumps(keys, ensure_ascii=False, indent=2))
+        return 0
+
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     raw = list(argv if argv is not None else sys.argv[1:])
+    if raw and raw[0] == "admin":
+        return _handle_admin(raw[1:])
     try:
         method, url, payload, headers = build_request(raw)
     except SystemExit as exc:  # argparse 的参数错误
