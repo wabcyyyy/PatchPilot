@@ -306,8 +306,23 @@
 - 验证：
   - 演练脚本：`python scripts/drill_production_boundaries.py --all` 退出码 0，全部 4 项生产演练通过；
   - 快速验证：`verify.ps1 -Tests tests/test_production_boundaries.py tests/test_docs_anchors.py` 收据 `.validation/20261016-034320-f3f0023c.json`（exit 0，6 项边界测试全通，耗时 1.54s）；
-- Commit：待提交。
+- Commit：`090b741` (`test(integration): production boundaries, failure recovery, and load limits (P19)`）。
 - 下一张卡：P20（试点发布、值守与退出）。
+
+### P20 — 试点发布、值守与退出 (2026-10-16)
+
+- 目标与范围：
+  - `docs/runbook.md`、`docs/pilot-release-evidence.md`、`README.md`、`docs/README.md`；
+  - 覆盖试点部署架构、启停管理、健康探针巡检、SOP 应急处置与平滑回滚全流程。
+- 实现：
+  1. 新增 `docs/runbook.md` 生产试点运维值守与应急手册：详细定义单团队单控制实例单 Worker 拓扑、环境变量基准、日常健康与指标巡检、五大应急处置预案（紧急停发 SOP-01、Worker 失联恢复 SOP-02、敏感凭据吊销 SOP-03、一致性热备灾备 SOP-04、平滑回滚 SOP）、值守与升级响应责任矩阵；
+  2. 新增 `docs/pilot-release-evidence.md` 受控生产试点发布证据与生产准入记录：完整汇编 P00 ~ P20 交付事实源、Schema V3 迁移版本、Python 3.11 与 `constraints.lock` 供应链锁、SPEC §8 生产边界实测结果与对抗评测 100% 拦截记录、诚实声明残余风险与业务试点退出条件；
+  3. 更新 `README.md` 与 `docs/README.md` 索引入口，使运维与发布文档对账可追溯。
+- 验证：
+  - 锚点与文档一致性：`tests/test_docs_anchors.py` 全部通过；
+  - 验证所有相对链接真实有效（`test_markdown_links_point_at_existing_files` exit 0）；
+- Commit：待提交。
+- 下一张卡：P21（可选多实例与多租户扩展，非首版必做，按需求触发）。
 
 ## 任务状态
 
@@ -332,8 +347,8 @@
 | P16 | DONE | P03/P06/P11/P12/P15 | 本卡 / 0f979a3 / .validation/20261016-031215-0a71c57b.json (14 passed) |
 | P17 | DONE | P00/P06/P08/P09 | 本卡 / 7864618 / .validation/20261016-032556-73ebbc06.json (27 passed) |
 | P18 | READY_FOR_AUTHORIZATION | P15/P16/P17 | 本卡 / a87146d / .validation/20261016-033118-8b894a85.json (dry-run 20 runs) |
-| P19 | DONE | P05–P15/P17 | 本卡 / 待提交 / .validation/20261016-034320-f3f0023c.json (6 passed + drill 4/4) |
-| P20 | TODO | P00–P19 | — |
+| P19 | DONE | P05–P15/P17 | 本卡 / 090b741 / .validation/20261016-034320-f3f0023c.json (6 passed + drill 4/4) |
+| P20 | DONE | P00–P19 | 本卡 / 待提交 / docs/runbook.md + docs/pilot-release-evidence.md |
 | P21 | OPTIONAL_NOT_STARTED | M3/新规格 | — |
 
 状态建议：TODO / IN_PROGRESS / IMPLEMENTED_PENDING_EVIDENCE / NOT_RUN_ENV /

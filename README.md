@@ -152,6 +152,8 @@ tests/          # 项目自身测试(全离线,模型交互用 FakeLLM 回放;�
 | 文档 | 内容 |
 |---|---|
 | `docs/README.md` | **docs 索引**:唯一事实源、文件状态、维护约定 |
+| `docs/runbook.md` | **运维值守与应急手册**: 生产架构、启停顺序、健康探针、SOP 与平滑回滚 |
+| `docs/pilot-release-evidence.md` | **受控生产试点发布证据**: 准入矩阵、评测基线、已知限制与风险说明 |
 | `docs/PatchPilot修复Agent升级SPEC-2026-10-10.md` | 当前升级规格:分批任务与验收 |
 | `docs/work-notes/README.md` | 阶段材料索引:审查、交接、报告和探针 |
 | `docs/PatchPilot项目企划书.md` | 项目范围与当前架构概要；早期规划另标历史，升级行为以当前 SPEC/ADR 为准 |
