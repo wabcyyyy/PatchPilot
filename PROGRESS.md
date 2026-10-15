@@ -1974,4 +1974,21 @@ tasks 表新增 `owner` 与 `principal_id`，旧任务升级回填 `legacy-unown
 在 `.env.example` 登记 `PATCHPILOT_DEPLOYMENT_MODE` 与 `PATCHPILOT_TRUSTED_DOCKER_IMAGES`；
 新增 `tests/test_production_mode.py` 覆盖就绪检查、能力面、契约冻结、preflight 阻断与 service 准入拦截。
 验证：定向测试 `tests/test_production_mode.py` 7 项通过（0.43s）；`verify.ps1` 收据 `.validation/20261016-001717-09ebcad3.json`（exit 0，6 个测试文件共 60 项测试全部通过，耗时 40.5s）；81 个未变动测试 deferred to CI。
-提交以本段所在 `feat(admission)` 定位；下一卡进入 P05。
+提交以 `3af075b` 定位；下一卡进入 P05。
+
+## 2026-10-16 · P05 有界输入冻结与可重建环境
+
+在 `app/config.py` 增加 `intake_max_file_bytes`（单文件 10MB）、`intake_max_total_bytes`（总快照 100MB）与 `intake_min_free_disk_bytes`（磁盘下限 200MB）；
+在 `app/gitops/input_snapshot.py` 重构为有界流式复制与双布局策略：
+- V1 (`development`): 排除 `__pycache__`, `.pytest_cache`, `*.pyc`, `.git`；
+- V2 (`production`): 额外排除 `.venv`, `node_modules`, `*.pem`, `*.key`, `.env*` 等本机依赖与敏感密钥，显式保留依赖锁文件（`poetry.lock`, `requirements.txt`, `package-lock.json` 等）；
+- 复制遍历中流式检查单文件大小、文件数、总字节数、耗时及可用磁盘空间，边界处即时收敛抛出 `TaskError`（绝不先复制完再拒绝）；
+- 遇到符号链接或特殊文件即刻拒绝；
+- 边写边计算 SHA-256，校验写入前后字节一致性（检测源在复制中的并发漂移）；
+- 临时目录异常清理保证源目录零接触零写入，完成时原子 rename 替换；
+在 `app/task_spec.py` 的 `fingerprint_source_dir` 对齐 V1/V2 策略与指纹版本（`root_version` 为 1 或 2），与 `freeze_input` 保持严格同构；
+在 `app/api/service.py` 任务创建时下发体量上限、磁盘下限与部署模式；
+在 `app/api/preflight.py` 收集失败时明确前缀 `environment_not_ready`，禁止自动回落宿主或联网安装；
+`tests/test_input_snapshot.py` 新增单文件巨文件、总字节超限、磁盘下限、生产秘密排除/锁文件保留等定向测试。
+验证：定向快照测试 `tests/test_input_snapshot.py` 14 项全过（0.25s）；任务规格与自定义仓库测试 `tests/test_task_spec.py` + `tests/test_custom_task.py` 38 项全过（57.82s）；受理预检测试 `tests/test_preflight.py` 8 项全过（10.06s）；`verify.ps1` 收据 `.validation/20261016-002756-b231a1ac.json`（exit 0，6 个测试文件全部通过，耗时 38.0s）；81 个未变动测试 deferred to CI。
+提交以本段所在 `feat(snapshot)` 定位；下一卡进入 P06。

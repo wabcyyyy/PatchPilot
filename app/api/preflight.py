@@ -75,7 +75,7 @@ def _collect_check(
             name=name,
             ok=False,
             detail=(
-                "collection error (missing dependency / import failure);"
+                "environment_not_ready: collection error (missing dependency / import failure);"
                 " this is an environment problem, not an assertion failure"
             ),
         )
@@ -87,7 +87,7 @@ def _collect_check(
         name=name,
         ok=False,
         detail=(
-            "collection error (missing dependency / import failure / interrupt);"
+            "environment_not_ready: collection error (missing dependency / import failure / interrupt);"
             " this is an environment problem, not an assertion failure"
         ),
     )

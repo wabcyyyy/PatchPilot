@@ -292,8 +292,12 @@ class TaskService:
                 frozen_fingerprint = freeze_input(
                     resolved,
                     run_dir,
-                    max_files=get_settings().intake_max_files,
-                    timeout_seconds=get_settings().intake_timeout_seconds,
+                    max_files=settings.intake_max_files,
+                    timeout_seconds=settings.intake_timeout_seconds,
+                    max_file_bytes=settings.intake_max_file_bytes,
+                    max_total_bytes=settings.intake_max_total_bytes,
+                    min_free_disk_bytes=settings.intake_min_free_disk_bytes,
+                    mode=settings.deployment_mode,
                 )
                 if frozen_fingerprint != spec.source_snapshot_hash:
                     raise TaskError(

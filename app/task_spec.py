@@ -80,21 +80,35 @@ def prompt_set_hash() -> str:
     )
 
 
-def fingerprint_source_dir(root: Path | str) -> str:
+def fingerprint_source_dir(root: Path | str, *, mode: str = "development") -> str:
     """源目录内容指纹:排序的 (相对路径, 类型, 内容摘要) 清单再取总哈希。
 
     - 只看**实际文件字节**:mtime/权限变化不改变身份;删除/新增/内容修改都会改变;
     - 不跟随符号链接(链接按 link 记录,不读目标——不得借链接读工作区外文件);
-    - 排除 `.git`(版本库元数据不是被诊断的代码);
+    - 排除规则与 input_snapshot 严格同构(development 与 production 两套模式);
     - 不可读的文件按不可读记录,不静默跳过(缺文件与读不了都要留痕)。
     """
+    from app.gitops.input_snapshot import (
+        SNAPSHOT_LAYOUT_V1,
+        SNAPSHOT_LAYOUT_V2,
+        is_ignored_path,
+    )
+
     entries: list[list[str]] = []
     base = Path(root)
     for dirpath, dirnames, filenames in os.walk(base):
-        dirnames[:] = sorted(d for d in dirnames if d not in _FINGERPRINT_SKIP_DIRS)
         rel_dir = Path(dirpath).relative_to(base).as_posix()
+        dirnames[:] = sorted(
+            d
+            for d in dirnames
+            if not is_ignored_path(
+                f"{rel_dir}/{d}" if rel_dir != "." else d, is_dir=True, mode=mode
+            )
+        )
         for name in sorted(filenames):
             rel = f"{rel_dir}/{name}" if rel_dir != "." else name
+            if is_ignored_path(rel, is_dir=False, mode=mode):
+                continue
             full = Path(dirpath) / name
             if full.is_symlink():
                 entries.append([rel, "link", ""])
@@ -105,7 +119,8 @@ def fingerprint_source_dir(root: Path | str) -> str:
                 entries.append([rel, "unreadable", f"{type(exc).__name__}"])
                 continue
             entries.append([rel, "file", digest])
-    return stable_hash({"root_version": 1, "entries": entries})
+    layout_v = SNAPSHOT_LAYOUT_V2 if mode == "production" else SNAPSHOT_LAYOUT_V1
+    return stable_hash({"root_version": layout_v, "entries": entries})
 
 
 def read_source_commit(repo_dir: Path | str) -> str | None:
@@ -461,7 +476,9 @@ def build_task_spec(
         mode=mode,
         source_path=str(Path(bug.repo_dir).resolve()),
         source_commit=read_source_commit(bug.repo_dir),
-        source_snapshot_hash=fingerprint_source_dir(bug.repo_dir),
+        source_snapshot_hash=fingerprint_source_dir(
+            bug.repo_dir, mode=getattr(settings, "deployment_mode", "development")
+        ),
         source_snapshot_ref=source_snapshot_ref,
         engine=engine,
         arm=arm,

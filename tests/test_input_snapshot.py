@@ -149,3 +149,79 @@ def test_rule_files_are_part_of_the_frozen_identity(tmp_path: Path) -> None:
     digest_before = load_instructions(snapshot).digest()
     (snapshot / "AGENTS.md").write_text("changed rule\n", encoding="utf-8", newline="\n")
     assert load_instructions(snapshot).digest() != digest_before
+
+
+def test_freeze_enforces_max_file_bytes(tmp_path: Path) -> None:
+    src = _mk_source(tmp_path / "src")
+    (src / "large.bin").write_bytes(b"x" * 2000)
+    with pytest.raises(TaskError, match="file too large for intake"):
+        freeze_input(src, tmp_path / "run", max_files=100, timeout_seconds=60, max_file_bytes=1000)
+    assert not (tmp_path / "run" / SNAPSHOT_DIRNAME).exists()
+
+
+def test_freeze_enforces_max_total_bytes(tmp_path: Path) -> None:
+    src = _mk_source(tmp_path / "src")
+    for i in range(5):
+        (src / f"f{i}.bin").write_bytes(b"x" * 300)
+    with pytest.raises(TaskError, match="source total bytes exceeded"):
+        freeze_input(src, tmp_path / "run", max_files=100, timeout_seconds=60, max_total_bytes=800)
+    assert not (tmp_path / "run" / SNAPSHOT_DIRNAME).exists()
+
+
+def test_freeze_enforces_min_free_disk_bytes(tmp_path: Path) -> None:
+    src = _mk_source(tmp_path / "src")
+    with pytest.raises(TaskError, match="insufficient disk space"):
+        freeze_input(
+            src,
+            tmp_path / "run",
+            max_files=100,
+            timeout_seconds=60,
+            min_free_disk_bytes=10**15,  # 1 PB 要求必然超过实际可用空间
+        )
+
+
+def test_freeze_production_mode_excludes_secrets_and_deps_retains_locks(tmp_path: Path) -> None:
+    src = _mk_source(tmp_path / "src")
+    # 秘密与依赖 (应排除)
+    (src / ".env").write_text("SECRET=123\n", encoding="utf-8")
+    (src / ".env.local").write_text("SECRET=456\n", encoding="utf-8")
+    (src / "server.key").write_text("PRIVATE KEY\n", encoding="utf-8")
+    (src / "cert.pem").write_text("CERTIFICATE\n", encoding="utf-8")
+    (src / "id_rsa").write_text("SSH KEY\n", encoding="utf-8")
+    (src / "node_modules").mkdir()
+    (src / "node_modules" / "dep.js").write_text("console.log(1)\n", encoding="utf-8")
+    (src / ".venv").mkdir()
+    (src / ".venv" / "pyvenv.cfg").write_text("version = 3.11\n", encoding="utf-8")
+
+    # 规范公开文件与依赖锁文件 (应保留)
+    (src / ".env.example").write_text("SECRET=\n", encoding="utf-8")
+    (src / "poetry.lock").write_text("[metadata]\n", encoding="utf-8")
+    (src / "requirements.txt").write_text("pytest\n", encoding="utf-8")
+    (src / "package-lock.json").write_text('{"name": "test"}\n', encoding="utf-8")
+
+    fingerprint = freeze_input(
+        src, tmp_path / "run", max_files=100, timeout_seconds=60, mode="production"
+    )
+    snap = tmp_path / "run" / SNAPSHOT_DIRNAME
+
+    # 排除项断言
+    assert not (snap / ".env").exists()
+    assert not (snap / ".env.local").exists()
+    assert not (snap / "server.key").exists()
+    assert not (snap / "cert.pem").exists()
+    assert not (snap / "id_rsa").exists()
+    assert not (snap / "node_modules").exists()
+    assert not (snap / ".venv").exists()
+
+    # 保留项断言
+    assert (snap / ".env.example").exists()
+    assert (snap / "poetry.lock").exists()
+    assert (snap / "requirements.txt").exists()
+    assert (snap / "package-lock.json").exists()
+    assert (snap / "src" / "mod.py").exists()
+
+    # 指纹与 task_spec.fingerprint_source_dir 严格同构
+    from app.task_spec import fingerprint_source_dir
+
+    expected_fp = fingerprint_source_dir(src, mode="production")
+    assert fingerprint == expected_fp
