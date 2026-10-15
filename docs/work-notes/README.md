@@ -4,6 +4,10 @@
 
 ## 当前升级工作
 
+工业使用改进单独从 [2026-10-15 完整计划](industrialization-plan-2026-10-15.md) 进入；
+[执行进度](industrialization-progress-2026-10-15.md) 管 P 卡状态，
+[Agent 交接提示](industrialization-handoff-2026-10-15.md) 可直接复制。当前仅完成计划编制，未实施产品改造。
+
 | 文件 | 用途 |
 |---|---|
 | [新对话升级交接](PatchPilot升级交接Prompt-2026-10-10.md) | 在 D 盘实际项目从当前卡/批次接续 |
