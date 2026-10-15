@@ -2034,3 +2034,26 @@ tasks 表新增 `owner` 与 `principal_id`，旧任务升级回填 `legacy-unown
 新增 `tests/test_quota_settlement.py`，覆盖每日现金与 Token 限制拦截、并发抢占最后额度互斥、单任务上限校验、幂等重放不双扣与 HTTP 接口 429 报错；
 验证：`verify.ps1 -Tests @('tests/test_quota_settlement.py', 'tests/test_admission_backpressure.py', 'tests/test_auth.py', 'tests/test_api.py', 'tests/test_container_lifecycle.py')` 收据 `.validation/20261016-014602-63fd1878.json`（6 个测试文件共 63 项全部通过，耗时 52.8s）；91 个未变动测试 deferred to CI；
 提交以 `fed5cfa` 定位；下一卡进入 P11。
+
+## 2026-10-16 · P11 持久队列、独立 Worker 与单实例保护
+
+在 `app/config.py` 增加 `worker_enabled`、`job_lease_duration_seconds` 与 `job_poll_interval_seconds`；
+在 `app/storage/repository.py` 实现作业持久化队列管理：`enqueue_job`、`get_job`、`claim_next_job`、`renew_job_lease`、`complete_job` 与单事务原子提交 `submit_task_atomic`（合并额度预留、任务与契约写入与作业入队）；
+新增 `SingleInstanceLock`（`app/storage/locks.py`），利用系统文件锁（Windows msvcrt / Unix flock）保护生产模式 API 与 Worker 进程单实例互斥运行；
+新增独立 Worker 进程 `Worker`（`app/worker/worker.py`），支持租约心跳续期与优雅停机；
+更新 `docker/docker-compose.yml` 隔离 API 与 Worker 部署（API 移除 docker.sock 并禁用进程内执行，Worker 独占 Docker 执行能力）；
+新增 `tests/test_jobs_queue.py` 与 `tests/test_worker.py`；
+验证：收据 `.validation/20261016-020919-c30b0464.json`（60 项通过，耗时 77.3s）；
+提交以 `91c59b3`（P11-1）与 `acf5e97`（P11-2, P11-3）定位；下一卡进入 P12。
+
+## 2026-10-16 · P12 租约心跳、恢复、Fencing Token 与状态写入守卫
+
+在 `app/storage/repository.py` 中：
+- `claim_next_job` 递增 `fencing_token`；
+- `renew_job_lease`、`complete_job`、`finalize_task`、`set_status_unless_terminal`、`settle_quota` 与 `release_quota` 全面接入 `fencing_token` 校验，旧 token 写入直接拒绝；
+- 修复 `list_stale_running` 与 `recover_stale_running`：仅收敛失主僵尸任务（无 job 或租约已过期的 claimed 任务），对活 worker 持有效租约的任务及 pending 队列中的排队任务绝不误判死；
+- `Repository` 内部锁升级为 `threading.RLock`，`submit_task_atomic` 委派 `create_task`；
+在 `app/worker/worker.py` 中：心跳线程检测到租约丢失时立即触发 `cancel_event` 协作式终止执行，防止失主僵尸 worker 持续计算或覆写新实例工件；
+新增 `tests/test_worker_recovery.py`，覆盖 fencing token 拦截过期 worker 终态与配额结算、租约心跳丢失触发取消、失主任务恢复不伤及活任务与排队任务；
+验证：收据 `.validation/20261016-023003-1837b3b5.json`（48 项全部通过，耗时 80.5s）；27 个未变动测试 deferred to CI；
+提交以 `04bc7cf` 定位；下一卡进入 P13。

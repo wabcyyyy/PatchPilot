@@ -155,8 +155,40 @@
   - 受理预检测试：`tests/test_preflight.py` 8 项全过（10.06s）；
   - `verify.ps1` 收据 `.validation/20261016-002756-b231a1ac.json`（exit 0，6 个测试文件全部通过，耗时 38.0s）；
   - 81 个未变动测试 deferred to CI。
-- Commit：待提交。
-- 下一张卡：P06（数据出口与秘密保护）。
+### P11 — 持久队列、独立 Worker 与幂等提交 (2026-10-16)
+
+- 目标与范围：
+  - `app/api/{service,app}.py`、`app/storage/{repository,locks}.py`、`app/config.py`、`app/worker/`、`docker/docker-compose.yml`；
+  - tests：`tests/test_jobs_queue.py`、`tests/test_worker.py`。
+- 实现：
+  1. `app/config.py` 增加 `worker_enabled` (默认 True)、`job_lease_duration_seconds` (60.0s) 与 `job_poll_interval_seconds` (1.0s)；
+  2. `app/storage/repository.py` 实现作业持久队列与生命周期管理：`enqueue_job`、`get_job`、`claim_next_job`、`renew_job_lease`、`complete_job` 与单事务原子提交 `submit_task_atomic`（合并额度校验与扣减、任务创建、契约双写与作业入队，依托 `uq_tasks_active_principal_idem` 防竞态重入）；
+  3. 新增 `SingleInstanceLock`（`app/storage/locks.py`），跨平台文件锁（Windows msvcrt / Unix flock）保护生产模式 API 与 Worker 进程单实例独占；
+  4. 新增独立 Worker 进程 `Worker`（`app/worker/worker.py`），持有进程锁、持久队列轮询、后台守护线程周期性续期租约心跳，驱动 `TaskService.execute_task_from_job` 闭环执行；
+  5. 拆分 `docker/docker-compose.yml`：API 容器不持 Docker socket 且 `PATCHPILOT_WORKER_ENABLED: "false"`，执行容器挂载 Docker socket 运行 Worker。
+- 验证：
+  - 定向队列测试：`tests/test_jobs_queue.py` 7 项全过；
+  - Worker 与单实例测试：`tests/test_worker.py` 6 项全过；
+  - `verify.ps1` 收据 `.validation/20261016-020919-c30b0464.json`（exit 0，60 项通过，耗时 77.3s）；
+- Commit：
+  - P11-1: `91c59b3` (`feat(queue): persistent enqueue, job management and atomic submission (P11-1)`)；
+  - P11-2 & P11-3: `acf5e97` (`feat(worker): standalone worker process, heartbeat lease, and deployment separation (P11-2, P11-3)`）。
+
+### P12 — 租约、恢复、Fencing Token 与状态写入守卫 (2026-10-16)
+
+- 目标与范围：
+  - `app/storage/repository.py`、`app/worker/worker.py`、`app/api/service.py`、`tests/test_worker_recovery.py`。
+- 实现：
+  1. `claim_next_job` 递增 `fencing_token`；`renew_job_lease`、`complete_job`、`finalize_task`、`set_status_unless_terminal`、`settle_quota` 与 `release_quota` 全面接入 `fencing_token` 校验，旧 token 写入直接拒绝；
+  2. 修复 `list_stale_running` 与 `recover_stale_running`：仅收敛失主僵尸任务（无 job 或租约已过期的 claimed 任务），对活 worker 持有效租约的任务及 pending 队列中的排队任务绝不误判死；
+  3. `Worker` 心跳线程在检测到租约丢失时立即触发 `cancel_event` 协作式终止执行，防止失主僵尸 worker 持续计算或覆写新实例工件；
+  4. `Repository` 内部锁升级为 `threading.RLock`，`submit_task_atomic` 委派 `create_task`，确保测试 hook 与嵌套事务正常工作。
+- 验证：
+  - 定向恢复与 Fencing 测试：`tests/test_worker_recovery.py` 5 项全过；
+  - 健壮性与存储回归：`tests/test_service_robustness.py` + `tests/test_storage.py` 20 项全过；
+  - `verify.ps1` 收据 `.validation/20261016-023003-1837b3b5.json`（exit 0，48 项全部通过，耗时 80.5s）；27 个未变动测试 deferred to CI。
+- Commit：`04bc7cf` (`feat(recovery): lease fencing token, state transition guard, and stale job recovery (P12)`）。
+- 下一张卡：P13（运行指标、健康检查与告警）。
 
 ## 任务状态
 
@@ -173,9 +205,9 @@
 | P08 | DONE | P04/P07 | 本卡 / ecc9f93 / .validation/20261016-011317-0639e315.json (60 passed) |
 | P09 | DONE | P07/P08 | 本卡 / 7586b4a / .validation/20261016-012135-de3a1ae4.json (6 passed) |
 | P10 | DONE | P01/P03/P04 | P10-1: fd3ba1d / P10-2: fed5cfa / .validation/20261016-014602-63fd1878.json (63 passed) |
-| P11 | TODO | P01/P03/P04/P09/P10 | — |
-| P12 | TODO | P11 | — |
-| P13 | TODO | P04/P11/P12 | — |
+| P11 | DONE | P01/P03/P04/P09/P10 | P11-1: 91c59b3 / P11-2, P11-3: acf5e97 / .validation/20261016-020919-c30b0464.json (60 passed) |
+| P12 | DONE | P11 | 本卡 / 04bc7cf / .validation/20261016-023003-1837b3b5.json (48 passed) |
+| P13 | IN_PROGRESS | P04/P11/P12 | 正在实施运行指标、健康检查与告警 |
 | P14 | TODO | P01/P03/P06/P11/P12 | — |
 | P15 | TODO | P00 | — |
 | P16 | TODO | P03/P06/P11/P12/P15 | — |
