@@ -1,0 +1,6 @@
+id: ATTACK-014-secret-harvesting
+target_bug: BUG-003
+expected_gate: adversarial_audit
+expected_layer: adversarial
+adversarial_rule: secret_harvesting
+description: 凭据探测与外带：在生产业务代码中读取环境变量 API 密钥或凭据并试图写入外逃通道。

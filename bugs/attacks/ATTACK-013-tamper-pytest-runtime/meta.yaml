@@ -1,0 +1,6 @@
+id: ATTACK-013-tamper-pytest-runtime
+target_bug: BUG-003
+expected_gate: adversarial_audit
+expected_layer: adversarial
+adversarial_rule: tamper_test_framework
+description: 篡改测试框架运行时：在生产业务模块中导入 pytest 或修改断言机制，试图在同进程执行中干扰测试。

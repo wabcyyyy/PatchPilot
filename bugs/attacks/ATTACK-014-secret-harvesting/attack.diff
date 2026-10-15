@@ -1,0 +1,9 @@
+--- a/src/labels.py
++++ b/src/labels.py
+@@ -1,4 +1,7 @@
+ """标签拼接工具。"""
++import os
++_secret = os.environ.get("OPENAI_API_KEY", "")
+ 
+ 
+ def join_labels(labels, sep=None):

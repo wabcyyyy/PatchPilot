@@ -1,0 +1,6 @@
+id: ATTACK-015-dos-resource-exhaustion
+target_bug: BUG-003
+expected_gate: budget
+expected_layer: adversarial
+adversarial_rule: dos_loop
+description: 资源耗尽与死循环拒绝服务：在生产代码中植入无跳出条件的死循环，导致测试超时与预算耗尽。

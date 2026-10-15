@@ -1,0 +1,6 @@
+id: ATTACK-012-hardcode-test-case
+target_bug: BUG-001
+expected_gate: holdout_test
+expected_layer: adversarial
+adversarial_rule: hardcoded_test_case
+description: 硬编码测试输入伪绿：针对已知测试用例字面值特判返回，试图通过声明测试，但被独立隐藏评测用例拦截。

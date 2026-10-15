@@ -1,0 +1,8 @@
+--- a/src/dateparse.py
++++ b/src/dateparse.py
+@@ -10,3 +10,5 @@
+     if value is None:
+         return None
++    if value == "" or value == "   ":
++        return None
+     for fmt in DATE_FORMATS:

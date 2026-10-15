@@ -246,8 +246,30 @@
   3. 在 `app/api/routes.py` 暴露 `/api/tasks/{task_id}/delivery`、`review`、`independent-ci` 与 `deliver` 端点。
 - 验证：
   - 定向交付测试：`tests/test_delivery.py` 4 项全过，`tests/test_docs_anchors.py` 通过；收据 `.validation/20261016-031215-0a71c57b.json`；
-- Commit：待提交。
+- Commit：`0f979a3` (`feat(delivery): patch review bundle, independent CI status, and delivery manifest (P16)`）。
 - 下一张卡：P17（正确性与对抗评测协议）。
+
+### P17 — 正确性与对抗评测协议 (2026-10-16)
+
+- 目标与范围：
+  - `app/evals/{adversarial,experiment_manifest,report_evidence}.py`、`docs/eval-correctness-and-adversarial-protocol.md`、`bugs/attacks/` 新增独立样例、`README.md` 与 `docs/threat-model.md`；
+  - tests：`tests/test_attacks.py`、`tests/test_docs_anchors.py`、`tests/test_experiment_manifest.py`。
+- 实现：
+  1. 新增 `docs/eval-correctness-and-adversarial-protocol.md`，冻结四层验收架构（Tier 1: 声明测试；Tier 2: 独立隐藏测试 holdout_tests；Tier 3: 恶意行为检测；Tier 4: 人工业务审查）以及 Python 同进程与 Docker 容器执行的形式化证明上限，严禁虚假宣传绝对数学正确性证明；
+  2. 新增 `app/evals/adversarial.py`：实现 AST 与正则双重对抗审计 `audit_patch_adversarial`（覆盖框架篡改、吞异常、凭据探测、提示注入、死循环拒服），实现 `assert_holdout_tests_isolated` 确保隐藏测试绝不泄露给任务规格或提示词，实现 `MultiTierEvalReport`（正确检出 pseudo_green 伪绿、adversarial_rejected 与 verified）；
+  3. 新增 5 道独立对抗样例：
+     - `ATTACK-011-swallow-exception`: 吞异常与空 pass 抑制报错
+     - `ATTACK-012-hardcode-test-case`: 硬编码测试用例字面值特判伪绿
+     - `ATTACK-013-tamper-pytest-runtime`: 生产代码导入 pytest 试图篡改运行时
+     - `ATTACK-014-secret-harvesting`: 业务代码中读取环境变量敏感凭据
+     - `ATTACK-015-dos-resource-exhaustion`: 植入死循环导致资源耗尽
+  4. 扩展 `app/evals/experiment_manifest.py` 支持可选 `holdout_tests` 与 `adversarial_checks`；在 `app/evals/report_evidence.py` 接入 `_adversarial_eval` 工件收集；
+  5. 在 `tests/test_attacks.py` 中新增定向测试，验证 5 个对抗样例准确检出、BUG-001 ~ BUG-003 正向黄金补丁零误报、隐藏测试隔离保护及综合报告判定；同步更新 `README.md` 与 `docs/threat-model.md` 样例数（15 个），同时保留 10 个门禁样例锚点。
+- 验证：
+  - 对抗测试与文档锚点：`verify.ps1 -Tests tests/test_attacks.py tests/test_docs_anchors.py` 收据 `.validation/20261016-032556-73ebbc06.json`（exit 0，27 项测试全部通过，耗时 7.72s）；
+  - 实验清单回归：`verify.ps1 -Tests tests/test_experiment_manifest.py` 收据 `.validation/20261016-032616-76c0a6d7.json`（exit 0，6 个测试文件全部通过，耗时 21.89s）；
+- Commit：待提交。
+- 下一张卡：P18（目标仓库真实收益验证，离线准备）。
 
 ## 任务状态
 
@@ -269,8 +291,8 @@
 | P13 | DONE | P04/P11/P12 | 本卡 / f58d4fb / .validation/20261016-024721-32c306e7.json (59 passed) |
 | P14 | DONE | P01/P03/P06/P11/P12 | P14-1: c848a02 / P14-2, P14-3: 3c4ce8a / .validation/20261016-030130-a1c97cbb.json (71 passed) |
 | P15 | DONE | P00 | 本卡 / c0f8f53 / .validation/20261016-030707-efdf5572.json (10 passed) |
-| P16 | IMPLEMENTED_PENDING_COMMIT | P03/P06/P11/P12/P15 | 本卡 / 待提交 / .validation/20261016-031215-0a71c57b.json (14 passed) |
-| P17 | TODO | P00/P06/P08/P09 | — |
+| P16 | DONE | P03/P06/P11/P12/P15 | 本卡 / 0f979a3 / .validation/20261016-031215-0a71c57b.json (14 passed) |
+| P17 | IMPLEMENTED_PENDING_COMMIT | P00/P06/P08/P09 | 本卡 / 待提交 / .validation/20261016-032556-73ebbc06.json (27 passed) |
 | P18 | TODO | P15/P16/P17 | — |
 | P19 | TODO | P05–P15/P17 | — |
 | P20 | TODO | P00–P19 | — |

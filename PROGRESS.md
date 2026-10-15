@@ -2104,6 +2104,21 @@ P14-2 & P14-3：
 在 `app/api/schemas.py` 增加审核决策与独立 CI 输入模型；
 在 `app/api/routes.py` 暴露 `/api/tasks/{task_id}/delivery`、`review`、`independent-ci` 与 `deliver` 端点；同步更新 `README.md` 端点计数为 19；
 新增 `tests/test_delivery.py` 覆盖交付清单生成、防篡改校验、交付前置条件门禁与 API 路由；
-验证：`verify.ps1 -Tests tests/test_delivery.py tests/test_docs_anchors.py` 收据 `.validation/20261016-031215-0a71c57b.json`（14 项全过）；
-提交以本卡提交定位；下一卡进入 P17。
+提交以 `0f979a3` 定位；下一卡进入 P17。
+
+## 2026-10-16 · P17 正确性与对抗评测协议
+
+新增 `docs/eval-correctness-and-adversarial-protocol.md`，冻结四层验收架构（Tier 1: 声明测试；Tier 2: 独立隐藏测试 holdout_tests；Tier 3: 恶意行为检测；Tier 4: 人工业务审查）以及 Python 同进程与 Docker 容器执行的形式化证明上限；
+新增 `app/evals/adversarial.py`：实现 AST 与正则双重对抗审计 `audit_patch_adversarial`（覆盖框架篡改、吞异常、凭据探测、提示注入、死循环拒服），实现 `assert_holdout_tests_isolated` 隔离隐藏测试，实现 `MultiTierEvalReport`（正确检出 pseudo_green 伪绿、adversarial_rejected 与 verified）；
+新增 5 道独立对抗样例：
+- `ATTACK-011-swallow-exception`: 吞异常与空 pass 抑制报错
+- `ATTACK-012-hardcode-test-case`: 硬编码测试用例字面值特判伪绿
+- `ATTACK-013-tamper-pytest-runtime`: 生产代码导入 pytest 试图篡改运行时
+- `ATTACK-014-secret-harvesting`: 业务代码中读取环境变量敏感凭据
+- `ATTACK-015-dos-resource-exhaustion`: 植入死循环导致资源耗尽
+扩展 `app/evals/experiment_manifest.py` 支持可选 `holdout_tests` 与 `adversarial_checks`；在 `app/evals/report_evidence.py` 接入 `_adversarial_eval` 工件收集；
+在 `tests/test_attacks.py` 中新增定向测试，验证 5 个对抗样例准确检出、BUG-001 ~ BUG-003 正向黄金补丁零误报、隐藏测试隔离保护及综合报告判定；同步更新 `README.md` 与 `docs/threat-model.md` 样例数（15 个），同时保留 10 个门禁样例锚点；
+验证：`verify.ps1 -Tests tests/test_attacks.py tests/test_docs_anchors.py` 收据 `.validation/20261016-032556-73ebbc06.json`（exit 0，27 项测试通过，耗时 7.72s）；`verify.ps1 -Tests tests/test_experiment_manifest.py` 收据 `.validation/20261016-032616-76c0a6d7.json`（exit 0，6 个测试文件通过，耗时 21.89s）；
+提交以本卡提交定位；下一卡进入 P18。
+
 

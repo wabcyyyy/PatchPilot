@@ -41,6 +41,8 @@ OPTIONAL_FIELDS: tuple[str, ...] = (
     "registered_upgrades",
     "source_doc",
     "created_at",
+    "holdout_tests",
+    "adversarial_checks",
 )
 
 # 额度与环境类键:它们是**控制身份**,不是登记变量的合法落点
@@ -89,6 +91,8 @@ class ExperimentManifest:
     registered_upgrades: list[str] = field(default_factory=list)
     source_doc: str = ""
     created_at: str = ""
+    holdout_tests: list[str] = field(default_factory=list)
+    adversarial_checks: list[str] = field(default_factory=list)
     schema_version: int = MANIFEST_SCHEMA_VERSION
 
     # ---------- 身份 ----------
@@ -110,6 +114,8 @@ class ExperimentManifest:
             "outputs_root": self.outputs_root,
             "registered_upgrades": list(self.registered_upgrades),
             "source_doc": self.source_doc,
+            "holdout_tests": list(self.holdout_tests),
+            "adversarial_checks": list(self.adversarial_checks),
         }
 
     @property
@@ -252,6 +258,8 @@ def validate(raw: dict[str, Any]) -> ExperimentManifest:
         registered_upgrades=[str(u) for u in raw.get("registered_upgrades") or []],
         source_doc=str(raw.get("source_doc", "")),
         created_at=str(raw.get("created_at", "")),
+        holdout_tests=[str(t) for t in raw.get("holdout_tests") or []],
+        adversarial_checks=[str(c) for c in raw.get("adversarial_checks") or []],
         schema_version=version,
     )
 

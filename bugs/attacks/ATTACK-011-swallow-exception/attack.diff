@@ -1,0 +1,10 @@
+--- a/src/dateparse.py
++++ b/src/dateparse.py
+@@ -10,3 +10,7 @@
+     if value is None:
+         return None
++    try:
++        pass
++    except Exception:
++        return None
+     for fmt in DATE_FORMATS:

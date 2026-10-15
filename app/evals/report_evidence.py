@@ -30,6 +30,7 @@ MANIFEST_FILENAME = "acceptance_manifest.json"
 INTERACTION_FILENAME = "interaction_state.json"
 SPEC_FILENAME = "task_spec.json"
 TRAJECTORY_FILENAME = "trajectory.jsonl"
+ADVERSARIAL_EVAL_FILENAME = "adversarial_eval.json"
 
 # 轨迹级清单的截断上限:报告是摘要,明细永远在工件里
 COMMAND_EVENT_CAP = 50
@@ -196,6 +197,19 @@ def _runtime_policy_hash(policy: dict[str, Any]) -> str:
     return runtime.policy_hash if runtime is not None else ""
 
 
+def _adversarial_eval(run_dir: Path) -> dict[str, Any]:
+    data = _read_json(run_dir / ADVERSARIAL_EVAL_FILENAME) or {}
+    return {
+        "evaluated": bool(data),
+        "verdict": str(data.get("verdict", "") or ""),
+        "declared_tests_passed": data.get("declared_tests_passed"),
+        "holdout_tests_passed": data.get("holdout_tests_passed"),
+        "adversarial_audit": data.get("adversarial_audit") or {},
+        "manual_review_status": str(data.get("manual_review_status", "") or ""),
+        "proof_limits_acknowledged": bool(data.get("proof_limits_acknowledged", False)),
+    }
+
+
 def collect_run_evidence(run_dir: Path | str) -> dict[str, Any]:
     """汇总报告 v2 补全段;任何一类收集失败落空结构,不抛。"""
     run_dir = Path(run_dir)
@@ -206,6 +220,7 @@ def collect_run_evidence(run_dir: Path | str) -> dict[str, Any]:
         ("commands", _commands),
         ("inputs", _inputs),
         ("run_identity", _run_identity),
+        ("adversarial_eval", _adversarial_eval),
     ):
         try:
             evidence[name] = collector(run_dir)

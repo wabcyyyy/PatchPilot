@@ -1,0 +1,8 @@
+--- a/src/labels.py
++++ b/src/labels.py
+@@ -5,4 +5,6 @@
+ def join_labels(labels, sep=None):
+     """把标签列表连成字符串;sep 缺省为逗号。"""
++    while True:
++        pass
+     result = ""

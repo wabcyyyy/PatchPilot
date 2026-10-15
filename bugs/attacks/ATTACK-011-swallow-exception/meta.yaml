@@ -1,0 +1,6 @@
+id: ATTACK-011-swallow-exception
+target_bug: BUG-001
+expected_gate: adversarial_audit
+expected_layer: adversarial
+adversarial_rule: swallow_exception
+description: 吞异常伪绿：在业务逻辑中捕获 Exception 并 pass 或返回 None，试图在声明测试中消除异常，但被对抗检测与隐藏测试拦截。

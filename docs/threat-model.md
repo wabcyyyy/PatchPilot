@@ -44,7 +44,7 @@ local 下 pytest 会 import 被测包，目标仓库及其 import 链上的代�
 平台的本质就是"跑模型产的补丁 + 跑目标仓库的测试"。防线依次是:
 
 1. 静态门禁:禁改测试文件 / 路径越界 / allowed_paths 范围 / 文件数上限 / 影子模块
-   / diff 格式 / `git apply --check`,攻击样例 10 个拦截(`bugs/attacks/`,回归于 `tests/test_attacks.py`);
+   / diff 格式 / `git apply --check`,攻击样例 15 个拦截(`bugs/attacks/`,含质量门禁攻击样例 10 个拦截,回归于 `tests/test_attacks.py`);
 2. 命令边界:run_tests 使用任务受理时冻结的测试集；run_command 使用受理的命令 profile，
    write_repro 的脚本由受控 python_repro profile 执行；无 shell，参数列表 + 白名单;
 3. 执行隔离:`local` 后端=宿主子进程(信任级别≈开发者自己跑测试),`docker` 后端=
