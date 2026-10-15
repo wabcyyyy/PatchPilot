@@ -34,6 +34,7 @@ from app.api.schemas import (
     TrajectoryPage,
 )
 from app.errors import InvalidRequestError, PatchPilotError, TaskError
+from app.security.data_policy import redact_data
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_token)])
 
@@ -89,7 +90,10 @@ def create_task(payload: TaskCreateIn, request: Request):
         return _error(409, "conflict", str(exc))
     # 幂等命中(同键任务在途)返回 200,新建返回 201
     # R2 整改:经 TaskOut 收敛响应面,不再外泄 idem_key/repo_path/内部主键
-    return JSONResponse(status_code=201 if created else 200, content=TaskOut(**task).model_dump())
+    return JSONResponse(
+        status_code=201 if created else 200,
+        content=TaskOut(**redact_data(task)).model_dump(),
+    )
 
 
 @router.get("/tasks", response_model=TaskListOut)
@@ -103,7 +107,7 @@ def list_tasks(request: Request, limit: int = 50):
     else:
         principal_id = str(principal.get("id") or "legacy-unowned")
         rows = _service(request).list_tasks(limit=effective_limit, principal_id=principal_id)
-    return TaskListOut(tasks=[TaskOut(**row) for row in rows])
+    return TaskListOut(tasks=[TaskOut(**redact_data(row)) for row in rows])
 
 
 @router.get("/tasks/{task_id}", response_model=TaskOut)
@@ -114,7 +118,7 @@ def get_task(task_id: str, request: Request):
         principal, task, ACTION_READ, repo=_service(request).repo
     ):
         return _error(404, "invalid_task", f"task not found: {task_id}")
-    return TaskOut(**task)
+    return TaskOut(**redact_data(task))
 
 
 @router.get("/tasks/{task_id}/trajectory")
@@ -125,7 +129,10 @@ def get_trajectory(task_id: str, request: Request, limit: int = 200, offset: int
     if task is None or not authorize_task_access(principal, task, ACTION_READ, repo=service.repo):
         return _error(404, "invalid_task", f"task not found: {task_id}")
     events = service.trajectory(task_id, limit=max(0, min(limit, 1000)), offset=max(0, offset))
-    return TrajectoryPage(task_id=task_id, total_returned=len(events), offset=offset, events=events)
+    scrubbed_events = redact_data(events)
+    return TrajectoryPage(
+        task_id=task_id, total_returned=len(scrubbed_events), offset=offset, events=scrubbed_events
+    )
 
 
 @router.get("/tasks/{task_id}/report")
@@ -145,6 +152,7 @@ def get_report(task_id: str, request: Request, format: str = "json"):
         # N-17/R2 整改:文件存在与写完之间的残余竞态(含 Windows 读句柄互斥)
         # 收敛为"未就绪",而不是 500
         return _error(409, "not_ready", "report is being written", task_id=task_id)
+    result = redact_data(result)
     if format == "markdown":
         return PlainTextResponse(render_markdown(result), media_type="text/markdown; charset=utf-8")
     return JSONResponse(content=result)
@@ -169,7 +177,7 @@ def cancel_task(task_id: str, request: Request):
                 target_id=task_id,
                 result="success",
             )
-        return TaskOut(**cancelled)
+        return TaskOut(**redact_data(cancelled))
     except TaskError as exc:
         return _error(404, "invalid_task", str(exc))
     except PatchPilotError as exc:

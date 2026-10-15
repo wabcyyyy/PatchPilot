@@ -58,11 +58,14 @@ def classify_event(tool: str) -> str:
 
 def sse_frame(*, event_id: int | None, event_type: str, payload: dict[str, Any]) -> str:
     """一条 SSE 帧:可选 `id:`(事件行号,续传锚点)+ `event:` + 单行 JSON data。"""
+    from app.security.data_policy import redact_data
+
+    scrubbed = redact_data(payload)
     lines: list[str] = []
     if event_id is not None:
         lines.append(f"id: {event_id}")
     lines.append(f"event: {event_type}")
-    lines.append(f"data: {json.dumps(payload, ensure_ascii=False, default=str)}")
+    lines.append(f"data: {json.dumps(scrubbed, ensure_ascii=False, default=str)}")
     return "\n".join(lines) + "\n\n"
 
 
