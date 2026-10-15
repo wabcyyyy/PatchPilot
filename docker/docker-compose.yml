@@ -30,27 +30,54 @@ services:
       # 生成:python -c "import secrets; print(secrets.token_urlsafe(32))"
       PATCHPILOT_API_TOKEN: ${PATCHPILOT_API_TOKEN:-}
       # 可选 repo_path 根白名单(见 docs/threat-model.md R1)
-      PATCHPILOT_ALLOWED_REPO_ROOTS: ${PATCHPILOT_ALLOWED_REPO_ROOTS:-}
+      PATCHPILOT_ALLOWED_REPO_ROOTS: ${PATCHPILOT_ALLOWED_REPO_ROOTS:-/data/runs}
+      PATCHPILOT_WORKER_ENABLED: "false"
     security_opt:
       - no-new-privileges:true
     pids_limit: 256
     volumes:
       - api-data:/data
       - ../bugs:/app/bugs:ro
-      # runs 目录 bind 挂载(docker 后端必需;local 后端它只是宿主可见的普通目录)
+      # runs 目录 bind 挂载
       - type: bind
         source: ${PATCHPILOT_RUNS_HOST_DIR:-./data/runs}
         target: ${PATCHPILOT_RUNS_ROOT:-/data/runs}
-      # docker 后端经此把测试派发到宿主守护进程(local 后端用不到,介意可删此行)
-      - /var/run/docker.sock:/var/run/docker.sock
+      # P11-3: API 容器无 docker.sock 挂载，不执行目标代码
     depends_on:
       - redis
     restart: unless-stopped
 
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/api.Dockerfile
+    command: ["python", "-m", "app.worker.worker"]
+    environment:
+      PATCHPILOT_REDIS_URL: redis://redis:6379/0
+      PATCHPILOT_DB_PATH: /data/patchpilot.sqlite3
+      PATCHPILOT_RUNS_ROOT: ${PATCHPILOT_RUNS_ROOT:-/data/runs}
+      PATCHPILOT_EXECUTION_BACKEND: docker
+      PATCHPILOT_DOCKER_IMAGE: ${PATCHPILOT_DOCKER_IMAGE:-python:3.11-slim}
+      PATCHPILOT_TRUSTED_DOCKER_IMAGES: ${PATCHPILOT_TRUSTED_DOCKER_IMAGES:-python:3.11-slim,patchpilot-executor:latest}
+      PATCHPILOT_DEPLOYMENT_MODE: ${PATCHPILOT_DEPLOYMENT_MODE:-production}
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    volumes:
+      - api-data:/data
+      - ../bugs:/app/bugs:ro
+      - type: bind
+        source: ${PATCHPILOT_RUNS_HOST_DIR:-./data/runs}
+        target: ${PATCHPILOT_RUNS_ROOT:-/data/runs}
+      # P11-3: Worker 持有宿主 docker.sock 派发执行容器
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - redis
+      - api
+    restart: unless-stopped
+
   redis:
     image: redis:7-alpine
-    # 不映射宿主端口:API 走 compose 内网(redis://redis:6379/0),需要人工检查时
-    # 用 `docker compose exec redis redis-cli`;且无密码的 redis 不应有任何宿主暴露面
     restart: unless-stopped
 
 volumes:

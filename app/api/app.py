@@ -25,7 +25,7 @@ from app.api.recycle import recycle_finished_tasks
 from app.api.routes import router
 from app.api.service import TaskService
 from app.config import Settings, get_settings
-from app.errors import QuotaExceededError
+from app.errors import QuotaExceededError, SingleInstanceError
 from app.logctx import TaskContextFilter, request_id_var
 from app.storage.repository import Repository
 
@@ -125,13 +125,31 @@ def create_app(
                 recycle_finished_tasks(repo, settings.recycle_grace_seconds)
             except Exception:  # 回收失败不得阻断服务启动
                 log.exception("startup recycle scan failed")
+        # P11-3: 生产模式下启用 API 进程级单实例保护
+        instance_lock = None
+        if settings.deployment_mode == "production":
+            from app.storage.locks import SingleInstanceLock
+
+            runs_dir = Path(runs_root) if runs_root else settings.runs_root
+            instance_lock = SingleInstanceLock(runs_dir / "api.lock")
+            instance_lock.__enter__()
+
         app.state.admission_controller = AdmissionController.from_settings(settings)
         app.state.service = service
         yield
+        if instance_lock is not None:
+            instance_lock.release()
         service.shutdown()
 
     app = FastAPI(title="PatchPilot", version="0.1.0", lifespan=lifespan)
     app.add_middleware(RequestContextMiddleware)
+
+    @app.exception_handler(SingleInstanceError)
+    async def single_instance_handler(request: Request, exc: SingleInstanceError) -> JSONResponse:
+        return JSONResponse(
+            status_code=503,
+            content={"code": "single_instance_conflict", "message": str(exc), "task_id": None},
+        )
 
     @app.exception_handler(EmergencyStopError)
     async def emergency_stop_handler(request: Request, exc: EmergencyStopError) -> JSONResponse:

@@ -118,3 +118,9 @@ class QuotaExceededError(PatchPilotError):
     """主体或组织额度超限(QUOTA_EXCEEDED)。API 层转 429。"""
 
     code = "quota_exceeded"
+
+
+class SingleInstanceError(PatchPilotError):
+    """单实例互斥冲突 (SINGLE_INSTANCE_CONFLICT)。同数据目录下已有同角色实例在运行。"""
+
+    code = "single_instance_conflict"

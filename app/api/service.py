@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -460,6 +461,61 @@ class TaskService:
 
     # ---------- 执行 ----------
 
+    def execute_task_from_job(
+        self,
+        task_id: str,
+        *,
+        cancel_event: threading.Event | None = None,
+        worker_id: str = "standalone-worker",
+    ) -> None:
+        """从持久化作业队列中执行已领取的任务 (P11-2)。
+
+        由独立 Worker 进程调用。从落盘契约 task_spec.json 重建执行上下文，
+        保持与 API 进程内调度完全一致的执行与生命周期闭环。
+        """
+        task = self.repo.get_task(task_id)
+        if not task:
+            raise TaskError(f"task not found: {task_id}")
+        run_dir = Path(task["run_dir"])
+        spec_path = run_dir / "task_spec.json"
+        if not spec_path.is_file():
+            raise TaskError(f"task_spec.json not found in {run_dir}")
+        spec = TaskSpec.read_file(spec_path)
+
+        if spec.source_snapshot_ref:
+            from app.evals.bugset import build_custom_bug
+            from app.gitops.input_snapshot import SNAPSHOT_DIRNAME
+
+            repo_dir = run_dir / SNAPSHOT_DIRNAME
+            bug = build_custom_bug(
+                repo_path=repo_dir,
+                issue_text=task.get("issue_text", "") or "",
+                failed_tests=list(spec.failed_tests),
+                regression_tests=list(spec.regression_tests),
+                allowed_paths=list(spec.allowed_paths) if spec.allowed_paths else None,
+            )
+        else:
+            bug = load_bug(task["bug_id"], self.bugs_root)
+
+        if cancel_event is None:
+            cancel_event = self._cancels.register(task_id)
+
+        lock_key = (
+            f"task:{task.get('principal_id', 'legacy-unowned')}:{task.get('idem_key', task_id)}"
+        )
+        self._execute(
+            task_id,
+            bug,
+            task.get("engine", "graph"),
+            task.get("model_provider", "fake"),
+            run_dir,
+            lock_key,
+            cancel_event,
+            replay_script=list(spec.replay) if spec.replay else None,
+            request_id=f"worker-{worker_id}",
+            worker_id=worker_id,
+        )
+
     def _execute(
         self,
         task_id: str,
@@ -472,6 +528,7 @@ class TaskService:
         replay_script: list[dict[str, Any]] | None = None,
         request_id: str = "",
         resume: bool = False,
+        worker_id: str = "in-process-worker",
     ) -> None:
         # P3-9:工作线程首行设置日志上下文——本任务在此线程内产生的业务日志
         # 都带 task_id(AGENTS 约定的装配面);线程复用,finally 必须 reset。
@@ -488,6 +545,7 @@ class TaskService:
                 cancel_event,
                 replay_script,
                 resume,
+                worker_id=worker_id,
             )
         finally:
             reset_task_context(context_tokens)
@@ -503,6 +561,7 @@ class TaskService:
         cancel_event,
         replay_script: list[dict[str, Any]] | None = None,
         resume: bool = False,
+        worker_id: str = "in-process-worker",
     ) -> None:
         # P3-10 整改:置 RUNNING 挪到执行线程首行——DB 的 RUNNING = 真正开始执行
         # (受理但排队中保持 QUEUED)。条件写让位于并发取消/回滚:返回 False
@@ -662,7 +721,7 @@ class TaskService:
                     )
                     self.repo.complete_job(
                         task_id=task_id,
-                        worker_id="in-process-worker",
+                        worker_id=worker_id,
                         status=final_status,
                     )
                 except Exception:

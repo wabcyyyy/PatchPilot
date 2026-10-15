@@ -170,3 +170,4 @@ tests/test_demo_smoke.py::test_steer_demo_subprocess_resolves
 tests/test_demo_smoke.py::test_delegate_demo_subprocess_resolves
 tests/test_demo_smoke.py::test_restart_resume_demo_subprocess_resolves
 tests/test_legacy_migration.py::test_custom_fake_task_resume_restores_replay_from_contract
+tests/test_worker.py::test_worker_run_once_executes_job

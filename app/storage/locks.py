@@ -8,10 +8,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import sys
 import threading
 import time
 import uuid
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 
@@ -108,3 +111,78 @@ def build_lock(redis_url: str = "") -> BaseLock:
     except Exception as exc:
         log.warning("redis unavailable (%s); falling back to in-memory lock", exc)
         return InMemoryLock()
+
+
+class SingleInstanceLock:
+    """基于操作系统文件锁的单实例互斥保护 (P11-3)。
+
+    在本地 SQLite 部署模式下，防止第二控制实例或第二 worker 实例并发启动
+    破坏数据一致性。
+    Windows 下使用 msvcrt.locking，Unix/Linux 下使用 fcntl.flock。
+    持有 open file 引用直到显式 release 或进程退出（由 OS 内核自动回收锁）。
+    """
+
+    def __init__(self, lock_path: Path | str) -> None:
+        self.lock_path = Path(lock_path)
+        self._fp = None
+        self._locked = False
+
+    def acquire(self) -> bool:
+        """尝试获取单实例锁，成功返回 True，被占用返回 False。"""
+        if self._locked:
+            return True
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self._fp = open(self.lock_path, "a+")  # noqa: SIM115
+            if sys.platform == "win32":
+                import msvcrt
+
+                # 移动到开头并锁定首字节
+                self._fp.seek(0)
+                msvcrt.locking(self._fp.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(self._fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self._locked = True
+            return True
+        except OSError:
+            if self._fp:
+                with contextlib.suppress(Exception):
+                    self._fp.close()
+                self._fp = None
+            return False
+
+    def release(self) -> None:
+        """显式释放锁并关闭文件描述符。"""
+        if not self._locked or not self._fp:
+            return
+        try:
+            if sys.platform == "win32":
+                import msvcrt
+
+                self._fp.seek(0)
+                msvcrt.locking(self._fp.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(self._fp.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass
+        finally:
+            with contextlib.suppress(Exception):
+                self._fp.close()
+            self._fp = None
+            self._locked = False
+
+    def __enter__(self) -> SingleInstanceLock:
+        from app.errors import SingleInstanceError
+
+        if not self.acquire():
+            raise SingleInstanceError(
+                f"another instance is already running (locked by {self.lock_path})"
+            )
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.release()

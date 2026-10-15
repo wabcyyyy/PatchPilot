@@ -893,22 +893,34 @@ INSERT INTO audit_events (
         self,
         *,
         task_id: str,
-        worker_id: str,
+        worker_id: str | None = None,
         status: str = "completed",
     ) -> bool:
         """完成/关闭 Job (P11-1)。清除租约。"""
         now = _now()
         with self._lock, self._conn:
-            cur = self._conn.execute(
-                """
-                UPDATE jobs
-                SET status = ?,
-                    lease_expires_at = NULL,
-                    updated_at = ?
-                WHERE task_id = ? AND worker_id = ?
-                """,
-                (status, now, task_id, worker_id),
-            )
+            if worker_id is not None:
+                cur = self._conn.execute(
+                    """
+                    UPDATE jobs
+                    SET status = ?,
+                        lease_expires_at = NULL,
+                        updated_at = ?
+                    WHERE task_id = ? AND (worker_id = ? OR worker_id IS NULL)
+                    """,
+                    (status, now, task_id, worker_id),
+                )
+            else:
+                cur = self._conn.execute(
+                    """
+                    UPDATE jobs
+                    SET status = ?,
+                        lease_expires_at = NULL,
+                        updated_at = ?
+                    WHERE task_id = ?
+                    """,
+                    (status, now, task_id),
+                )
             return cur.rowcount > 0
 
     def submit_task_atomic(
