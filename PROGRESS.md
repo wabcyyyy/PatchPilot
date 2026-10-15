@@ -2128,7 +2128,21 @@ P14-2 & P14-3：
 在 `scripts/compare_experiments.py` 中将交付与评测结果字段纳入 `OBSERVED_FIELDS`，防范合法结果差异被误判为配置漂移；
 遵循授权边界：不自动调用真实付费模型 API，未授权阶段严格停在 `READY_FOR_AUTHORIZATION`；
 验证：离线 dry-run 测试（退出码 0，20 次规划运行，0 请求，0 费用）；`verify.ps1 -Tests tests/test_experiment_manifest.py tests/test_docs_anchors.py` 收据 `.validation/20261016-033118-8b894a85.json`（exit 0，耗时 1.15s）；
-提交以本卡提交定位；下一卡进入 P19。
+提交以 `a87146d` 定位；下一卡进入 P19。
+
+## 2026-10-16 · P19 故障、负载与安全集成验收
+
+新增 `tests/test_production_boundaries.py` 集成测试套件，覆盖 SPEC §8 生产边界验收矩阵关键项：
+- A01: 生产模式前置准入校验拦截；
+- A02: 跨主体资源访问强隔离（绝不泄露任务存在性，严格 404）；
+- A08: 配额原子并发争抢与防超发（严格按限额截断，不超发、不双扣）；
+- A10: Fencing token 阻断过期 worker 迟到写入；
+- A11: 存储与就绪探针真实状态映射；
+- A17: 受理背压、有界排队与紧急停发机制。
+新增 `scripts/drill_production_boundaries.py` CLI 演练脚本，支持一键或分场景（admission/fencing/quota/readiness）复现并验证生产边界；
+在 `app/storage/repository.py` 为 `Repository` 增加 `close()` 与上下文管理器 `__enter__` / `__exit__`，防止 Windows 平台临时 SQLite 数据库句柄残留引发的文件锁冲突；
+验证：演练脚本通过（4/4 pass，exit 0）；`verify.ps1 -Tests tests/test_production_boundaries.py tests/test_docs_anchors.py` 收据 `.validation/20261016-034320-f3f0023c.json`（exit 0，6 项边界测试全通，耗时 1.54s）；
+提交以本卡提交定位；下一卡进入 P20。
 
 
 

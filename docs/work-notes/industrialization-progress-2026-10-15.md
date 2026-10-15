@@ -285,8 +285,29 @@
 - 验证：
   - 离线 dry-run 测试：`scripts/run_paid_batch.py --manifest ... --dry-run` 退出码 0，成功展开 20 次计划运行，请求数=0，费用=0；
   - 静态与清单验证：`verify.ps1 -Tests tests/test_experiment_manifest.py tests/test_docs_anchors.py` 收据 `.validation/20261016-033118-8b894a85.json`（exit 0，耗时 1.15s）；
-- Commit：待提交。
+- Commit：`a87146d` (`feat(evals): offline dry-run framework and benchmark manifest for pilot evaluation (P18)`）。
 - 下一张卡：P19（故障、负载与安全集成验收）。
+
+### P19 — 故障、负载与安全集成验收 (2026-10-16)
+
+- 目标与范围：
+  - `tests/test_production_boundaries.py`、`scripts/drill_production_boundaries.py`、`app/storage/repository.py`；
+  - 覆盖 SPEC §8 生产边界验收矩阵关键项：
+    - A01: 生产模式前置准入校验拦截；
+    - A02: 跨主体资源访问强隔离（绝不泄露任务存在性，严格 404）；
+    - A08: 配额原子并发争抢与防超发（严格按限额截断，不超发、不双扣）；
+    - A10: Fencing token 阻断过期 worker 迟到写入；
+    - A11: 存储与就绪探针真实状态映射；
+    - A17: 受理背压、有界排队与紧急停发机制。
+- 实现：
+  1. 新增 `tests/test_production_boundaries.py` 自动化集成测试套件，覆盖 A01、A02、A08、A10、A11、A17 全链路断言；
+  2. 新增 `scripts/drill_production_boundaries.py` CLI 演练脚本，支持一键或分场景（admission/fencing/quota/readiness）复现并验证生产边界；
+  3. 在 `app/storage/repository.py` 为 `Repository` 增加 `close()` 与上下文管理器 `__enter__` / `__exit__`，防止 Windows 平台临时 SQLite 数据库句柄残留引发的文件锁冲突。
+- 验证：
+  - 演练脚本：`python scripts/drill_production_boundaries.py --all` 退出码 0，全部 4 项生产演练通过；
+  - 快速验证：`verify.ps1 -Tests tests/test_production_boundaries.py tests/test_docs_anchors.py` 收据 `.validation/20261016-034320-f3f0023c.json`（exit 0，6 项边界测试全通，耗时 1.54s）；
+- Commit：待提交。
+- 下一张卡：P20（试点发布、值守与退出）。
 
 ## 任务状态
 
@@ -310,8 +331,8 @@
 | P15 | DONE | P00 | 本卡 / c0f8f53 / .validation/20261016-030707-efdf5572.json (10 passed) |
 | P16 | DONE | P03/P06/P11/P12/P15 | 本卡 / 0f979a3 / .validation/20261016-031215-0a71c57b.json (14 passed) |
 | P17 | DONE | P00/P06/P08/P09 | 本卡 / 7864618 / .validation/20261016-032556-73ebbc06.json (27 passed) |
-| P18 | READY_FOR_AUTHORIZATION | P15/P16/P17 | 本卡 / 待提交 / .validation/20261016-033118-8b894a85.json (dry-run 20 runs) |
-| P19 | TODO | P05–P15/P17 | — |
+| P18 | READY_FOR_AUTHORIZATION | P15/P16/P17 | 本卡 / a87146d / .validation/20261016-033118-8b894a85.json (dry-run 20 runs) |
+| P19 | DONE | P05–P15/P17 | 本卡 / 待提交 / .validation/20261016-034320-f3f0023c.json (6 passed + drill 4/4) |
 | P20 | TODO | P00–P19 | — |
 | P21 | OPTIONAL_NOT_STARTED | M3/新规格 | — |
 

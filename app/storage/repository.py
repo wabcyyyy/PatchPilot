@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -60,6 +61,17 @@ class Repository:
     def __init__(self, db_path: Path | str) -> None:
         self._conn: sqlite3.Connection = connect(db_path)
         self._lock = threading.RLock()
+
+    def close(self) -> None:
+        """关闭底层数据库连接。"""
+        with self._lock, contextlib.suppress(Exception):
+            self._conn.close()
+
+    def __enter__(self) -> Repository:
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.close()
 
     # ---------- tasks ----------
 
