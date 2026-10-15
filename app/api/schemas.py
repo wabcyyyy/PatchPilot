@@ -160,3 +160,30 @@ class TrajectoryPage(BaseModel):
     total_returned: int
     offset: int
     events: list[dict[str, Any]]
+
+
+class ReviewDecisionIn(BaseModel):
+    """人工业务审核结果输入 (P16)。"""
+
+    decision: Literal["approved", "rejected"]
+    comment: str = Field("", max_length=1000)
+
+
+class IndependentCIIn(BaseModel):
+    """独立 CI 运行结果上报 (P16)。"""
+
+    status: Literal["passed", "failed"]
+    ci_run_id: str = Field(..., min_length=1, max_length=128)
+
+
+class DeliveryStatusOut(BaseModel):
+    """任务交付综合状态输出 (P16)。"""
+
+    task_id: str
+    review_status: str
+    independent_ci_status: str
+    delivery_status: str
+    candidate_hash: str
+    ready_to_deliver: bool
+    delivered_at: str | None = None
+    manifest_hash: str | None = None

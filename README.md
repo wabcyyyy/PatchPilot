@@ -19,7 +19,7 @@
 - **七项质量门禁**:格式 / 禁改测试文件 / 路径越界 / 修改范围 / 影子模块 / 命令白名单 / 资源预算,
   附 10 个攻击样例(`bugs/attacks/`)验证拦截;
 - **双执行引擎**:plain 单轮驱动与 graph 分阶段、多候选状态机，共享模型工具循环、工具、pytest 适配器与终局验收；候选工件、审批/澄清与自动恢复编排在 graph 路径。两者不声明功能等价;
-- **服务化**:FastAPI 15 个端点(`app/api/routes.py`,条数由 `tests/test_docs_anchors.py` 对路由装饰器核数) + SQLite 持久化 + Redis 任务锁(可退化内存锁)+ 幂等 + 崩溃恢复;
+- **服务化**:FastAPI 19 个端点(`app/api/routes.py`,条数由 `tests/test_docs_anchors.py` 对路由装饰器核数) + SQLite 持久化 + Redis 任务锁(可退化内存锁)+ 幂等 + 崩溃恢复;
 - **容器执行后端（默认 local）**:pytest 临时容器带 `--network=none`、内存/CPU 限额、`--rm`；受控诊断命令另加 PID 限额与 `no-new-privileges`，
   5 项隔离实验见 `docs/archive/docker-isolation-notes.md`;
 - **自建评测集**:正式集 35 题(28 题简单/中等 + 7 题 hard,BUG-029..035),

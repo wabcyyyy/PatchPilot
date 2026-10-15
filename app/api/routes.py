@@ -31,15 +31,19 @@ from app.api.report import render_markdown
 from app.api.schemas import (
     AcceptanceApproveIn,
     AcceptanceOut,
+    DeliveryStatusOut,
+    IndependentCIIn,
     MessageIn,
     MessageOut,
     QuestionOut,
+    ReviewDecisionIn,
     TaskCreateIn,
     TaskListOut,
     TaskOut,
     TrajectoryPage,
 )
 from app.config import get_settings
+from app.delivery import create_delivery_bundle, evaluate_delivery_readiness
 from app.errors import InvalidRequestError, PatchPilotError, QuotaExceededError, TaskError
 from app.observability import MetricsRegistry, check_liveness, check_readiness
 from app.security.data_policy import redact_data
@@ -397,4 +401,133 @@ def task_events(task_id: str, request: Request, last_event_id: int = 0):
             "X-Accel-Buffering": "no",
             "Connection": "keep-alive",
         },
+    )
+
+
+@router.get("/tasks/{task_id}/delivery", response_model=DeliveryStatusOut)
+def get_task_delivery(task_id: str, request: Request):
+    """获取任务交付状态 (P16)。"""
+    service = _service(request)
+    principal = get_current_principal(request)
+    task = service.get_task(task_id)
+    if task is None or not authorize_task_access(principal, task, ACTION_READ, repo=service.repo):
+        return _error(404, "invalid_task", f"task not found: {task_id}")
+
+    candidate_hash = str(task.get("idem_key") or task_id)
+    delivery = service.repo.get_or_create_delivery(
+        task_id=task_id, candidate_hash=candidate_hash, source_commit="HEAD"
+    )
+    ready, _ = evaluate_delivery_readiness(task, delivery)
+
+    return DeliveryStatusOut(
+        task_id=task_id,
+        review_status=delivery["review_status"],
+        independent_ci_status=delivery["independent_ci_status"],
+        delivery_status=delivery["delivery_status"],
+        candidate_hash=delivery["candidate_hash"],
+        ready_to_deliver=ready,
+        delivered_at=delivery.get("delivered_at"),
+        manifest_hash=delivery.get("manifest_hash"),
+    )
+
+
+@router.post("/tasks/{task_id}/review", response_model=DeliveryStatusOut)
+def review_task(task_id: str, payload: ReviewDecisionIn, request: Request):
+    """提交人工业务审核结果 (P16)。模型严禁自审批准。"""
+    service = _service(request)
+    principal = get_current_principal(request)
+    task = service.get_task(task_id)
+    if task is None or not authorize_task_access(
+        principal, task, ACTION_APPROVE, repo=service.repo
+    ):
+        return _error(404, "invalid_task", f"task not found: {task_id}")
+
+    reviewer = str(principal.get("id") or "human_reviewer")
+    try:
+        candidate_hash = str(task.get("idem_key") or task_id)
+        service.repo.get_or_create_delivery(task_id, candidate_hash, "HEAD")
+        updated = service.repo.record_review(
+            task_id=task_id,
+            decision=payload.decision,
+            reviewer=reviewer,
+            comment=payload.comment,
+        )
+        ready, _ = evaluate_delivery_readiness(task, updated)
+        return DeliveryStatusOut(
+            task_id=task_id,
+            review_status=updated["review_status"],
+            independent_ci_status=updated["independent_ci_status"],
+            delivery_status=updated["delivery_status"],
+            candidate_hash=updated["candidate_hash"],
+            ready_to_deliver=ready,
+            delivered_at=updated.get("delivered_at"),
+            manifest_hash=updated.get("manifest_hash"),
+        )
+    except InvalidRequestError as exc:
+        return _error(422, "invalid_request", str(exc), task_id=task_id)
+
+
+@router.post("/tasks/{task_id}/independent-ci", response_model=DeliveryStatusOut)
+def record_ci_result(task_id: str, payload: IndependentCIIn, request: Request):
+    """上报独立 CI 运行结果 (P16)。"""
+    service = _service(request)
+    principal = get_current_principal(request)
+    task = service.get_task(task_id)
+    if task is None or not authorize_task_access(
+        principal, task, ACTION_APPROVE, repo=service.repo
+    ):
+        return _error(404, "invalid_task", f"task not found: {task_id}")
+
+    try:
+        candidate_hash = str(task.get("idem_key") or task_id)
+        service.repo.get_or_create_delivery(task_id, candidate_hash, "HEAD")
+        updated = service.repo.record_independent_ci(
+            task_id=task_id, status=payload.status, ci_run_id=payload.ci_run_id
+        )
+        ready, _ = evaluate_delivery_readiness(task, updated)
+        return DeliveryStatusOut(
+            task_id=task_id,
+            review_status=updated["review_status"],
+            independent_ci_status=updated["independent_ci_status"],
+            delivery_status=updated["delivery_status"],
+            candidate_hash=updated["candidate_hash"],
+            ready_to_deliver=ready,
+            delivered_at=updated.get("delivered_at"),
+            manifest_hash=updated.get("manifest_hash"),
+        )
+    except InvalidRequestError as exc:
+        return _error(422, "invalid_request", str(exc), task_id=task_id)
+
+
+@router.post("/tasks/{task_id}/deliver", response_model=DeliveryStatusOut)
+def deliver_task(task_id: str, request: Request):
+    """执行最终交付并签署交付审核包 (P16)。"""
+    service = _service(request)
+    principal = get_current_principal(request)
+    task = service.get_task(task_id)
+    if task is None or not authorize_task_access(
+        principal, task, ACTION_APPROVE, repo=service.repo
+    ):
+        return _error(404, "invalid_task", f"task not found: {task_id}")
+
+    candidate_hash = str(task.get("idem_key") or task_id)
+    delivery = service.repo.get_or_create_delivery(task_id, candidate_hash, "HEAD")
+    ready, reason = evaluate_delivery_readiness(task, delivery)
+    if not ready:
+        return _error(409, "conflict", f"delivery preconditions not met: {reason}", task_id=task_id)
+
+    run_dir = Path(task["run_dir"])
+    manifest, _ = create_delivery_bundle(task, run_dir)
+    updated = service.repo.record_delivery(
+        task_id=task_id, status="delivered", manifest_hash=manifest.manifest_hash
+    )
+    return DeliveryStatusOut(
+        task_id=task_id,
+        review_status=updated["review_status"],
+        independent_ci_status=updated["independent_ci_status"],
+        delivery_status=updated["delivery_status"],
+        candidate_hash=updated["candidate_hash"],
+        ready_to_deliver=True,
+        delivered_at=updated.get("delivered_at"),
+        manifest_hash=updated.get("manifest_hash"),
     )

@@ -244,6 +244,25 @@ CREATE TABLE IF NOT EXISTS artifact_records (
   is_deleted INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_artifacts_task ON artifact_records(task_id);
+
+CREATE TABLE IF NOT EXISTS delivery_records (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL UNIQUE,
+  candidate_hash TEXT NOT NULL,
+  source_commit TEXT NOT NULL,
+  review_status TEXT NOT NULL DEFAULT 'pending_review',
+  reviewed_by TEXT,
+  reviewed_at TEXT,
+  review_comment TEXT,
+  independent_ci_status TEXT NOT NULL DEFAULT 'not_started',
+  ci_run_id TEXT,
+  ci_passed_at TEXT,
+  delivery_status TEXT NOT NULL DEFAULT 'pending',
+  delivered_at TEXT,
+  manifest_json TEXT,
+  manifest_hash TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_delivery_task ON delivery_records(task_id);
 """,
     )
 

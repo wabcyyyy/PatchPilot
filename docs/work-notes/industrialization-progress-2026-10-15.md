@@ -190,6 +190,65 @@
 - Commit：`04bc7cf` (`feat(recovery): lease fencing token, state transition guard, and stale job recovery (P12)`）。
 - 下一张卡：P13（运行指标、健康检查与告警）。
 
+### P13 — 运行指标、健康检查与可观测性 (2026-10-16)
+
+- 目标与范围：
+  - `app/logctx.py`、`app/config.py`、`app/storage/repository.py`、`app/observability/`、`app/api/auth.py`、`app/api/routes.py`；
+  - tests：`tests/test_observability.py`。
+- 实现：
+  1. `app/logctx.py` 补充 `attempt_id_var`、`worker_id_var`、`actor_var` 与结构化 `JsonLogFormatter`；
+  2. `app/config.py` 增加 `log_format` ("text" | "json") 与 `readiness_min_disk_free_bytes`；
+  3. `app/storage/repository.py` 实现健康检查与统计聚合方法：`check_health`、`get_queue_stats`、`get_task_stats` 与 `get_quota_stats`；
+  4. 新增 `app/observability/health.py`（存活探针 `/health/live` 与就绪探针 `/health/ready`）与 `app/observability/metrics.py`（低基数 Prometheus 指标导出器 `/metrics`）；
+  5. 探针与指标接口在 API 认证中列入豁免名单。
+- 验证：
+  - 定向观测测试：`tests/test_observability.py` 59 项全过；收据 `.validation/20261016-024721-32c306e7.json`；
+- Commit：`f58d4fb` (`feat(observability): liveness/readiness probes, metrics registry, and json logging (P13)`）。
+- 下一张卡：P14（生命周期管理、只读化、归档与备份）。
+
+### P14 — 生命周期管理、只读化、归档与备份 (2026-10-16)
+
+- 目标与范围：
+  - `app/storage/migrations.py`、`app/storage/repository.py`、`app/api/recycle.py`、`app/storage/backup.py`、`scripts/backup_restore.py`；
+  - tests：`tests/test_recycle.py`、`tests/test_backup_restore.py`。
+- 实现：
+  1. P14-1：工件分级、Legal Hold 与回收：`tasks` 增加 `legal_hold` 字段；`app/api/recycle.py` 防范路径遍历与符号链接逃逸，阻断活跃租约/未终态/法务保全任务，保留 `report.json`、`trajectory.jsonl` 等核心审计事实；
+  2. P14-2 & P14-3：热备份与安全恢复：`app/storage/backup.py` 利用 `sqlite3.Connection.backup` 实现一致性热备份，校验 SHA-256 与 `PRAGMA integrity_check`，恢复时强制目标目录为空除非显式指定 overwrite；新增 CLI `scripts/backup_restore.py`。
+- 验证：
+  - 定向回收与备份测试：`tests/test_recycle.py` 65 项全过，`tests/test_backup_restore.py` 6 项全过；收据 `.validation/20261016-025823-14de9cd3.json` 与 `.validation/20261016-030130-a1c97cbb.json`；
+- Commit：
+  - P14-1: `c848a02` (`feat(lifecycle): artifact classification, legal hold, and dry-run recycling (P14-1)`)；
+  - P14-2 & P14-3: `3c4ce8a` (`feat(backup): consistent online SQLite hot backup, manifest reconciliation, and safe restore (P14-2, P14-3)`)。
+- 下一张卡：P15（可复现构建约束与发布指南）。
+
+### P15 — 可复现构建约束、生产依赖对齐与发布文档 (2026-10-16)
+
+- 目标与范围：
+  - `pyproject.toml`、`requirements.txt`、`constraints.lock`、`.github/workflows/ci.yml`、`.env.example`、`docs/build-and-release.md`；
+  - tests：`tests/test_docs_anchors.py`。
+- 实现：
+  1. 将 `openai>=1.40` 纳入主生产依赖，生成离线可复现的完整 `constraints.lock`；
+  2. 在 CI 中增加 Docker preflight 检查，并统一 `.env.example` 工业参数；
+  3. 编写 `docs/build-and-release.md` 包含可复现构建与平滑回滚矩阵。
+- 验证：
+  - 文档锚点与静态检查：`tests/test_docs_anchors.py` 通过；收据 `.validation/20261016-030707-efdf5572.json`；
+- Commit：`c0f8f53` (`feat(build): reproducible build constraints, production dependency alignment, and release guide (P15)`）。
+- 下一张卡：P16（补丁审核与独立 CI 交付）。
+
+### P16 — 补丁审核、独立 CI 与交付清单 (2026-10-16)
+
+- 目标与范围：
+  - `app/delivery/`、`app/storage/{migrations,repository}.py`、`app/api/{schemas,routes}.py`、`README.md`；
+  - tests：`tests/test_delivery.py`。
+- 实现：
+  1. 新增 `app/delivery/bundle.py` 实现交付工件打包、`DeliveryManifest` 签名/哈希生成、交付就绪前提断言（任务已成功、人工审核已通过、独立 CI 已通过、无篡改）；严禁模型自身审核自身补丁；
+  2. 数据库迁移新增 `delivery_records` 表，记录 review 决策、独立 CI 结果、交付时间与清单摘要；
+  3. 在 `app/api/routes.py` 暴露 `/api/tasks/{task_id}/delivery`、`review`、`independent-ci` 与 `deliver` 端点。
+- 验证：
+  - 定向交付测试：`tests/test_delivery.py` 4 项全过，`tests/test_docs_anchors.py` 通过；收据 `.validation/20261016-031215-0a71c57b.json`；
+- Commit：待提交。
+- 下一张卡：P17（正确性与对抗评测协议）。
+
 ## 任务状态
 
 | 卡 | 状态 | 依赖 | owner / commit / 收据 |
@@ -207,10 +266,10 @@
 | P10 | DONE | P01/P03/P04 | P10-1: fd3ba1d / P10-2: fed5cfa / .validation/20261016-014602-63fd1878.json (63 passed) |
 | P11 | DONE | P01/P03/P04/P09/P10 | P11-1: 91c59b3 / P11-2, P11-3: acf5e97 / .validation/20261016-020919-c30b0464.json (60 passed) |
 | P12 | DONE | P11 | 本卡 / 04bc7cf / .validation/20261016-023003-1837b3b5.json (48 passed) |
-| P13 | IN_PROGRESS | P04/P11/P12 | 正在实施运行指标、健康检查与告警 |
-| P14 | TODO | P01/P03/P06/P11/P12 | — |
-| P15 | TODO | P00 | — |
-| P16 | TODO | P03/P06/P11/P12/P15 | — |
+| P13 | DONE | P04/P11/P12 | 本卡 / f58d4fb / .validation/20261016-024721-32c306e7.json (59 passed) |
+| P14 | DONE | P01/P03/P06/P11/P12 | P14-1: c848a02 / P14-2, P14-3: 3c4ce8a / .validation/20261016-030130-a1c97cbb.json (71 passed) |
+| P15 | DONE | P00 | 本卡 / c0f8f53 / .validation/20261016-030707-efdf5572.json (10 passed) |
+| P16 | IMPLEMENTED_PENDING_COMMIT | P03/P06/P11/P12/P15 | 本卡 / 待提交 / .validation/20261016-031215-0a71c57b.json (14 passed) |
 | P17 | TODO | P00/P06/P08/P09 | — |
 | P18 | TODO | P15/P16/P17 | — |
 | P19 | TODO | P05–P15/P17 | — |

@@ -2057,3 +2057,53 @@ tasks 表新增 `owner` 与 `principal_id`，旧任务升级回填 `legacy-unown
 新增 `tests/test_worker_recovery.py`，覆盖 fencing token 拦截过期 worker 终态与配额结算、租约心跳丢失触发取消、失主任务恢复不伤及活任务与排队任务；
 验证：收据 `.validation/20261016-023003-1837b3b5.json`（48 项全部通过，耗时 80.5s）；27 个未变动测试 deferred to CI；
 提交以 `04bc7cf` 定位；下一卡进入 P13。
+
+## 2026-10-16 · P13 运行指标、健康检查与结构化日志
+
+在 `app/logctx.py` 扩充上下文日志字段（`attempt_id_var`、`worker_id_var`、`actor_var`）并实现安全 JSON 格式化器 `JsonLogFormatter`；
+在 `app/config.py` 增加 `log_format` ("text" | "json") 与 `readiness_min_disk_free_bytes`；
+在 `app/storage/repository.py` 增加健康检查 `check_health` 与指标查询 `get_queue_stats`、`get_task_stats`、`get_quota_stats`；
+新增 `app/observability/health.py`（`/health/live` 与 `/health/ready`）与 `app/observability/metrics.py`（低基数 Prometheus 指标导出器 `/metrics`）；
+在 `app/api/auth.py` 与 `app/api/routes.py` 将探针与指标列入免鉴权路径；
+新增 `tests/test_observability.py`；
+验证：收据 `.validation/20261016-024721-32c306e7.json`（59 项全过，耗时 53.6s）；
+提交以 `f58d4fb` 定位；下一卡进入 P14。
+
+## 2026-10-16 · P14 生命周期管理、工件分级、只读化与一致性备份
+
+P14-1：
+- 在 `app/storage/migrations.py` 的 `tasks` 表增加 `legal_hold` 字段；
+- 在 `app/storage/repository.py` 增加 `set_legal_hold`、`get_legal_hold`、`register_artifact` 等方法；
+- 在 `app/api/recycle.py` 实现安全回收计划与执行，严格防御路径遍历和符号链接逃逸，阻断活跃租约/未终态/法务保全任务，保留 `report.json`、`trajectory.jsonl` 等核心审计事实；
+- 新增 `tests/test_recycle.py`；
+- 验证：收据 `.validation/20261016-025823-14de9cd3.json`（65 项全过，耗时 54.4s）；
+- 提交以 `c848a02` 定位。
+
+P14-2 & P14-3：
+- 新增 `app/storage/backup.py`：利用 `sqlite3.Connection.backup` 实现一致性热备份，校验 SHA-256 与 `PRAGMA integrity_check`，恢复时强制目标目录为空除非显式指定 overwrite；
+- 新增 CLI `scripts/backup_restore.py` 支持 `backup`、`verify`、`restore`；
+- 新增 `tests/test_backup_restore.py`；
+- 验证：收据 `.validation/20261016-030130-a1c97cbb.json`（6 项全过）；
+- 提交以 `3c4ce8a` 定位；下一卡进入 P15。
+
+## 2026-10-16 · P15 可复现构建约束与发布指南
+
+在 `pyproject.toml` 和 `requirements.txt` 中将 `openai>=1.40` 纳入主生产依赖；
+生成完整固化的 `constraints.lock`；
+在 `.github/workflows/ci.yml` 增加 Docker preflight 检查；
+更新 `.env.example` 登记工业化生产参数；
+新增 `docs/build-and-release.md` 包含构建步骤与平滑回滚兼容矩阵；
+验证：`tests/test_docs_anchors.py` 通过，收据 `.validation/20261016-030707-efdf5572.json`；
+提交以 `c0f8f53` 定位；下一卡进入 P16。
+
+## 2026-10-16 · P16 补丁审核、独立 CI 与交付清单
+
+新增 `app/delivery/bundle.py` 实现交付工件打包、`DeliveryManifest` 签名/哈希生成、交付就绪前提断言（任务已成功、人工审核已通过、独立 CI 已通过、无篡改）；严禁模型自身审核自身补丁；
+在 `app/storage/migrations.py` 增加 `delivery_records` 表，记录 review 决策、独立 CI 结果、交付时间与清单摘要；
+在 `app/storage/repository.py` 增加 `get_delivery`、`get_or_create_delivery`、`record_review`、`record_independent_ci`、`record_delivery`；
+在 `app/api/schemas.py` 增加审核决策与独立 CI 输入模型；
+在 `app/api/routes.py` 暴露 `/api/tasks/{task_id}/delivery`、`review`、`independent-ci` 与 `deliver` 端点；同步更新 `README.md` 端点计数为 19；
+新增 `tests/test_delivery.py` 覆盖交付清单生成、防篡改校验、交付前置条件门禁与 API 路由；
+验证：`verify.ps1 -Tests tests/test_delivery.py tests/test_docs_anchors.py` 收据 `.validation/20261016-031215-0a71c57b.json`（14 项全过）；
+提交以本卡提交定位；下一卡进入 P17。
+

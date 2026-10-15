@@ -1284,3 +1284,108 @@ INSERT INTO audit_events (
                 [(task_id, p) for p in paths],
             )
             return cur.rowcount
+
+    def get_delivery(self, task_id: str) -> dict[str, Any] | None:
+        """获取交付记录 (P16)。"""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM delivery_records WHERE task_id = ?", (task_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_or_create_delivery(
+        self, task_id: str, candidate_hash: str, source_commit: str
+    ) -> dict[str, Any]:
+        """获取或初始化交付记录 (P16)。"""
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT * FROM delivery_records WHERE task_id = ?", (task_id,)
+            ).fetchone()
+            if row:
+                return dict(row)
+            self._conn.execute(
+                """
+                INSERT INTO delivery_records (
+                    task_id, candidate_hash, source_commit, review_status,
+                    independent_ci_status, delivery_status
+                ) VALUES (?, ?, ?, 'pending_review', 'not_started', 'pending')
+                """,
+                (task_id, candidate_hash, source_commit),
+            )
+            created = self._conn.execute(
+                "SELECT * FROM delivery_records WHERE task_id = ?", (task_id,)
+            ).fetchone()
+            return dict(created)
+
+    def record_review(
+        self, task_id: str, decision: str, reviewer: str, comment: str = ""
+    ) -> dict[str, Any]:
+        """记录人工业务审核结果 (P16)。严禁模型自我批准。"""
+        from app.errors import InvalidRequestError
+
+        if reviewer.lower().strip() in {"model", "agent", "llm", "patchpilot", "patchpilot-agent"}:
+            raise InvalidRequestError("models/agents cannot approve patches for delivery")
+
+        now = _now()
+        status = "approved" if decision == "approved" else "rejected"
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                UPDATE delivery_records
+                SET review_status = ?, reviewed_by = ?, reviewed_at = ?, review_comment = ?
+                WHERE task_id = ?
+                """,
+                (status, reviewer, now, comment, task_id),
+            )
+            row = self._conn.execute(
+                "SELECT * FROM delivery_records WHERE task_id = ?", (task_id,)
+            ).fetchone()
+        if not row:
+            raise InvalidRequestError(f"delivery record not found for task {task_id}")
+        return dict(row)
+
+    def record_independent_ci(
+        self, task_id: str, status: str, ci_run_id: str | None = None
+    ) -> dict[str, Any]:
+        """记录独立 CI 验证结果 (P16)。"""
+        from app.errors import InvalidRequestError
+
+        now = _now()
+        ci_status = "passed" if status == "passed" else "failed"
+        passed_at = now if ci_status == "passed" else None
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                UPDATE delivery_records
+                SET independent_ci_status = ?, ci_run_id = ?, ci_passed_at = ?
+                WHERE task_id = ?
+                """,
+                (ci_status, ci_run_id, passed_at, task_id),
+            )
+            row = self._conn.execute(
+                "SELECT * FROM delivery_records WHERE task_id = ?", (task_id,)
+            ).fetchone()
+        if not row:
+            raise InvalidRequestError(f"delivery record not found for task {task_id}")
+        return dict(row)
+
+    def record_delivery(self, task_id: str, status: str, manifest_hash: str) -> dict[str, Any]:
+        """记录交付完成状态 (P16)。"""
+        from app.errors import InvalidRequestError
+
+        now = _now()
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                UPDATE delivery_records
+                SET delivery_status = ?, delivered_at = ?, manifest_hash = ?
+                WHERE task_id = ?
+                """,
+                (status, now, manifest_hash, task_id),
+            )
+            row = self._conn.execute(
+                "SELECT * FROM delivery_records WHERE task_id = ?", (task_id,)
+            ).fetchone()
+        if not row:
+            raise InvalidRequestError(f"delivery record not found for task {task_id}")
+        return dict(row)
