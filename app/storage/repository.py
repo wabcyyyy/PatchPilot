@@ -1221,3 +1221,66 @@ INSERT INTO audit_events (
             "total_reserved_usd": reserved_usd,
             "total_reserved_tokens": reserved_tokens,
         }
+
+    def set_legal_hold(self, task_id: str, hold: bool) -> bool:
+        """设置或解除任务的 Legal Hold (P14-1)。
+
+        被置 Legal Hold 的任务禁止回收任何工件产物。
+        """
+        val = 1 if hold else 0
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "UPDATE tasks SET legal_hold = ? WHERE id = ?",
+                (val, task_id),
+            )
+            return cur.rowcount > 0
+
+    def get_legal_hold(self, task_id: str) -> bool:
+        """查询任务是否处于 Legal Hold 留置状态 (P14-1)。"""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT legal_hold FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+        return bool(row and row[0])
+
+    def register_artifact(
+        self,
+        task_id: str,
+        artifact_type: str,
+        path: str,
+        size_bytes: int,
+        sha256: str,
+        retention_policy: str = "forensic",
+    ) -> int:
+        """登记工件审计元数据 (P14-1)。"""
+        now = _now()
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                """
+                INSERT INTO artifact_records (
+                    task_id, artifact_type, path, size_bytes, sha256, created_at, retention_policy, is_deleted
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                """,
+                (task_id, artifact_type, path, size_bytes, sha256, now, retention_policy),
+            )
+            return int(cur.lastrowid or 0)
+
+    def list_artifacts(self, task_id: str, include_deleted: bool = False) -> list[dict[str, Any]]:
+        """查询任务登记的工件记录 (P14-1)。"""
+        query = "SELECT * FROM artifact_records WHERE task_id = ?"
+        if not include_deleted:
+            query += " AND is_deleted = 0"
+        with self._lock:
+            rows = self._conn.execute(query, (task_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def mark_artifacts_deleted(self, task_id: str, paths: list[str]) -> int:
+        """标记工件记录为已回收 (P14-1)。"""
+        if not paths:
+            return 0
+        with self._lock, self._conn:
+            cur = self._conn.executemany(
+                "UPDATE artifact_records SET is_deleted = 1 WHERE task_id = ? AND path = ?",
+                [(task_id, p) for p in paths],
+            )
+            return cur.rowcount

@@ -30,9 +30,18 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds")
 
 
+def _exec_script(conn: sqlite3.Connection, script: str) -> None:
+    """按分号逐条执行，避免 executescript 自动触发提交而破坏事务互斥锁。"""
+    for stmt in script.split(";"):
+        cleaned = stmt.strip()
+        if cleaned:
+            conn.execute(cleaned)
+
+
 def _migration_v1(conn: sqlite3.Connection) -> None:
     """V1 基线迁移：创建基础三表，补充任务契约与运行进度列，完成轨迹唯一索引。"""
-    conn.executescript(
+    _exec_script(
+        conn,
         """
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
@@ -78,7 +87,7 @@ CREATE TABLE IF NOT EXISTS patches (
   applied INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_patches_task ON patches(task_id);
-"""
+""",
     )
     existing = {row[1] for row in conn.execute("PRAGMA table_info(tasks)")}
     for name, coltype in _TASK_SPEC_COLUMNS:
@@ -123,7 +132,7 @@ def _migrate_trajectory_dedup(conn: sqlite3.Connection) -> None:
             "               WHERE event_id IS NOT NULL GROUP BY task_id, event_id)"
         )
     conn.execute(
-        "CREATE UNIQUE INDEX uq_traj_task_event"
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_traj_task_event"
         " ON trajectory_events(task_id, event_id)"
         " WHERE event_id IS NOT NULL"
     )
@@ -137,6 +146,8 @@ def _migration_v2(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE tasks ADD COLUMN owner TEXT DEFAULT 'legacy-unowned'")
     if "principal_id" not in existing_cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN principal_id TEXT DEFAULT 'legacy-unowned'")
+    if "legal_hold" not in existing_cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN legal_hold INTEGER NOT NULL DEFAULT 0")
 
     # 回填旧数据：历史无主任务标 legacy-unowned，禁止自动归属给首个用户
     conn.execute("UPDATE tasks SET owner = 'legacy-unowned' WHERE owner IS NULL OR owner = ''")
@@ -155,7 +166,8 @@ WHERE status NOT IN ({_TERMINAL_STATUSES_SQL}) AND idem_key IS NOT NULL;
     )
 
     # 3. 主体与凭据表
-    conn.executescript(
+    _exec_script(
+        conn,
         """
 CREATE TABLE IF NOT EXISTS principals (
   id TEXT PRIMARY KEY,
@@ -232,7 +244,7 @@ CREATE TABLE IF NOT EXISTS artifact_records (
   is_deleted INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_artifacts_task ON artifact_records(task_id);
-"""
+""",
     )
 
 
@@ -256,7 +268,17 @@ def run_migrations(conn: sqlite3.Connection) -> int:
     if conn.in_transaction:
         conn.commit()
 
-    conn.execute("BEGIN IMMEDIATE")
+    import time
+
+    for attempt in range(10):
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            break
+        except sqlite3.OperationalError as exc:
+            if "locked" in str(exc).lower() and attempt < 9:
+                time.sleep(0.05 * (attempt + 1))
+                continue
+            raise
     try:
         conn.execute(
             """

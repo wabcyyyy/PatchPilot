@@ -545,6 +545,18 @@ class Settings(BaseSettings):
     log_format: str = "text"  # text | json
     readiness_min_disk_free_bytes: int = 100 * 1024 * 1024  # 100MB 就绪探针最低空闲磁盘要求
 
+    # ---------- P14: 工件生命周期与回收保留 ----------
+    recycle_evidence_retention_days: int = 180
+    recycle_failed_retention_days: int = 30
+    recycle_dry_run_only: bool = False
+
+    @field_validator("recycle_evidence_retention_days", "recycle_failed_retention_days")
+    @classmethod
+    def _check_retention_days(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(f"retention days must be >= 0, got {value}")
+        return value
+
     @field_validator("log_format")
     @classmethod
     def _check_log_format(cls, value: str) -> str:

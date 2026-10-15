@@ -233,3 +233,144 @@ def test_recycle_handles_readonly_git_objects(tmp_path: Path) -> None:
     assert recycle_run_dir(run_dir) == 2
     assert not (run_dir / "workspace").exists()
     assert (run_dir / "report.json").exists()
+
+
+def test_legal_hold_blocks_recycle(tmp_path: Path) -> None:
+    """法定留置 (Legal Hold) 保护：置 hold 的任务绝对不可被回收 (P14-1)。"""
+    repo = Repository(tmp_path / "legal.sqlite3")
+    hold_dir = _make_run_dir(tmp_path, "T-HOLD")
+    repo.create_task(
+        task_id="T-HOLD",
+        idem_key="k-hold",
+        bug_id="BUG-001",
+        repo_path="bugs/BUG-001/repo",
+        issue_text="x",
+        max_rounds=5,
+        engine="graph",
+        model_provider="fake",
+        run_dir=str(hold_dir),
+    )
+    repo.finalize_task("T-HOLD", "FINISHED", "resolved")
+    past_stamp = (datetime.now(UTC) - timedelta(hours=5)).isoformat(timespec="milliseconds")
+    with repo._lock, repo._conn:
+        repo._conn.execute("UPDATE tasks SET finished_at=? WHERE id=?", (past_stamp, "T-HOLD"))
+
+    # 设置 Legal Hold
+    repo.set_legal_hold("T-HOLD", True)
+    assert repo.get_legal_hold("T-HOLD") is True
+
+    # 尝试回收
+    recycled = recycle_finished_tasks(repo, grace_seconds=60)
+    assert "T-HOLD" not in recycled
+    assert (hold_dir / "workspace").exists()
+
+    # 解除 Legal Hold 后恢复可回收
+    repo.set_legal_hold("T-HOLD", False)
+    assert repo.get_legal_hold("T-HOLD") is False
+    recycled2 = recycle_finished_tasks(repo, grace_seconds=60)
+    assert "T-HOLD" in recycled2
+    assert not (hold_dir / "workspace").exists()
+    assert (hold_dir / "report.json").exists()
+
+
+def test_active_job_lease_blocks_recycle(tmp_path: Path) -> None:
+    """活租约保护：作业仍在 claimed 且租约有效时禁止回收 (P14-1)。"""
+    repo = Repository(tmp_path / "lease.sqlite3")
+    lease_dir = _make_run_dir(tmp_path, "T-LEASE")
+    repo.create_task(
+        task_id="T-LEASE",
+        idem_key="k-lease",
+        bug_id="BUG-001",
+        repo_path="bugs/BUG-001/repo",
+        issue_text="x",
+        max_rounds=5,
+        engine="graph",
+        model_provider="fake",
+        run_dir=str(lease_dir),
+    )
+    repo.finalize_task("T-LEASE", "FINISHED", "resolved")
+    past_stamp = (datetime.now(UTC) - timedelta(hours=5)).isoformat(timespec="milliseconds")
+    future_lease = (datetime.now(UTC) + timedelta(minutes=10)).isoformat(timespec="milliseconds")
+    with repo._lock, repo._conn:
+        repo._conn.execute("UPDATE tasks SET finished_at=? WHERE id=?", (past_stamp, "T-LEASE"))
+        repo._conn.execute(
+            """
+            INSERT INTO jobs (id, task_id, status, priority, worker_id, lease_expires_at, fencing_token, created_at, updated_at)
+            VALUES ('job-1', 'T-LEASE', 'claimed', 0, 'worker-1', ?, 1, ?, ?)
+            """,
+            (future_lease, past_stamp, past_stamp),
+        )
+
+    # 具有活跃租约，应当被拒绝回收
+    recycled = recycle_finished_tasks(repo, grace_seconds=60)
+    assert "T-LEASE" not in recycled
+    assert (lease_dir / "workspace").exists()
+
+
+def test_dry_run_plan_and_execution(tmp_path: Path) -> None:
+    """Dry-run 预检清单与执行分离 (P14-1)。"""
+    from app.api.recycle import execute_recycle_plan, plan_recycle_all
+
+    repo = Repository(tmp_path / "plan.sqlite3")
+    run_dir = _make_run_dir(tmp_path, "T-PLAN")
+    repo.create_task(
+        task_id="T-PLAN",
+        idem_key="k-plan",
+        bug_id="BUG-001",
+        repo_path="bugs/BUG-001/repo",
+        issue_text="x",
+        max_rounds=5,
+        engine="graph",
+        model_provider="fake",
+        run_dir=str(run_dir),
+    )
+    repo.finalize_task("T-PLAN", "FINISHED", "resolved")
+    past_stamp = (datetime.now(UTC) - timedelta(hours=2)).isoformat(timespec="milliseconds")
+    with repo._lock, repo._conn:
+        repo._conn.execute("UPDATE tasks SET finished_at=? WHERE id=?", (past_stamp, "T-PLAN"))
+
+    # 1. 生成 dry-run 清单
+    plan = plan_recycle_all(repo, grace_seconds=60)
+    assert len(plan) == 1
+    item = plan[0]
+    assert item["task_id"] == "T-PLAN"
+    assert item["can_recycle"] is True
+    assert item["reclaimable_bytes"] > 0
+    assert "workspace" in item["disposable_entries"]
+    assert "checkpoints.sqlite" in item["disposable_entries"]
+
+    # dry-run 后文件完好
+    assert (run_dir / "workspace").exists()
+    assert (run_dir / "checkpoints.sqlite").exists()
+
+    # 2. 显式执行清理
+    res = execute_recycle_plan(plan, repo=repo)
+    assert "T-PLAN" in res["recycled_tasks"]
+    assert res["reclaimed_bytes"] > 0
+    assert not (run_dir / "workspace").exists()
+    assert not (run_dir / "checkpoints.sqlite").exists()
+    assert (run_dir / "report.json").exists()
+
+
+def test_symlink_defense_and_unsafe_path(tmp_path: Path) -> None:
+    """软链接与越界防御：拒绝不安全目录，不跟踪软链接 (P14-1)。"""
+    import os
+
+    from app.api.recycle import is_safe_run_dir
+
+    runs_root = tmp_path / "runs"
+    runs_root.mkdir()
+    valid_dir = runs_root / "T-SAFE"
+    valid_dir.mkdir()
+
+    assert is_safe_run_dir(valid_dir, runs_root) is True
+    assert is_safe_run_dir(runs_root, runs_root) is False  # 不能是 root 自身
+    assert is_safe_run_dir(tmp_path, runs_root) is False  # 不能越界到 runs_root 外部
+
+    # 软链接 run_dir 自身防御
+    link_run_dir = runs_root / "T-LINK"
+    try:
+        os.symlink(valid_dir, link_run_dir, target_is_directory=True)
+        assert is_safe_run_dir(link_run_dir, runs_root) is False
+    except (OSError, NotImplementedError):
+        pass  # Windows 无特权创建符号链接时跳过
