@@ -233,7 +233,7 @@ def test_requirements_files_match_pyproject() -> None:
     extras = {name: set(specs) for name, specs in cfg["project"]["optional-dependencies"].items()}
 
     assert _req_specs("requirements.txt") == set(cfg["project"]["dependencies"])
-    assert _req_specs("requirements-dev.txt") == extras["dev"] | extras["llm"]
+    assert _req_specs("requirements-dev.txt") == extras.get("dev", set())
 
 
 def test_interview_site_html_matches_its_markdown(tmp_path: Path) -> None:
