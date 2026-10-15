@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import logging
 import shutil
+import threading
 import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from app.adapters.test_identity import TestIdentity, case_matches, parse_node_id
 from app.config import get_settings
@@ -77,6 +79,7 @@ class PytestReport:
     collected: int = 0
     duration_ms: int = 0
     timed_out: bool = False
+    cancelled: bool = False
     no_tests_collected: bool = False
     failed_cases: list[FailedCase] = field(default_factory=list)
     requested_ids: list[str] = field(default_factory=list)
@@ -96,7 +99,7 @@ class PytestReport:
         ③ 该 testcase 的 status 是 passed。
         无期望 id 的调用方退化为"零失败零跳过"。
         """
-        if self.exit_code != RC_OK or self.timed_out:
+        if self.exit_code != RC_OK or self.timed_out or self.cancelled:
             return False
         if self.failed or self.errors or self.skipped:
             return False
@@ -321,6 +324,8 @@ def run_pytest(
     *,
     env: BugEnv | None = None,
     execution_backend: str | None = None,
+    task_id: str = "",
+    cancel_event: threading.Event | None = None,
 ) -> tuple[PytestReport, TestRunResult]:
     """执行 pytest 并解析报告;报告缺失/超时都反映在返回值里。
 
@@ -349,6 +354,8 @@ def run_pytest(
             workdir=env.workdir if env else None,
             python_bin=env.python if env else None,
             network=env.network if env else None,
+            task_id=task_id,
+            cancel_event=cancel_event,
         )
     if env is not None and env.is_container:
         raise ExecError(
@@ -360,7 +367,10 @@ def run_pytest(
     basetemp = _basetemp_for(junit)
     cmd.append(f"--basetemp={basetemp.as_posix()}")
     try:
-        run = run_tests(cmd, cwd, timeout)
+        run_kwargs: dict[str, Any] = {}
+        if cancel_event is not None:
+            run_kwargs["cancel_event"] = cancel_event
+        run = run_tests(cmd, cwd, timeout, **run_kwargs)
     finally:
         _discard_basetemp(basetemp)
     report = parse_junit_xml(junit)
@@ -370,14 +380,16 @@ def run_pytest(
     report.exit_code = run.exit_code
     report.duration_ms = run.duration_ms
     report.timed_out = run.timed_out
+    report.cancelled = run.cancelled
     report.no_tests_collected = run.exit_code == RC_NO_TESTS_COLLECTED and not report.timed_out
     log.info(
-        "pytest: rc=%s passed=%s failed=%s errors=%s (timed_out=%s)",
+        "pytest: rc=%s passed=%s failed=%s errors=%s (timed_out=%s cancelled=%s)",
         report.exit_code,
         report.passed,
         report.failed,
         report.errors,
         report.timed_out,
+        report.cancelled,
     )
     return report, run
 
@@ -392,6 +404,8 @@ def _run_pytest_in_container(
     workdir: str | None = None,
     python_bin: str | None = None,
     network: str | None = None,
+    task_id: str = "",
+    cancel_event: threading.Event | None = None,
 ) -> tuple[PytestReport, TestRunResult]:
     """docker 后端的 pytest 执行:复用 docker_runner 的双挂载与 junit 回传。
 
@@ -412,16 +426,21 @@ def _run_pytest_in_container(
         kwargs["python_bin"] = python_bin
     if network:
         kwargs["network"] = network
+    if task_id:
+        kwargs["task_id"] = task_id
+    if cancel_event is not None:
+        kwargs["cancel_event"] = cancel_event
     report, run = run_tests_in_container(
         cwd, test_ids or [], report_dir=junit.parent, timeout_seconds=timeout_seconds, **kwargs
     )
     report.no_tests_collected = run.exit_code == RC_NO_TESTS_COLLECTED and not run.timed_out
     log.info(
-        "pytest(容器内): rc=%s passed=%s failed=%s errors=%s (timed_out=%s)",
+        "pytest(容器内): rc=%s passed=%s failed=%s errors=%s (timed_out=%s cancelled=%s)",
         report.exit_code,
         report.passed,
         report.failed,
         report.errors,
         report.timed_out,
+        report.cancelled,
     )
     return report, run

@@ -27,6 +27,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.errors import ExecError
+from app.executor.container_lifecycle import (
+    get_container_labels,
+    kill_and_confirm_container,
+    record_container_finished,
+    record_container_started,
+)
 from app.executor.local_runner import _ENV_ALLOWLIST, _kill_tree
 
 log = logging.getLogger(__name__)
@@ -129,6 +135,7 @@ def _docker_run_argv(
     image: str,
     cwd: Path,
     container_name: str,
+    task_id: str = "",
     workdir: str = "/ws",
     env_extra: dict[str, str] | None = None,
 ) -> list[str]:
@@ -147,12 +154,15 @@ def _docker_run_argv(
                 f"docker image '{image}' is not in trusted_docker_images in production mode"
             )
 
+    labels = get_container_labels(task_id=task_id, container_name=container_name, kind="command")
+
     cmd = [
         "docker",
         "run",
         "--rm",
         "--name",
         container_name,
+        *labels,
         "--network",
         "none",
         "--memory",
@@ -180,16 +190,8 @@ def _docker_run_argv(
 
 
 def _docker_kill(container_name: str) -> None:
-    """只杀本任务自己的容器(按名字精确匹配);失败记日志,不掩盖主流程的失败形态。"""
-    try:
-        subprocess.run(
-            ["docker", "kill", "--", container_name],
-            capture_output=True,
-            timeout=15,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        log.warning("docker kill %s failed: %s", container_name, exc)
+    """只杀本任务自己的容器(按名字精确匹配);精确 kill 并确认退出。"""
+    kill_and_confirm_container(container_name)
 
 
 def run_controlled_command(
@@ -203,6 +205,7 @@ def run_controlled_command(
     backend: str = "local",
     image: str = "",
     seq: int = 0,
+    task_id: str = "",
     env_extra: dict[str, str] | None = None,
 ) -> CommandRunResult:
     """执行一条受控命令;超时/取消终止本任务的进程树或容器,原始输出先落盘。
@@ -221,11 +224,15 @@ def run_controlled_command(
     container_name = f"pp-cmd-{uuid.uuid4().hex[:12]}"
 
     if backend == "docker":
+        record_container_started(
+            task_id=task_id, container_name=container_name, kind="command", metadata_dir=scratch_dir
+        )
         popen_argv = _docker_run_argv(
             argv=argv,
             image=image,
             cwd=Path(cwd),
             container_name=container_name,
+            task_id=task_id,
             env_extra=env_extra,
         )
         run_cwd: Path | None = None  # docker run 不需要宿主 cwd
@@ -327,4 +334,16 @@ def run_controlled_command(
         result.cancellation_pending,
         backend,
     )
+    if backend == "docker":
+        exit_status = (
+            "cancelled"
+            if result.cancelled
+            else ("timed_out" if result.timed_out else str(result.exit_code))
+        )
+        record_container_finished(
+            task_id=task_id,
+            container_name=container_name,
+            exit_status=exit_status,
+            metadata_dir=scratch_dir,
+        )
     return result

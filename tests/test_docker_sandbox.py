@@ -22,8 +22,10 @@ def test_build_docker_test_cmd_hardened_flags(tmp_path: Path, monkeypatch) -> No
     monkeypatch.setenv("PATCHPILOT_DOCKER_CAP_DROP", "ALL")
 
     from app.config import get_settings
+    from app.executor import docker_runner
 
     get_settings.cache_clear()
+    monkeypatch.setattr(docker_runner, "_host_identity", lambda: (True, 1000, 1000))
 
     ws = tmp_path / "ws"
     reports = tmp_path / "reports"

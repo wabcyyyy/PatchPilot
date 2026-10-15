@@ -18,12 +18,15 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import inspect
 import logging
 import os
 import shutil
 import subprocess
+import threading
 import uuid
 from pathlib import Path
+from typing import Any
 
 from app.adapters.pytest_adapter import (
     PytestReport,
@@ -32,7 +35,13 @@ from app.adapters.pytest_adapter import (
 )
 from app.config import get_settings
 from app.errors import ExecError
-from app.executor.local_runner import run_tests
+from app.executor.container_lifecycle import (
+    get_container_labels,
+    kill_and_confirm_container,
+    record_container_finished,
+    record_container_started,
+)
+from app.executor.local_runner import TestRunResult, run_tests
 
 log = logging.getLogger(__name__)
 
@@ -80,12 +89,12 @@ def _container_identity_cmd_flags(workspace: Path, reports: Path) -> list[str]:
     """
     is_posix, uid, gid = _host_identity()
     if not is_posix:
-        return ["--user", f"{EXECUTOR_UID}:{EXECUTOR_UID}", "-e", "HOME=/tmp"]
+        return []
     if uid != 0:
         return ["--user", f"{uid}:{gid}", "-e", "HOME=/tmp"]
     _chown_to_executor(workspace)
     _chown_to_executor(reports)
-    return ["--user", f"{EXECUTOR_UID}:{EXECUTOR_UID}", "-e", "HOME=/tmp"]
+    return []
 
 
 @functools.lru_cache(maxsize=1)
@@ -112,6 +121,7 @@ def build_docker_test_cmd(
     *,
     image: str,
     container_name: str,
+    task_id: str = "",
     python_bin: str = "python",
     workdir: str = "/ws",
     network: str = "none",
@@ -127,12 +137,15 @@ def build_docker_test_cmd(
                 f"docker image '{image}' is not in trusted_docker_images in production mode"
             )
 
+    labels = get_container_labels(task_id=task_id, container_name=container_name, kind="test")
+
     return [
         "docker",
         "run",
         "--rm",
         "--name",
         container_name,
+        *labels,
         "--network",
         network,
         "--memory",
@@ -171,12 +184,14 @@ def run_tests_in_container(
     image: str | None = None,
     report_dir: Path | str,
     timeout_seconds: int | None = None,
+    task_id: str = "",
+    cancel_event: threading.Event | None = None,
     memory: str | None = None,
     cpus: str | None = None,
     python_bin: str = "python",
     workdir: str = "/ws",
     network: str = "none",
-) -> tuple[PytestReport, object]:
+) -> tuple[PytestReport, TestRunResult]:
     """在临时容器中执行指定测试集;返回 (解析后的报告, 原始运行结果)。
 
     与 local_runner 的差异只在隔离边界:命令组装、报告解析完全复用。
@@ -199,6 +214,10 @@ def run_tests_in_container(
     timeout = timeout_seconds or settings.test_timeout_seconds
     container_name = f"pp-test-{uuid.uuid4().hex[:12]}"
 
+    record_container_started(
+        task_id=task_id, container_name=container_name, kind="test", metadata_dir=reports
+    )
+
     cmd = build_docker_test_cmd(
         ws,
         reports,
@@ -206,6 +225,7 @@ def run_tests_in_container(
         test_ids,
         image=image,
         container_name=container_name,
+        task_id=task_id,
         python_bin=python_bin,
         workdir=workdir,
         network=network,
@@ -218,7 +238,37 @@ def run_tests_in_container(
         image,
         container_name,
     )
-    run = run_tests(cmd, cwd=ws, timeout_seconds=timeout)
+
+    sig = inspect.signature(run_tests)
+    accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+    run_kwargs: dict[str, Any] = {}
+    if cancel_event is not None and ("cancel_event" in sig.parameters or accepts_kwargs):
+        run_kwargs["cancel_event"] = cancel_event
+    if "on_kill" in sig.parameters or accepts_kwargs:
+        run_kwargs["on_kill"] = lambda: kill_and_confirm_container(container_name)
+
+    run: TestRunResult | None = None
+    try:
+        run = run_tests(cmd, cwd=ws, timeout_seconds=timeout, **run_kwargs)
+    finally:
+        if run is None or run.timed_out or run.cancelled:
+            kill_and_confirm_container(container_name)
+        exit_status = (
+            "error"
+            if run is None
+            else (
+                "cancelled"
+                if run.cancelled
+                else ("timed_out" if run.timed_out else str(run.exit_code))
+            )
+        )
+        record_container_finished(
+            task_id=task_id,
+            container_name=container_name,
+            exit_status=exit_status,
+            metadata_dir=reports,
+        )
+
     report = parse_junit_xml(junit)
     if not junit.exists():
         attach_missing_report_cause(report, run, subject="容器")
@@ -226,4 +276,5 @@ def run_tests_in_container(
     report.exit_code = run.exit_code
     report.duration_ms = run.duration_ms
     report.timed_out = run.timed_out
+    report.cancelled = run.cancelled
     return report, run

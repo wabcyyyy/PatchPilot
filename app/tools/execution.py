@@ -37,7 +37,7 @@ def run_tests(ctx: ToolContext, test_set: str = "all") -> ToolResult:
     cmd = build_pytest_cmd(ctx.python_exe, ids, junit_path)
     ensure_command_allowed(cmd, ctx.whitelist)
 
-    report, _ = run_pytest(
+    report, run = run_pytest(
         ctx.python_exe,
         ctx.workspace,
         test_ids=ids,
@@ -45,7 +45,11 @@ def run_tests(ctx: ToolContext, test_set: str = "all") -> ToolResult:
         timeout_seconds=ctx.test_timeout_seconds,
         env=ctx.env,
         execution_backend=ctx.execution_backend or None,
+        task_id=ctx.task_id,
+        cancel_event=ctx.cancel_event,
     )
+    if run.cancelled:
+        return ToolResult.fail("test execution cancelled")
     return ToolResult(
         ok=True,
         output={

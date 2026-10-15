@@ -229,6 +229,7 @@ def run_command(
             backend=backend,
             image=image,
             seq=seq,
+            task_id=ctx.task_id,
             env_extra=env_extra,
         )
     except ExecError as exc:

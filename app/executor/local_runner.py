@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -68,6 +69,7 @@ class TestRunResult:
     stderr_tail: str
     duration_ms: int
     timed_out: bool = False
+    cancelled: bool = False
     stdout_bytes: int = 0
     stderr_bytes: int = 0
     stdout_dropped_bytes: int = 0
@@ -145,6 +147,8 @@ def run_tests(
     command: list[str],
     cwd: Path | str,
     timeout_seconds: int | None = None,
+    cancel_event: threading.Event | None = None,
+    on_kill: Callable[[], None] | None = None,
 ) -> TestRunResult:
     """在 cwd 下执行测试命令(列表形式),返回原始结果。
 
@@ -190,6 +194,7 @@ def run_tests(
     t_err.start()
 
     timed_out = False
+    cancelled = False
     deadline = started + timeout
     pipe_hung = False
 
@@ -198,9 +203,24 @@ def run_tests(
             proc.wait(timeout=0.1)
             break
         except subprocess.TimeoutExpired:
+            if cancel_event is not None and cancel_event.is_set():
+                cancelled = True
+                log.info("run_tests received cancellation: %s", command)
+                if on_kill is not None:
+                    try:
+                        on_kill()
+                    except Exception as exc:
+                        log.warning("on_kill callback failed on cancel: %s", exc)
+                _kill_tree(proc)
+                break
             if time.monotonic() >= deadline:
                 timed_out = True
                 log.warning("run_tests timed out after %ss: %s", timeout, command)
+                if on_kill is not None:
+                    try:
+                        on_kill()
+                    except Exception as exc:
+                        log.warning("on_kill callback failed on timeout: %s", exc)
                 _kill_tree(proc)
                 try:
                     proc.wait(timeout=2.0)
@@ -243,12 +263,17 @@ def run_tests(
         stderr_tail=stderr_tail_str,
         duration_ms=duration_ms,
         timed_out=timed_out,
+        cancelled=cancelled,
         stdout_bytes=stdout_drainer.total_bytes,
         stderr_bytes=stderr_drainer.total_bytes,
         stdout_dropped_bytes=stdout_drainer.dropped_bytes,
         stderr_dropped_bytes=stderr_drainer.dropped_bytes,
     )
     log.info(
-        "run_tests done rc=%s in %sms (timed_out=%s)", result.exit_code, duration_ms, timed_out
+        "run_tests done rc=%s in %sms (timed_out=%s cancelled=%s)",
+        result.exit_code,
+        duration_ms,
+        timed_out,
+        cancelled,
     )
     return result
