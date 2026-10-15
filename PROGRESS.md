@@ -1991,4 +1991,46 @@ tasks 表新增 `owner` 与 `principal_id`，旧任务升级回填 `legacy-unown
 在 `app/api/preflight.py` 收集失败时明确前缀 `environment_not_ready`，禁止自动回落宿主或联网安装；
 `tests/test_input_snapshot.py` 新增单文件巨文件、总字节超限、磁盘下限、生产秘密排除/锁文件保留等定向测试。
 验证：定向快照测试 `tests/test_input_snapshot.py` 14 项全过（0.25s）；任务规格与自定义仓库测试 `tests/test_task_spec.py` + `tests/test_custom_task.py` 38 项全过（57.82s）；受理预检测试 `tests/test_preflight.py` 8 项全过（10.06s）；`verify.ps1` 收据 `.validation/20261016-002756-b231a1ac.json`（exit 0，6 个测试文件全部通过，耗时 38.0s）；81 个未变动测试 deferred to CI。
-提交以本段所在 `feat(snapshot)` 定位；下一卡进入 P06。
+提交以 `8d06145` 定位；下一卡进入 P06。
+
+## 2026-10-16 · P06-1 数据策略与模型出站控制
+
+在 `app/security/data_policy.py` 建立统一秘密掩码与数据过滤规范（`sanitize_text`, `redact_data`），覆盖 API Key、SSH 密钥、JWT、密码与内部路径；在 `app/llm/base.py` 增加出站脱敏拦截与未知端点告警；
+提交以 `3389805` 定位；下一卡进入 P06-2。
+
+## 2026-10-16 · P06-2 原始取证事实保留与展示视图脱敏
+
+区分审计原始事实与客户端展示脱敏：run_dir 真实工件（`report.json`, `trajectory.jsonl`）保持真实事实用于离线对账与取证，API 输出层统一经 `redact_data` 脱敏返回；
+提交以 `0746100` 定位；下一卡进入 P08。
+
+## 2026-10-16 · P08 执行沙箱加固与镜像策略
+
+在 `app/config.py` 与 `app/executor/docker_runner.py` 中引入容器参数加固：强制 `--user pp (1000:1000)`、`--cap-drop=ALL`、`--security-opt=no-new-privileges`、`--pids-limit=256`、`--memory=2g`、只读根文件系统与 tmpfs 隔离；开发模式保持兼容；
+提交以 `ecc9f93` 定位；下一卡进入 P09。
+
+## 2026-10-16 · P09 执行单元生命周期闭环
+
+新建 `app/executor/container_lifecycle.py`，管理容器标准受控标签（`patchpilot.managed_by=patchpilot`, `task_id`, `kind`, `container_name`, `created_at`）；
+实现 `kill_and_confirm_container`（先 stop/kill 后轮询 inspect 确认退出）与 `cleanup_orphan_containers`（仅基于平台标签清理失主执行单元，严禁全局 prune）；
+在 `app/executor/local_runner.py` 与 `docker_runner.py` 串联 `cancel_event` 与 `on_kill` 回调，取消/超时精确销毁对应容器；
+验证：`tests/test_container_lifecycle.py` 6 项全过；收据 `.validation/20261016-012135-de3a1ae4.json`；
+提交以 `7586b4a` 定位；下一卡进入 P10-1。
+
+## 2026-10-16 · P10-1 有界受理背压与紧急停发
+
+在 `app/config.py` 增加 `admission_concurrency_limit` (2)、`admission_queue_limit` (20)、`admission_timeout_seconds` (5.0) 与 `emergency_stop`；
+新增 `app/api/admission.py`，实现 `AdmissionController` 信号量背压控制与优雅排队；满队列返回 429（`Retry-After: 5`），排队超时返回 503（`Retry-After: 2`），紧急停发返回 503；
+验证：`tests/test_admission_backpressure.py` 6 项全过；收据 `.validation/20261016-012820-1bb98b39.json`；
+提交以 `fd3ba1d` 定位；下一卡进入 P10-2。
+
+## 2026-10-16 · P10-2 主体/组织额度预留、对账与结算
+
+在 `app/errors.py` 增加 `QuotaExceededError`（API 层统一转 429 并带 `Retry-After: 60`）；
+在 `app/config.py` 增加 `principal_daily_budget_usd`、`principal_daily_token_budget` 与 `task_budget_cap_usd` 字段及正数校验；
+在 `app/storage/repository.py` 增加 `reserve_quota`、`settle_quota`、`release_quota`、`get_quota_reservation` 与 `get_principal_quota_usage`，在 SQLite 锁与事务内实现原子日额度校验与并发抢占；
+在 `app/api/schemas.py` 为 `TaskCreateIn` 增加 `budget_usd` 与 `token_budget` 字段；
+在 `app/api/service.py` 任务受理时前置检查单任务限额、原子预留额度；受理失败/回滚调用 `release_quota` 释放未消费额度；任务终态及 finally 统一通过 `_settle_quota` 结算实际用量（包含在途异常崩溃时的 `unknown_held` 额度，保证取消/崩溃不误退已占额度）；同主体同 spec 幂等重放不双扣；
+在 `app/api/routes.py` 与 `app/api/app.py` 统一处理 `QuotaExceededError` 返回 429 与 Retry-After；
+新增 `tests/test_quota_settlement.py`，覆盖每日现金与 Token 限制拦截、并发抢占最后额度互斥、单任务上限校验、幂等重放不双扣与 HTTP 接口 429 报错；
+验证：`verify.ps1 -Tests @('tests/test_quota_settlement.py', 'tests/test_admission_backpressure.py', 'tests/test_auth.py', 'tests/test_api.py', 'tests/test_container_lifecycle.py')` 收据 `.validation/20261016-014602-63fd1878.json`（6 个测试文件共 63 项全部通过，耗时 52.8s）；91 个未变动测试 deferred to CI；
+提交以 `fed5cfa` 定位；下一卡进入 P11。

@@ -167,12 +167,12 @@
 | P02 | DONE | P01 | 本卡 / e8a67b1 / .validation/20261015-233538-601dd7a5.json (11 passed) |
 | P03 | DONE | P02 | 本卡 / ffab2de / .validation/20261015-235932-4b35cd29.json + targeted 15 passed |
 | P04 | DONE | P00/P02 | 本卡 / 3af075b / .validation/20261016-001717-09ebcad3.json (60 passed) |
-| P05 | DONE | P00/P04 | 本卡 / feat(snapshot) / .validation/20261016-002756-b231a1ac.json (60 passed) |
-| P06 | TODO | P03/P05 | — |
+| P05 | DONE | P00/P04 | 本卡 / 8d06145 / .validation/20261016-002756-b231a1ac.json (60 passed) |
+| P06 | DONE | P03/P05 | P06-1: 3389805 / P06-2: 0746100 / .validation/20261016-010419-54dfb5ff.json (60 passed) |
 | P07 | DONE | P00 | 本卡 / 01b4bf7 / .validation/20261015-234428-ddb46fe6.json (35 passed) |
-| P08 | TODO | P04/P07 | — |
-| P09 | TODO | P07/P08 | — |
-| P10 | TODO | P01/P03/P04 | — |
+| P08 | DONE | P04/P07 | 本卡 / ecc9f93 / .validation/20261016-011317-0639e315.json (60 passed) |
+| P09 | DONE | P07/P08 | 本卡 / 7586b4a / .validation/20261016-012135-de3a1ae4.json (6 passed) |
+| P10 | DONE | P01/P03/P04 | P10-1: fd3ba1d / P10-2: fed5cfa / .validation/20261016-014602-63fd1878.json (63 passed) |
 | P11 | TODO | P01/P03/P04/P09/P10 | — |
 | P12 | TODO | P11 | — |
 | P13 | TODO | P04/P11/P12 | — |
