@@ -70,19 +70,32 @@ class Worker:
             return False
 
         task_id = job["task_id"]
+        fencing_token = int(job.get("fencing_token", 0))
         self._current_job = job
-        log.info("worker %s claimed job %s for task %s", self.worker_id, job["id"], task_id)
+        log.info(
+            "worker %s claimed job %s for task %s (token=%d)",
+            self.worker_id,
+            job["id"],
+            task_id,
+            fencing_token,
+        )
 
+        cancel_event = threading.Event()
         stop_heartbeat = threading.Event()
         heartbeat = threading.Thread(
             target=self._heartbeat_loop,
-            args=(task_id, stop_heartbeat),
+            args=(task_id, fencing_token, stop_heartbeat, cancel_event),
             daemon=True,
             name=f"heartbeat-{task_id[:8]}",
         )
         heartbeat.start()
         try:
-            self.service.execute_task_from_job(task_id, worker_id=self.worker_id)
+            self.service.execute_task_from_job(
+                task_id,
+                worker_id=self.worker_id,
+                fencing_token=fencing_token,
+                cancel_event=cancel_event,
+            )
         except Exception:
             log.exception(
                 "worker %s encountered execution error for task %s",
@@ -95,7 +108,13 @@ class Worker:
             self._current_job = None
         return True
 
-    def _heartbeat_loop(self, task_id: str, stop_event: threading.Event) -> None:
+    def _heartbeat_loop(
+        self,
+        task_id: str,
+        fencing_token: int,
+        stop_event: threading.Event,
+        cancel_event: threading.Event,
+    ) -> None:
         interval = max(self.lease_duration / 3.0, 0.5)
         while not stop_event.wait(interval):
             if self._stop_event.is_set():
@@ -105,13 +124,16 @@ class Worker:
                     task_id=task_id,
                     worker_id=self.worker_id,
                     lease_duration_seconds=self.lease_duration,
+                    fencing_token=fencing_token,
                 )
                 if not renewed:
                     log.warning(
-                        "worker %s lost lease for task %s; stopping heartbeat",
+                        "worker %s lost lease for task %s (token=%d); stopping heartbeat and cancelling execution",
                         self.worker_id,
                         task_id,
+                        fencing_token,
                     )
+                    cancel_event.set()
                     break
             except Exception:
                 log.exception("worker %s heartbeat error for task %s", self.worker_id, task_id)

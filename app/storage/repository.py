@@ -59,7 +59,7 @@ class Repository:
 
     def __init__(self, db_path: Path | str) -> None:
         self._conn: sqlite3.Connection = connect(db_path)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     # ---------- tasks ----------
 
@@ -151,29 +151,62 @@ class Repository:
             "task_spec_schema_version": row["task_spec_schema_version"],
         }
 
-    def set_status_unless_terminal(self, task_id: str, status: str) -> bool:
-        """非终态流转写入(RUNNING 等,N-7/R2 整改):任务已到终态(含并发取消)
-        时写入不生效并返回 False——此前 create_task 置 RUNNING 是无条件写,
-        可以把并发 cancel 写入的 CANCELLED"复活"成 RUNNING。"""
+    def set_status_unless_terminal(
+        self,
+        task_id: str,
+        status: str,
+        *,
+        fencing_token: int | None = None,
+    ) -> bool:
+        """非终态流转写入(RUNNING 等,N-7/R2/P12 整改):任务已到终态(含并发取消)
+        或 fencing_token 失效时不生效并返回 False。"""
         placeholders = ",".join("?" * len(TERMINAL_STATUSES))
         with self._lock, self._conn:
+            if fencing_token is not None:
+                job_row = self._conn.execute(
+                    "SELECT fencing_token FROM jobs WHERE task_id = ?", (task_id,)
+                ).fetchone()
+                if job_row and int(job_row[0] or 0) != fencing_token:
+                    log.warning(
+                        "task %s: set_status_unless_terminal rejected (token caller=%d, db=%d)",
+                        task_id,
+                        fencing_token,
+                        int(job_row[0] or 0),
+                    )
+                    return False
             cur = self._conn.execute(
                 f"UPDATE tasks SET status=? WHERE id=? AND status NOT IN ({placeholders})",
                 (status, task_id, *TERMINAL_STATUSES),
             )
         return cur.rowcount > 0
 
-    def finalize_task(self, task_id: str, status: str, verdict: str | None = None) -> bool:
-        """终态回写(N-7/P3-4 整改):任一终态不可覆写,谁先到终态谁赢。
+    def finalize_task(
+        self,
+        task_id: str,
+        status: str,
+        verdict: str | None = None,
+        *,
+        fencing_token: int | None = None,
+    ) -> bool:
+        """终态回写(N-7/P3-4/P12 整改):任一终态不可覆写,谁先到终态谁赢。
 
-        此前守卫仅 `!= 'CANCELLED'`:只防"完成覆盖取消",防不了终态之间的
-        互相覆写——多进程共库时 recover_stale(B 进程)把 A 的在途任务收敛
-        NEEDS_REVIEW 后,A 跑完 finalize(FINISHED) 会把 NEEDS_REVIEW"复活"。
-        现在守卫下沉为 NOT IN 全终态的单条原子语句,以 rowcount 判定输赢。
-        多进程部署前仍需重审(design.md §7)。
+        P12: 支持 fencing_token 校验。若当前 job 已被更高 token 抢占，旧 worker
+        写入直接拒绝，防止僵尸 worker 覆盖新 worker 的判定。
         """
         placeholders = ",".join("?" * len(TERMINAL_STATUSES))
         with self._lock, self._conn:
+            if fencing_token is not None:
+                job_row = self._conn.execute(
+                    "SELECT fencing_token FROM jobs WHERE task_id = ?", (task_id,)
+                ).fetchone()
+                if job_row and int(job_row[0] or 0) != fencing_token:
+                    log.warning(
+                        "task %s: finalize_task rejected (token caller=%d, db=%d)",
+                        task_id,
+                        fencing_token,
+                        int(job_row[0] or 0),
+                    )
+                    return False
             cur = self._conn.execute(
                 f"UPDATE tasks SET status=?, verdict=?, finished_at=?"
                 f" WHERE id=? AND status NOT IN ({placeholders})",
@@ -243,42 +276,69 @@ class Repository:
         """RUNNING/QUEUED/WAITING_INPUT 的整行(M6 启动恢复的读方;G10 起含等待批准的
         issue-only 任务——等待也是可恢复态,不能当僵尸判死)。
 
-        恢复要按行决定去向(有可用快照 → 重新入队续跑;没有 → 判死),所以需要的不只是
-        idem_key。只读方法,不改状态——写仍集中在 `recover_stale_running`。
+        P12 整改: 仅处理明确失主任务。
+        若任务关联的 job 正由活实例持有有效租约(status='claimed' 且 lease_expires_at > now),
+        或处于持久队列等待中(status='pending'),不得视为僵尸判死。
         """
+        now_str = _now()
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM tasks WHERE status IN ('RUNNING','QUEUED','WAITING_INPUT')"
+                """
+                SELECT t.* FROM tasks t
+                LEFT JOIN jobs j ON t.id = j.task_id
+                WHERE t.status IN ('RUNNING','QUEUED','WAITING_INPUT')
+                  AND (
+                    j.id IS NULL
+                    OR (j.status = 'claimed' AND j.lease_expires_at IS NOT NULL AND j.lease_expires_at <= ?)
+                  )
+                """,
+                (now_str,),
             ).fetchall()
         return [_task_out(r) for r in rows if r is not None]
 
     def recover_stale_running(self, exclude_task_ids: Sequence[str] = ()) -> list[str]:
-        """服务启动时把 RUNNING/QUEUED 的僵尸任务标记为 NEEDS_REVIEW。
+        """服务启动时把失主的 RUNNING/QUEUED 僵尸任务标记为 NEEDS_REVIEW。
 
         N-20 整改:返回被恢复行的 idem_key,调用方(service)据此同步清掉
         Redis 里的残留任务锁——否则重启后同键重试会被 409 卡死到 TTL。
-        M6:`exclude_task_ids` 里的任务**不判死**(将由 service 重新入队续跑),
-        因此既不出现在返回值里、也不被 UPDATE 命中;传空元组时与本方法引入以来
-        的行为逐字相同(既有测试钉住那条路径)。
+        M6:`exclude_task_ids` 里的任务**不判死**(将由 service 重新入队续跑)。
+        P12 整改: 仅收敛失主任务(无 job 或租约已过期的 job)，不伤及活 worker 的任务。
         """
+        now_str = _now()
         excluded = list(exclude_task_ids)
         clause = ""
-        params: tuple[Any, ...] = ()
+        params: list[Any] = [now_str]
         if excluded:
-            clause = f" AND id NOT IN ({','.join('?' * len(excluded))})"
-            params = tuple(excluded)
+            clause = f" AND t.id NOT IN ({','.join('?' * len(excluded))})"
+            params.extend(excluded)
         with self._lock, self._conn:
             rows = self._conn.execute(
-                "SELECT idem_key FROM tasks"
-                " WHERE status IN ('RUNNING','QUEUED','WAITING_INPUT')" + clause,
-                params,
+                """
+                SELECT t.idem_key, t.id FROM tasks t
+                LEFT JOIN jobs j ON t.id = j.task_id
+                WHERE t.status IN ('RUNNING','QUEUED','WAITING_INPUT')
+                  AND (
+                    j.id IS NULL
+                    OR (j.status = 'claimed' AND j.lease_expires_at IS NOT NULL AND j.lease_expires_at <= ?)
+                  )
+                """
+                + clause,
+                tuple(params),
             ).fetchall()
             stale_keys = [r["idem_key"] for r in rows if r["idem_key"]]
-            self._conn.execute(
-                "UPDATE tasks SET status='NEEDS_REVIEW', finished_at=?"
-                " WHERE status IN ('RUNNING','QUEUED','WAITING_INPUT')" + clause,
-                (_now(), *params),
-            )
+            stale_task_ids = [r["id"] for r in rows if r["id"]]
+            if stale_task_ids:
+                placeholders = ",".join("?" * len(stale_task_ids))
+                self._conn.execute(
+                    f"UPDATE tasks SET status='NEEDS_REVIEW', finished_at=?"
+                    f" WHERE id IN ({placeholders})",
+                    (_now(), *stale_task_ids),
+                )
+                self._conn.execute(
+                    f"UPDATE jobs SET status='failed', lease_expires_at=NULL, updated_at=?"
+                    f" WHERE task_id IN ({placeholders}) AND status = 'claimed'",
+                    (_now(), *stale_task_ids),
+                )
         if stale_keys:
             log.warning("recovered %d stale running task(s) as NEEDS_REVIEW", len(stale_keys))
         return stale_keys
@@ -675,10 +735,23 @@ INSERT INTO audit_events (
         task_id: str,
         actual_amount_usd: float,
         actual_tokens: int,
+        fencing_token: int | None = None,
     ) -> dict[str, Any] | None:
-        """结算任务配额 (P10-2)。"""
+        """结算任务配额 (P10-2/P12)。"""
         now = _now()
         with self._lock, self._conn:
+            if fencing_token is not None:
+                job_row = self._conn.execute(
+                    "SELECT fencing_token FROM jobs WHERE task_id = ?", (task_id,)
+                ).fetchone()
+                if job_row and int(job_row[0] or 0) != fencing_token:
+                    log.warning(
+                        "task %s: settle_quota rejected (caller=%d, db=%d)",
+                        task_id,
+                        fencing_token,
+                        int(job_row[0] or 0),
+                    )
+                    return None
             row = self._conn.execute(
                 "SELECT id FROM quota_reservations WHERE task_id = ? AND status = 'reserved'",
                 (task_id,),
@@ -705,10 +778,24 @@ INSERT INTO audit_events (
     def release_quota(
         self,
         task_id: str,
+        *,
+        fencing_token: int | None = None,
     ) -> dict[str, Any] | None:
-        """释放未使用的预留配额 (P10-2)。"""
+        """释放未使用的预留配额 (P10-2/P12)。"""
         now = _now()
         with self._lock, self._conn:
+            if fencing_token is not None:
+                job_row = self._conn.execute(
+                    "SELECT fencing_token FROM jobs WHERE task_id = ?", (task_id,)
+                ).fetchone()
+                if job_row and int(job_row[0] or 0) != fencing_token:
+                    log.warning(
+                        "task %s: release_quota rejected (caller=%d, db=%d)",
+                        task_id,
+                        fencing_token,
+                        int(job_row[0] or 0),
+                    )
+                    return None
             row = self._conn.execute(
                 "SELECT id FROM quota_reservations WHERE task_id = ? AND status = 'reserved'",
                 (task_id,),
@@ -871,21 +958,27 @@ INSERT INTO audit_events (
         task_id: str,
         worker_id: str,
         lease_duration_seconds: float = 60.0,
+        fencing_token: int | None = None,
     ) -> bool:
-        """续期 Job 租约心跳 (P11-1)。仅当前持有 worker 且处于 claimed 状态时有效。"""
+        """续期 Job 租约心跳 (P11-1/P12)。仅当前持有 worker 且处于 claimed 状态时有效。"""
         now = _now()
         lease_exp = (datetime.now(UTC) + timedelta(seconds=lease_duration_seconds)).isoformat(
             timespec="milliseconds"
         )
         with self._lock, self._conn:
+            clause = "WHERE task_id = ? AND worker_id = ? AND status = 'claimed'"
+            params: list[Any] = [lease_exp, now, task_id, worker_id]
+            if fencing_token is not None:
+                clause += " AND fencing_token = ?"
+                params.append(fencing_token)
             cur = self._conn.execute(
-                """
+                f"""
                 UPDATE jobs
                 SET lease_expires_at = ?,
                     updated_at = ?
-                WHERE task_id = ? AND worker_id = ? AND status = 'claimed'
+                {clause}
                 """,
-                (lease_exp, now, task_id, worker_id),
+                tuple(params),
             )
             return cur.rowcount > 0
 
@@ -894,33 +987,30 @@ INSERT INTO audit_events (
         *,
         task_id: str,
         worker_id: str | None = None,
+        fencing_token: int | None = None,
         status: str = "completed",
     ) -> bool:
-        """完成/关闭 Job (P11-1)。清除租约。"""
+        """完成/关闭 Job (P11-1/P12)。清除租约。"""
         now = _now()
         with self._lock, self._conn:
+            clause = "WHERE task_id = ?"
+            params: list[Any] = [status, now, task_id]
             if worker_id is not None:
-                cur = self._conn.execute(
-                    """
-                    UPDATE jobs
-                    SET status = ?,
-                        lease_expires_at = NULL,
-                        updated_at = ?
-                    WHERE task_id = ? AND (worker_id = ? OR worker_id IS NULL)
-                    """,
-                    (status, now, task_id, worker_id),
-                )
-            else:
-                cur = self._conn.execute(
-                    """
-                    UPDATE jobs
-                    SET status = ?,
-                        lease_expires_at = NULL,
-                        updated_at = ?
-                    WHERE task_id = ?
-                    """,
-                    (status, now, task_id),
-                )
+                clause += " AND (worker_id = ? OR worker_id IS NULL)"
+                params.append(worker_id)
+            if fencing_token is not None:
+                clause += " AND (fencing_token = ? OR fencing_token = 0)"
+                params.append(fencing_token)
+            cur = self._conn.execute(
+                f"""
+                UPDATE jobs
+                SET status = ?,
+                    lease_expires_at = NULL,
+                    updated_at = ?
+                {clause}
+                """,
+                tuple(params),
+            )
             return cur.rowcount > 0
 
     def submit_task_atomic(
@@ -1007,31 +1097,24 @@ INSERT INTO audit_events (
 
             # 3. 插入任务与契约 (受 uq_tasks_active_principal_idem 幂等唯一约束)
             try:
-                self._conn.execute(
-                    """
-                    INSERT INTO tasks (
-                        id, idem_key, bug_id, repo_path, issue_text, max_rounds,
-                        engine, model_provider, status, run_dir, created_at, owner, principal_id,
-                        task_spec_json, task_spec_hash, task_spec_schema_version
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'QUEUED', ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        task_id,
-                        idem_key,
-                        bug_id,
-                        repo_path,
-                        issue_text,
-                        max_rounds,
-                        engine,
-                        model_provider,
-                        run_dir,
-                        now,
-                        owner,
-                        principal_id,
-                        spec_json,
-                        idem_key,
-                        schema_version,
-                    ),
+                self.create_task(
+                    task_id=task_id,
+                    idem_key=idem_key,
+                    bug_id=bug_id,
+                    repo_path=repo_path,
+                    issue_text=issue_text,
+                    max_rounds=max_rounds,
+                    engine=engine,
+                    model_provider=model_provider,
+                    run_dir=run_dir,
+                    owner=owner,
+                    principal_id=principal_id,
+                )
+                self.set_task_spec(
+                    task_id,
+                    spec_json=spec_json,
+                    spec_hash=idem_key,
+                    schema_version=schema_version,
                 )
             except sqlite3.IntegrityError as exc:
                 from app.errors import PatchPilotError

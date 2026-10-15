@@ -467,8 +467,9 @@ class TaskService:
         *,
         cancel_event: threading.Event | None = None,
         worker_id: str = "standalone-worker",
+        fencing_token: int | None = None,
     ) -> None:
-        """从持久化作业队列中执行已领取的任务 (P11-2)。
+        """从持久化作业队列中执行已领取的任务 (P11-2/P12)。
 
         由独立 Worker 进程调用。从落盘契约 task_spec.json 重建执行上下文，
         保持与 API 进程内调度完全一致的执行与生命周期闭环。
@@ -514,6 +515,7 @@ class TaskService:
             replay_script=list(spec.replay) if spec.replay else None,
             request_id=f"worker-{worker_id}",
             worker_id=worker_id,
+            fencing_token=fencing_token,
         )
 
     def _execute(
@@ -529,6 +531,7 @@ class TaskService:
         request_id: str = "",
         resume: bool = False,
         worker_id: str = "in-process-worker",
+        fencing_token: int | None = None,
     ) -> None:
         # P3-9:工作线程首行设置日志上下文——本任务在此线程内产生的业务日志
         # 都带 task_id(AGENTS 约定的装配面);线程复用,finally 必须 reset。
@@ -546,6 +549,7 @@ class TaskService:
                 replay_script,
                 resume,
                 worker_id=worker_id,
+                fencing_token=fencing_token,
             )
         finally:
             reset_task_context(context_tokens)
@@ -562,11 +566,14 @@ class TaskService:
         replay_script: list[dict[str, Any]] | None = None,
         resume: bool = False,
         worker_id: str = "in-process-worker",
+        fencing_token: int | None = None,
     ) -> None:
         # P3-10 整改:置 RUNNING 挪到执行线程首行——DB 的 RUNNING = 真正开始执行
         # (受理但排队中保持 QUEUED)。条件写让位于并发取消/回滚:返回 False
         # 说明任务已到终态(如排队窗口内被取消),不再执行,直接收敛清理。
-        if not self.repo.set_status_unless_terminal(task_id, "RUNNING"):
+        if not self.repo.set_status_unless_terminal(
+            task_id, "RUNNING", fencing_token=fencing_token
+        ):
             log.info("task %s already terminal before start; skipping execution", task_id)
             self._futures.pop(task_id, None)
             self._cancels.unregister(task_id)
@@ -683,9 +690,13 @@ class TaskService:
             # 先落产物,再翻终态:轮询方见到终态时轨迹/报告必然已可查。
             # N-7 整改:终态回写用原子守卫——任务已被取消时 finalize 返回 False,
             # 自然完成不得覆盖 CANCELLED(此前先读后写是 check-then-act,双向可打穿)
+            if cancel_event.is_set():
+                raise TaskCancelled(f"task {task_id} cancelled before finalization")
             self._persist_artifacts(task_id, result, run_dir)
-            finalized = self.repo.finalize_task(task_id, result.status, result.verdict)
-            self._settle_quota(task_id, run_dir, result=result)
+            finalized = self.repo.finalize_task(
+                task_id, result.status, result.verdict, fencing_token=fencing_token
+            )
+            self._settle_quota(task_id, run_dir, result=result, fencing_token=fencing_token)
             # P3-12:终态回收——紧跟终态回写、仅在 FINISHED 且赢了终态竞争时
             # 回收可弃集(workspace/checkpoints);取证文件(report/diff/轨迹/
             # junit)永久保留,失败/取消现场一律不回收(策略见 app/api/recycle.py)。
@@ -694,21 +705,23 @@ class TaskService:
             if finalized and result.status == "FINISHED" and settings.recycle_finished_workspace:
                 recycle_run_dir(run_dir)
         except TaskError as exc:
-            self.repo.finalize_task(task_id, "INVALID_TASK", "failed")
+            self.repo.finalize_task(task_id, "INVALID_TASK", "failed", fencing_token=fencing_token)
             log.error("task %s invalid: %s", task_id, exc)
         except TaskCancelled as exc:
             # 协作式取消是正常业务结局:info 级,不得记成 "task crashed" 告警噪声(N-18)
-            self.repo.finalize_task(task_id, "CANCELLED", "cancelled")
+            self.repo.finalize_task(task_id, "CANCELLED", "cancelled", fencing_token=fencing_token)
             log.info("task %s cancelled at turn boundary", task_id)
             _ = exc
         except Exception as exc:
             # N-7:同上,崩溃收敛也走原子守卫,不得覆盖 CANCELLED
-            self.repo.finalize_task(task_id, "NEEDS_REVIEW", "needs_review")
+            self.repo.finalize_task(
+                task_id, "NEEDS_REVIEW", "needs_review", fencing_token=fencing_token
+            )
             log.exception("task %s crashed", task_id)
             _ = exc
         finally:
             try:
-                self._settle_quota(task_id, run_dir)
+                self._settle_quota(task_id, run_dir, fencing_token=fencing_token)
             except Exception:
                 log.exception("task %s quota settlement in finally failed", task_id)
             if hasattr(self.repo, "complete_job"):
@@ -722,6 +735,7 @@ class TaskService:
                     self.repo.complete_job(
                         task_id=task_id,
                         worker_id=worker_id,
+                        fencing_token=fencing_token,
                         status=final_status,
                     )
                 except Exception:
@@ -775,8 +789,14 @@ class TaskService:
             applied=bool(report.get("changed_files")),
         )
 
-    def _settle_quota(self, task_id: str, run_dir: Path, result: Any | None = None) -> None:
-        """P10-2: 结算任务配额。优先从 result 结算, fallback 从 run_dir 账本/报告读取。"""
+    def _settle_quota(
+        self,
+        task_id: str,
+        run_dir: Path,
+        result: Any | None = None,
+        fencing_token: int | None = None,
+    ) -> None:
+        """P10-2/P12: 结算任务配额。优先从 result 结算, fallback 从 run_dir 账本/报告读取。"""
         if not hasattr(self.repo, "get_quota_reservation") or not hasattr(
             self.repo, "settle_quota"
         ):
@@ -830,6 +850,7 @@ class TaskService:
             task_id=task_id,
             actual_amount_usd=actual_cost_usd,
             actual_tokens=actual_tokens,
+            fencing_token=fencing_token,
         )
 
     # ---------- 查询与控制 ----------
