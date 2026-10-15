@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -9,7 +10,16 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
-from app.api.auth import require_token
+from app.api.auth import (
+    ACTION_APPROVE,
+    ACTION_CANCEL,
+    ACTION_CREATE,
+    ACTION_MESSAGE,
+    ACTION_READ,
+    authorize_task_access,
+    get_current_principal,
+    require_token,
+)
 from app.api.events import stream_task_events
 from app.api.report import render_markdown
 from app.api.schemas import (
@@ -40,6 +50,8 @@ def _error(status: int, code: str, message: str, task_id: str | None = None) -> 
 
 @router.post("/tasks")
 def create_task(payload: TaskCreateIn, request: Request):
+    principal = get_current_principal(request)
+    owner = str(principal.get("id") or "legacy-unowned")
     try:
         task, created = _service(request).create_task(
             bug_id=payload.bug_id,
@@ -54,7 +66,20 @@ def create_task(payload: TaskCreateIn, request: Request):
             replay_script=payload.replay_script,
             agent_profile=payload.agent_profile,
             arm=payload.arm,
+            owner=owner,
+            principal_id=owner,
         )
+        if created and hasattr(_service(request).repo, "record_audit_event"):
+            p_hash = hashlib.sha256(payload.model_dump_json().encode("utf-8")).hexdigest()
+            _service(request).repo.record_audit_event(
+                actor_id=owner,
+                action=ACTION_CREATE,
+                task_id=task.get("id") or task.get("task_id"),
+                target_type="task",
+                target_id=task.get("id") or task.get("task_id"),
+                payload_hash=p_hash,
+                result="success",
+            )
     except InvalidRequestError as exc:
         # 请求参数自相矛盾:422(资源不存在仍走 TaskError→404)
         return _error(422, "invalid_request", str(exc))
@@ -70,14 +95,24 @@ def create_task(payload: TaskCreateIn, request: Request):
 @router.get("/tasks", response_model=TaskListOut)
 def list_tasks(request: Request, limit: int = 50):
     # N-19 整改:SQLite 对 LIMIT -1 语义为"不限",负数 limit 必须夹到 0
-    rows = _service(request).list_tasks(limit=max(0, min(limit, 200)))
+    principal = get_current_principal(request)
+    role = str(principal.get("role") or "member")
+    effective_limit = max(0, min(limit, 200))
+    if role in ("admin", "reviewer"):
+        rows = _service(request).list_tasks(limit=effective_limit)
+    else:
+        principal_id = str(principal.get("id") or "legacy-unowned")
+        rows = _service(request).list_tasks(limit=effective_limit, principal_id=principal_id)
     return TaskListOut(tasks=[TaskOut(**row) for row in rows])
 
 
 @router.get("/tasks/{task_id}", response_model=TaskOut)
 def get_task(task_id: str, request: Request):
+    principal = get_current_principal(request)
     task = _service(request).get_task(task_id)
-    if task is None:
+    if task is None or not authorize_task_access(
+        principal, task, ACTION_READ, repo=_service(request).repo
+    ):
         return _error(404, "invalid_task", f"task not found: {task_id}")
     return TaskOut(**task)
 
@@ -85,7 +120,9 @@ def get_task(task_id: str, request: Request):
 @router.get("/tasks/{task_id}/trajectory")
 def get_trajectory(task_id: str, request: Request, limit: int = 200, offset: int = 0):
     service = _service(request)
-    if service.get_task(task_id) is None:
+    principal = get_current_principal(request)
+    task = service.get_task(task_id)
+    if task is None or not authorize_task_access(principal, task, ACTION_READ, repo=service.repo):
         return _error(404, "invalid_task", f"task not found: {task_id}")
     events = service.trajectory(task_id, limit=max(0, min(limit, 1000)), offset=max(0, offset))
     return TrajectoryPage(task_id=task_id, total_returned=len(events), offset=offset, events=events)
@@ -94,8 +131,9 @@ def get_trajectory(task_id: str, request: Request, limit: int = 200, offset: int
 @router.get("/tasks/{task_id}/report")
 def get_report(task_id: str, request: Request, format: str = "json"):
     service = _service(request)
+    principal = get_current_principal(request)
     task = service.get_task(task_id)
-    if task is None:
+    if task is None or not authorize_task_access(principal, task, ACTION_READ, repo=service.repo):
         return _error(404, "invalid_task", f"task not found: {task_id}")
     run_dir = Path(task["run_dir"]) if task.get("run_dir") else None
     report_path = run_dir / "report.json" if run_dir else None
@@ -114,9 +152,24 @@ def get_report(task_id: str, request: Request, format: str = "json"):
 
 @router.post("/tasks/{task_id}/cancel", response_model=TaskOut)
 def cancel_task(task_id: str, request: Request):
+    principal = get_current_principal(request)
+    task = _service(request).get_task(task_id)
+    if task is None or not authorize_task_access(
+        principal, task, ACTION_CANCEL, repo=_service(request).repo
+    ):
+        return _error(404, "invalid_task", f"task not found: {task_id}")
     try:
-        task = _service(request).cancel_task(task_id)
-        return TaskOut(**task)
+        cancelled = _service(request).cancel_task(task_id)
+        if hasattr(_service(request).repo, "record_audit_event"):
+            _service(request).repo.record_audit_event(
+                actor_id=str(principal.get("id") or ""),
+                action=ACTION_CANCEL,
+                task_id=task_id,
+                target_type="task",
+                target_id=task_id,
+                result="success",
+            )
+        return TaskOut(**cancelled)
     except TaskError as exc:
         return _error(404, "invalid_task", str(exc))
     except PatchPilotError as exc:
@@ -126,13 +179,31 @@ def cancel_task(task_id: str, request: Request):
 @router.post("/tasks/{task_id}/acceptance", response_model=AcceptanceOut)
 def approve_acceptance(task_id: str, payload: AcceptanceApproveIn, request: Request):
     """G10:trusted_user 批准 diagnose_then_repair 任务的验收清单(冻结 manifest)。"""
+    principal = get_current_principal(request)
+    task = _service(request).get_task(task_id)
+    if task is None or not authorize_task_access(
+        principal, task, ACTION_APPROVE, repo=_service(request).repo
+    ):
+        return _error(404, "invalid_task", f"task not found: {task_id}")
     try:
+        actor_id = str(principal.get("id") or "trusted_user")
         result = _service(request).approve_acceptance(
             task_id,
             proposal_id=payload.proposal_id,
             content_hash=payload.content_hash,
             expected_revision=payload.expected_revision,
+            approved_by=actor_id,
         )
+        if hasattr(_service(request).repo, "record_audit_event"):
+            _service(request).repo.record_audit_event(
+                actor_id=actor_id,
+                action=ACTION_APPROVE,
+                task_id=task_id,
+                target_type="acceptance_manifest",
+                target_id=payload.proposal_id,
+                payload_hash=payload.content_hash,
+                result="success",
+            )
         return AcceptanceOut(**result)
     except TaskError as exc:
         return _error(404, "invalid_task", str(exc), task_id=task_id)
@@ -167,6 +238,12 @@ def submit_message(task_id: str, payload: MessageIn, request: Request):
     与 acceptance 批准同一条纪律:输入只经已配置鉴权的 HTTP 面写入(router 级
     require_token),模型文字与仓库文件都不是输入来源。
     """
+    principal = get_current_principal(request)
+    task = _service(request).get_task(task_id)
+    if task is None or not authorize_task_access(
+        principal, task, ACTION_MESSAGE, repo=_service(request).repo
+    ):
+        return _error(404, "invalid_task", f"task not found: {task_id}")
     try:
         result = _service(request).submit_message(
             task_id,
@@ -176,6 +253,16 @@ def submit_message(task_id: str, payload: MessageIn, request: Request):
             expected_revision=payload.expected_revision,
             idem_key=payload.idem_key,
         )
+        if hasattr(_service(request).repo, "record_audit_event"):
+            _service(request).repo.record_audit_event(
+                actor_id=str(principal.get("id") or ""),
+                action=ACTION_MESSAGE,
+                task_id=task_id,
+                target_type="message",
+                target_id=payload.question_id or payload.idem_key or None,
+                payload_hash=hashlib.sha256(payload.text.encode("utf-8")).hexdigest(),
+                result="success",
+            )
         return MessageOut(**result)
     except TaskError as exc:
         return _error(404, "invalid_task", str(exc), task_id=task_id)
@@ -188,6 +275,12 @@ def submit_message(task_id: str, payload: MessageIn, request: Request):
 @router.get("/tasks/{task_id}/question", response_model=QuestionOut)
 def get_question(task_id: str, request: Request):
     """G11:当前未回答问题与输入版本(CLI 展示问题/选项;无问题时 question=null)。"""
+    principal = get_current_principal(request)
+    task = _service(request).get_task(task_id)
+    if task is None or not authorize_task_access(
+        principal, task, ACTION_READ, repo=_service(request).repo
+    ):
+        return _error(404, "invalid_task", f"task not found: {task_id}")
     try:
         result = _service(request).pending_question(task_id)
         return QuestionOut(**result)
@@ -206,14 +299,18 @@ def task_events(task_id: str, request: Request, last_event_id: int = 0):
     只收其后的事件。任务已终态且没有未读事件时立即以一条 terminal 状态帧结束。
     """
     service = _service(request)
-    if service.get_task(task_id) is None:
+    principal = get_current_principal(request)
+    task = service.get_task(task_id)
+    if task is None or not authorize_task_access(principal, task, ACTION_READ, repo=service.repo):
         return _error(404, "invalid_task", f"task not found: {task_id}")
     resume_id = max(int(last_event_id or 0), 0)
     header = request.headers.get("last-event-id") or ""
     if header.strip().isdigit():
         resume_id = max(resume_id, int(header.strip()))
+    credential = getattr(request.state, "credential", None)
+    cred_id = credential.get("id") if credential else None
     return StreamingResponse(
-        stream_task_events(service, task_id, after_id=resume_id),
+        stream_task_events(service, task_id, after_id=resume_id, credential_id=cred_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

@@ -1950,5 +1950,17 @@ tasks 表新增 `owner` 与 `principal_id`，旧任务升级回填 `legacy-unown
 `parse_junit_xml` 增加文件大小校验与解析异常保护，捕获 `ET.ParseError`、`OSError`、`ValueError`、`UnicodeDecodeError`，转换为结构化合成错误（`signature="error: invalid junit xml"` 或 `"error: junit xml too large"`），判定口径直接判未通过（`all_passed=False`），杜绝进程崩溃；
 新增 `tests/test_test_output_limits.py`，完整覆盖超大流式输出丢弃统计、无换行长流消费、超大 XML 拦截、畸形 XML 结构化容错与合规 XML 正常解析。
 验证：定向单元测试 `tests/test_test_output_limits.py` 5 项全过（0.21s）；执行器全集回归 `verify.ps1 -Tests @('tests/test_test_output_limits.py', 'tests/test_executor.py')` 收据 `.validation/20261015-234428-ddb46fe6.json`（5 步全绿，耗时 24.168s）。
-提交以本段所在 `feat(executor)` 定位；下一卡进入 P03。
+提交以 `01b4bf7` 定位；下一卡进入 P03。
+
+## 2026-10-15 · P03 资源级授权与可归因审计
+
+在 `app/storage/repository.py` 扩展不可变审计日志写入与检索（`record_audit_event`, `list_audit_events`）并增加 `get_credential` 查询；
+在 `app/api/auth.py` 固化权限矩阵（`ACTION_CREATE`, `ACTION_READ`, `ACTION_CANCEL`, `ACTION_APPROVE`, `ACTION_MESSAGE`），实现 `authorize_task_access`：任务属主拥有全部操作权；`admin` 拥有全局操作权，跨属主访问自动记录 `admin_cross_owner_access` 审计；`reviewer` 拥有只读与验收清单批准权，禁止取消与追加消息；普通成员与服务账号禁止跨属主访问，越权统一记录 `task_access_denied` 审计且向客户端严格返回 404（`invalid_task: task not found`），彻底杜绝通过状态码探测任务存在性；
+在 `app/api/service.py` 将主体并入任务创建与幂等判定域（`owner`, `principal_id`, `lock_key = f"task:{principal_id}:{idem_key}"`），不同主体互不冲突与劫持；
+在 `app/api/routes.py` 贯通全部 12 个端点的主体鉴权与归因审计；
+在 `app/api/events.py` 为 SSE 长连接增加凭据生命周期校验，凭据被吊销时即刻输出 error 帧并正常断开连接；
+新增 `tests/test_resource_authorization.py` 覆盖跨主体防泄漏、列表过滤、reviewer/admin 权限、越权审计与 SSE 吊销。
+验证：定向权限测试 `tests/test_resource_authorization.py` 3 项全过（0.95s）；认证与流式测试 `tests/test_auth.py` + `tests/test_event_stream.py` 12 项全过（14.92s）；快速收据 `.validation/20261015-235932-4b35cd29.json`（静态检查与 Ruff 全过，6 个测试达 90 秒预算停止记 budget_exhausted，不自动重启扩大，完整回归留 CI）。
+提交以本段所在 `feat(auth)` 定位；下一卡进入 P04。
+
 

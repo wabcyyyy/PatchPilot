@@ -158,6 +158,8 @@ class TaskService:
         replay_script: list[dict[str, Any]] | None = None,
         agent_profile: str | None = None,
         arm: str = "agent",
+        owner: str = "legacy-unowned",
+        principal_id: str = "legacy-unowned",
     ) -> tuple[dict[str, Any], bool]:
         """创建任务;返回 (任务, 是否本次新建)。
 
@@ -239,11 +241,11 @@ class TaskService:
         )
         idem_key = spec.task_spec_hash
 
-        existing = self.repo.find_by_idem_key(idem_key)
+        existing = self.repo.find_by_idem_key(idem_key, principal_id=principal_id)
         if existing and existing["status"] not in TERMINAL_STATUSES:
             return existing, False  # 幂等:同键任务仍在途
 
-        lock_key = f"task:{idem_key}"
+        lock_key = f"task:{principal_id}:{idem_key}"
         if not self.lock.acquire(lock_key, ttl_seconds=get_settings().task_timeout_seconds + 60):
             # 锁被占但库里查不到(极小窗口):按幂等冲突处理
             raise PatchPilotError(f"task for {bug.id} is already running")
@@ -299,6 +301,8 @@ class TaskService:
                 engine=engine,
                 model_provider=model,
                 run_dir=str(run_dir),
+                owner=owner,
+                principal_id=principal_id,
             )
             self.repo.set_task_spec(
                 task_id,
@@ -591,8 +595,13 @@ class TaskService:
     def get_task(self, task_id: str) -> dict[str, Any] | None:
         return self.repo.get_task(task_id)
 
-    def list_tasks(self, limit: int = 50) -> list[dict[str, Any]]:
-        return self.repo.list_tasks(limit)
+    def list_tasks(
+        self,
+        limit: int = 50,
+        owner: str | None = None,
+        principal_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self.repo.list_tasks(limit=limit, owner=owner, principal_id=principal_id)
 
     def trajectory(self, task_id: str, limit: int, offset: int) -> list[dict[str, Any]]:
         return self.repo.get_trajectory(task_id, limit, offset)
@@ -620,6 +629,7 @@ class TaskService:
         proposal_id: str,
         content_hash: str,
         expected_revision: int,
+        approved_by: str = "trusted_user",
     ) -> dict[str, Any]:
         """G10:trusted_user 批准验收清单——冻结 manifest 并唤醒等待中的执行线程。
 
@@ -641,7 +651,6 @@ class TaskService:
                 "task is not in diagnose_then_repair mode; its acceptance list was fixed at intake"
             )
         from app.diagnosis.proposal import (
-            APPROVED_BY_TRUSTED_USER,
             ManifestIntegrityError,
             freeze_manifest,
             load_proposal,
@@ -662,7 +671,7 @@ class TaskService:
             run_dir,
             expected_hash=content_hash,
             expected_revision=expected_revision,
-            approved_by=APPROVED_BY_TRUSTED_USER,
+            approved_by=approved_by,
         )
         resumed = False
         if self._approvals.has_waiter(task_id):

@@ -103,3 +103,92 @@ def require_token(request: Request) -> None:
         "role": "admin",
     }
     request.state.credential = None
+
+
+ACTION_CREATE = "task_create"
+ACTION_READ = "task_read"
+ACTION_CANCEL = "task_cancel"
+ACTION_APPROVE = "task_approve"
+ACTION_MESSAGE = "task_message"
+
+
+def authorize_task_access(
+    principal: dict[str, Any],
+    task: dict[str, Any],
+    action: str,
+    *,
+    repo: Any = None,
+    request_id: str | None = None,
+) -> bool:
+    """资源级授权与可归因审计 (P03)。
+
+    权限矩阵：
+    - 主体为任务属主：全部放行；
+    - admin：全部放行；跨属主访问自动记录 audit_event；
+    - reviewer：放行读 (ACTION_READ) 与验收批准 (ACTION_APPROVE)；禁止操作他人任务；
+    - member / service_account：仅限自身任务；跨任务访问一律拒绝；
+    - 拒绝时记录审计；返回 False（路由层收敛为 404，不泄露任务存在性）。
+    """
+    settings = get_settings()
+    principal_id = str(principal.get("id") or "")
+    role = str(principal.get("role") or "member")
+    task_id = str(task.get("id") or task.get("task_id") or "")
+    task_owner = str(task.get("owner") or task.get("principal_id") or "legacy-unowned")
+
+    is_owner = (task_owner != "legacy-unowned" and principal_id == task_owner) or (
+        task.get("principal_id") not in (None, "legacy-unowned")
+        and principal_id == task.get("principal_id")
+    )
+
+    # 1. 属主自身访问
+    if is_owner:
+        return True
+
+    # 2. 开发模式兼容旧数据
+    if settings.deployment_mode == "development" and task_owner == "legacy-unowned":
+        return True
+
+    # 3. 管理员 (admin) 跨属主访问
+    if role == "admin":
+        if repo and hasattr(repo, "record_audit_event"):
+            import json
+
+            detail = json.dumps(
+                {"cross_owner": True, "target_owner": task_owner, "action": action},
+                ensure_ascii=False,
+            )
+            repo.record_audit_event(
+                actor_id=principal_id,
+                action="admin_cross_owner_access",
+                task_id=task_id,
+                request_id=request_id,
+                target_type="task",
+                target_id=task_id,
+                detail_json=detail,
+                result="allowed",
+            )
+        return True
+
+    # 4. 评审员 (reviewer) 跨属主访问 (仅允许只读与验收批准)
+    if role == "reviewer" and action in (ACTION_READ, ACTION_APPROVE):
+        return True
+
+    # 5. 越权拒绝并记录审计
+    if repo and hasattr(repo, "record_audit_event"):
+        import json
+
+        detail = json.dumps(
+            {"target_owner": task_owner, "attempted_action": action, "role": role},
+            ensure_ascii=False,
+        )
+        repo.record_audit_event(
+            actor_id=principal_id,
+            action="task_access_denied",
+            task_id=task_id,
+            request_id=request_id,
+            target_type="task",
+            target_id=task_id,
+            detail_json=detail,
+            result="denied",
+        )
+    return False

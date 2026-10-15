@@ -110,12 +110,14 @@ def stream_task_events(
     poll_seconds: float = 0.5,
     heartbeat_seconds: float = 15.0,
     max_polls: int = 0,
+    credential_id: str | None = None,
 ) -> Iterator[str]:
     """按行产出 SSE 帧;任务到终态并冲净事件后结束(max_polls>0 仅供离线测试)。
 
     开场只在**没有未读事件**时发一条现场状态帧(重连到已完结任务不会挂住);
     有未读事件时先冲事件、最后以 terminal 状态帧收口——客户端永远不会在看到终态帧之后
     才发现还有没收到的事件。
+    支持凭据生命周期校验(P03):流式中凭据被吊销立即终止。
     """
     from app.storage.repository import TERMINAL_STATUSES
 
@@ -133,6 +135,16 @@ def stream_task_events(
     last_emit = time.monotonic()
     polls = 0
     while True:
+        if credential_id and getattr(service, "repo", None):
+            cred = service.repo.get_credential(credential_id)
+            if not cred or cred.get("revoked_at") is not None:
+                yield sse_frame(
+                    event_id=None,
+                    event_type="error",
+                    payload={"code": "unauthorized", "message": "credential revoked"},
+                )
+                return
+
         rows = service.events_since(task_id, last_id, limit=200)
         for row in rows:
             row_id = row.get("id")

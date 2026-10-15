@@ -524,3 +524,75 @@ class Repository:
                     " FROM credentials ORDER BY created_at DESC"
                 ).fetchall()
         return [dict(r) for r in rows]
+
+    def get_credential(self, credential_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM credentials WHERE id = ?", (credential_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def record_audit_event(
+        self,
+        *,
+        actor_id: str,
+        action: str,
+        task_id: str | None = None,
+        request_id: str | None = None,
+        target_type: str | None = None,
+        target_id: str | None = None,
+        payload_hash: str | None = None,
+        detail_json: str | None = None,
+        result: str = "success",
+    ) -> str:
+        """记录不可变结构化审计日志 (P03)。"""
+        event_id = f"aud-{uuid.uuid4().hex[:12]}"
+        timestamp = _now()
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+INSERT INTO audit_events (
+  event_id, actor_id, action, task_id, request_id, timestamp,
+  target_type, target_id, payload_hash, detail_json, result
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+""",
+                (
+                    event_id,
+                    actor_id,
+                    action,
+                    task_id,
+                    request_id,
+                    timestamp,
+                    target_type,
+                    target_id,
+                    payload_hash,
+                    detail_json,
+                    result,
+                ),
+            )
+        return event_id
+
+    def list_audit_events(
+        self,
+        *,
+        task_id: str | None = None,
+        actor_id: str | None = None,
+        action: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM audit_events WHERE 1=1"
+        params: list[Any] = []
+        if task_id is not None:
+            query += " AND task_id = ?"
+            params.append(task_id)
+        if actor_id is not None:
+            query += " AND actor_id = ?"
+            params.append(actor_id)
+        if action is not None:
+            query += " AND action = ?"
+            params.append(action)
+        query += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        with self._lock:
+            rows = self._conn.execute(query, tuple(params)).fetchall()
+        return [dict(r) for r in rows]

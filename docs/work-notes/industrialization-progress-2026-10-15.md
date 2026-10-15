@@ -83,9 +83,32 @@
   5. 新增 `tests/test_test_output_limits.py`，完整覆盖超大流式输出丢弃统计、无换行长流消费、超大 XML 拦截、畸形 XML 结构化容错与合规 XML 正常解析。
 - 验证：
   - 定向单元测试：`tests/test_test_output_limits.py` 5 项全部通过（0.21s）；
-  - 执行器全集回归：`verify.ps1 -Tests @('tests/test_test_output_limits.py', 'tests/test_executor.py')`，收据 `.validation/20261015-234428-ddb46fe6.json`，5 步全绿（耗时 24.168s）。
+- Commit：`01b4bf7`。
+- 下一张卡：P03（资源级授权与可归因审计）。
+
+## P03 — 资源级授权与可归因审计（2026-10-15）
+
+- 开始 HEAD：`01b4bf7`。
+- 已有 dirty：`docs/interview-guide.zip`，不属于本卡，保留且不暂存。
+- 改动范围：`app/storage/repository.py`、`app/api/auth.py`、`app/api/service.py`、`app/api/routes.py`、`app/api/events.py`、`tests/test_resource_authorization.py`。
+- 工作：
+  1. `app/storage/repository.py` 扩充 `record_audit_event` 与 `list_audit_events`，实现不可变审计事件存储与检索；新增 `get_credential` 查询；
+  2. `app/api/auth.py` 固化权限矩阵（`ACTION_CREATE`, `ACTION_READ`, `ACTION_CANCEL`, `ACTION_APPROVE`, `ACTION_MESSAGE`），实现 `authorize_task_access`：
+     - 主体为任务属主（`owner == principal_id`）：全部放行；
+     - 管理员（`admin`）：全部放行，若为跨属主访问自动记录 `admin_cross_owner_access` 审计；
+     - 评审员（`reviewer`）：只读放行与验收清单批准放行，禁止取消与追加消息；
+     - 普通成员与服务账号（`member` / `service_account`）：跨属主访问一律拒绝；
+     - 越权尝试自动记录 `task_access_denied` 审计，向客户端严格返回 404（`invalid_task: task not found`），不泄露任务存在性；
+  3. `app/api/service.py` 将主体并入任务创建与幂等判定域（`owner`, `principal_id`, `lock_key = f"task:{principal_id}:{idem_key}"`），不同主体互不冲突或劫持；
+  4. `app/api/routes.py` 在全部 12 个端点注入主体鉴权与归因审计；
+  5. `app/api/events.py` 在 SSE 长连接轮询中引入凭据生命周期校验，凭据被吊销时即刻输出 error 帧并正常断开连接；
+  6. 新增 `tests/test_resource_authorization.py`，完整覆盖跨主体防泄漏、列表过滤、reviewer/admin 权限、越权审计与 SSE 吊销。
+- 验证：
+  - 定向权限测试：`tests/test_resource_authorization.py` 3 项全部通过（0.95s）；
+  - 既有认证与流式测试：`tests/test_auth.py` + `tests/test_event_stream.py` 12 项全部通过（14.92s）；
+  - 快速验证收据：`.validation/20261015-235932-4b35cd29.json`（静态检查与 Ruff 全部通过，6 个被选测试达 90 秒预算停止记 budget_exhausted，不自动重启扩大，完整回归留 CI）。
 - Commit：待提交定位。
-- 下一张卡：P03（资源级授权与审计跟踪）。
+- 下一张卡：P04（显式生产模式与安全受理）。
 
 ## 任务状态
 
@@ -94,11 +117,11 @@
 | P00 | DONE | 无 | 本卡 / 8b64907 / .validation/20261015-231752-36018573.json |
 | P01 | DONE | P00 | 本卡 / 5186085 / .validation/20261015-232638-318cd0d5.json + targeted 16 passed |
 | P02 | DONE | P01 | 本卡 / e8a67b1 / .validation/20261015-233538-601dd7a5.json (11 passed) |
-| P03 | TODO | P02 | — |
+| P03 | DONE | P02 | 本卡 / feat(auth) / .validation/20261015-235932-4b35cd29.json + targeted 15 passed |
 | P04 | TODO | P00/P02 | — |
 | P05 | TODO | P00/P04 | — |
 | P06 | TODO | P03/P05 | — |
-| P07 | DONE | P00 | 本卡 / feat(executor) / .validation/20261015-234428-ddb46fe6.json (35 passed) |
+| P07 | DONE | P00 | 本卡 / 01b4bf7 / .validation/20261015-234428-ddb46fe6.json (35 passed) |
 | P08 | TODO | P04/P07 | — |
 | P09 | TODO | P07/P08 | — |
 | P10 | TODO | P01/P03/P04 | — |
