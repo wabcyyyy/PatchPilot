@@ -2,13 +2,13 @@
 
 本目录**不是产品入口**：项目没有 `[build-system]`/`[project.scripts]`，不可 pip 安装，
 所以每个脚本都以 `python scripts/<name>.py …` 手工执行。CI 里只有**一条**脚本命令——
-冒烟步骤的 `python scripts/gen_bugs.py BUG-001 BUG-002 BUG-003`（重新物化题目再回放），
+冒烟步骤的 `uv run python scripts/gen_bugs.py BUG-001 BUG-002 BUG-003`（重新物化题目再回放），
 其余脚本都不进 CI；被测试 import 或点名的除外（见下表「被谁钉住」列）。
 
 `ruff.toml` 已并入根 `pyproject.toml` 的 `[tool.ruff]`（2026-10-13 配置去重），
 `extend-exclude` 仍把 `bugs/`（生成物）与 `runs/`（产物）排除在 lint 之外。
 
-## 1. 日常开发闸（改动前先看 `VALIDATION.md`）
+## 1. 日常开发闸（改动前先看根目录 `validation-rules.json`）
 
 | 脚本 | 作用 | 被测试钉住 |
 |---|---|---|
@@ -17,8 +17,8 @@
 | `ai_validate_quick.py` | 默认少量测试选择、回执复用、进程预算 | 同上 |
 | `ai_validate_graph.py` | 保守的静态 import 选路（动态消费方需人工复核） | 同上 |
 
-根目录的 `verify.ps1` + `validation-rules.json` + `VALIDATION.md` 是这套闸的**入口面**，
-三者同层放置是刻意的：`verify.ps1` 用 `$PSScriptRoot` 定位规则文件，规则文件里也自列自己的路径。
+根目录的 `verify.ps1` + `validation-rules.json` 是这套闸的**入口面**，
+两者同层放置是刻意的：`verify.ps1` 用 `$PSScriptRoot` 定位规则文件，规则文件里也自列自己的路径。
 把它们搬进 `scripts/` 要同步改 4 处代码路径与 2 处文档，收益不值这个风险，故留在根。
 
 ## 2. 题目集与数据（产物落 `bugs/`）
@@ -57,7 +57,7 @@
 
 ## 6. 一次性实验脚本：**禁止搬动**
 
-这些脚本跑完就退役了，但它们的**路径**被 ADR、`PROGRESS.md`/`TODO.md` 与
+这些脚本跑完就退役了，但它们的**路径**被 ADR、`PROGRESS.md` 与
 `docs/evidence/` 里的原始输出按文件名引用（输出头部常写「判据见 …」「本脚本只出数字」）。
 把它们挪进子目录或删掉，等于让历史证据指向不存在的出处——比留在原地更糟。
 

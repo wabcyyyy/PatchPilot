@@ -39,8 +39,7 @@ def matches(path: str, patterns: list[str]) -> bool:
 
 def relevant(path: str) -> bool:
     return not matches(path, CFG["exclude"]) and (
-        matches(path, CFG["inputs"])
-        or path in {"AGENTS.md", "VALIDATION.md", "validation-rules.json"}
+        matches(path, CFG["inputs"]) or path in {"AGENTS.md", "validation-rules.json"}
     )
 
 
