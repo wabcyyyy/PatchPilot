@@ -84,7 +84,7 @@ python -m pip install -r requirements.txt -r requirements-dev.txt
 # 日常快速验证（改动文件静态检查 + 少量相关测试；90 秒预算；收据自动保存）
 powershell -NoProfile -ExecutionPolicy Bypass -File verify.ps1
 # 本地全量仅在明确要求时：./verify.ps1 -Full；完整回归默认交 CI。
-# pytest 临时目录由验证入口放在仓库外，详见 VALIDATION.md。
+# pytest 临时目录由验证入口放在仓库外，详见 AGENTS.md「pytest 临时目录」。
 
 # 回放模式跑一个完整修复任务(验证平台闭环)
 python -m app.evals.run_single --bug BUG-001 --model fake --engine graph --out runs

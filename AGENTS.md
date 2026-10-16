@@ -2,7 +2,7 @@
 
 ## 个人项目快速迭代（本节优先，2026-10-12）
 
-日常只运行根目录 `verify.ps1`（Sinan 也可 `just check`），规则详见 `VALIDATION.md`。
+日常只运行根目录 `verify.ps1`（Sinan 也可 `just check`），规则见 `validation-rules.json`。
 默认做改动文件静态检查及少量最近的相关测试，不自动跑全量；高风险增加相关关键链路检查。
 普通 commit、push、任务/批次收尾、跨模块修改、新开对话均不构成本地全量的触发条件。
 完整回归交给现有 CI；用户明确要求本地全量时才使用 `verify.ps1 -Full`。
@@ -55,7 +55,7 @@ PatchPilot:面向软件仓库的测试失败诊断与补丁验证平台。
 `pytest -m "not slow"` 快档是可选模块排查工具，不是每卡必跑步骤。
 全量 `pytest -m "not stress"` 只在用户明确要求本地全量时跑，CI 保留全集含 stress。
 卡内失败先复现失败项，修复后跑相关测试；不因记账或新对话重跑。
-具体默认测试选择、90 秒预算、收据复用见根目录 VALIDATION.md，收据自动保存。
+具体默认测试选择、90 秒预算、收据复用见根目录 validation-rules.json，收据自动保存。
 产品内候选 hash、失败/回归测试身份、resolved 判定与质量门禁仍按原规格执行。
 
 ### pytest 临时目录

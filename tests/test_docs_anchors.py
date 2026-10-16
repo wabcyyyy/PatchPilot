@@ -174,7 +174,7 @@ def test_readme_dataset_counts_match_the_fixtures() -> None:
 _ROUTE_DECORATOR = re.compile(r"^@router\.(?:get|post|put|patch|delete)\(", re.M)
 _FENCE_BLOCK = re.compile(r"```.*?```", re.S)
 _MD_LINK = re.compile(r"\]\(([^)#\s]+)(?:#[^)]*)?\)")
-_LINK_CHECK_ROOTS = ("README.md", "AGENTS.md", "VALIDATION.md")
+_LINK_CHECK_ROOTS = ("README.md", "AGENTS.md")
 
 
 def test_readme_endpoint_count_matches_routes_py() -> None:
@@ -195,7 +195,7 @@ def test_markdown_links_point_at_existing_files() -> None:
 
     归档 4 篇过期文档时发现 `docs/archive/README.md` 有一条 `../x.md` 指错目录:
     锚点用例只管「那句话还在不在」,管不到「链接指没指对」。
-    PROGRESS.md / TODO.md 是按天追加的历史日志,其中路径属于当时事实,不纳入本用例
+    PROGRESS.md 是按天追加的历史日志,其中路径属于当时事实,不纳入本用例
     ——否则任何后续删除都会把历史日志钉红。
     """
     targets = [REPO_ROOT / name for name in _LINK_CHECK_ROOTS]

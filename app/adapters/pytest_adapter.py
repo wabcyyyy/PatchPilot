@@ -296,7 +296,7 @@ def _basetemp_for(junit: Path) -> Path:
     已存在时**无条件先整棵删掉再建**(`_pytest/tmpdir.py:154-158`)。两条执行共用同一个
     报告目录就等于共用同一个临时根,后起步那次会把先起步那次**正在写**的 `tmp_path`
     删光 —— 实测 18 次并发里 9 次出现"单独跑能过、并发跑 `FileNotFoundError` 或会话级
-    error"(脚本 `scripts/measure_basetemp_contention.py`,判据与数字见 TODO M11.5)。
+    error"(脚本 `scripts/measure_basetemp_contention.py`,判据与数字见 PROGRESS M11.5)。
     随机后缀不是给"同名 junit 跨轮复用"兜底的:超时被杀的会话可能有逃逸的孙子进程还在写
     (`local_runner.py:144-156`),下一轮若复用同一个目录,删它的人会撞上孤儿持有的句柄。
     """

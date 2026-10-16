@@ -2,7 +2,7 @@
 
 已执行、已收口、触发停手或已被替代的计划集中在这里。历史正文、勾选状态和数字保留；文件存在不代表所有子任务完成，也不构成新执行授权。
 
-当前升级任务见 [修复 Agent 升级 SPEC](../PatchPilot修复Agent升级SPEC-2026-10-10.md)，交接见 [新对话提示](../work-notes/PatchPilot升级交接Prompt-2026-10-10.md)。当前处置记录见仓库根 [TODO](../../TODO.md) 与 [PROGRESS](../../PROGRESS.md)。
+当前升级任务见 [修复 Agent 升级 SPEC](../PatchPilot修复Agent升级SPEC-2026-10-10.md)，交接见 [新对话提示](../work-notes/PatchPilot升级交接Prompt-2026-10-10.md)。历史处置台账见仓库根 [PROGRESS](../../PROGRESS.md)。
 
 ## 已执行计划
 
