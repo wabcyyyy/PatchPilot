@@ -68,8 +68,10 @@ PatchPilot:面向软件仓库的测试失败诊断与补丁验证平台。
 ## 记账与文档
 
 - CI 读数(某次 run 的通过数、连绿计数)不写进仓库文档、不为它单独提交——CI 状态以 GitHub Actions 为准;
-- 进度文件(当前为 `docs/work-notes/agent-upgrade-progress-2026-10-10.md`,`PROGRESS.md` 为总日志)每张卡一段:
-  做了什么、为什么、commit、测试收据。不为"订正读数 / 补读数"单独提交,有订正就并入下一个正常 commit;
+- 进度文件:各线带日期的进度放 `docs/work-notes/`(如 SPEC 线的
+  `agent-upgrade-progress-2026-10-10.md`);升级循环总日志已随两条线收口归档为
+  `docs/archive/PROGRESS.md`,每张卡一段:做了什么、为什么、commit、测试收据。
+  不为"订正读数 / 补读数"单独提交,有订正就并入下一个正常 commit;
 - 证据类文档(`release-evidence-*`、`resume-evidence-*` 等)只在发布节点刷新,不随每次 CI 更新;
 - ADR 的「验证锚点」写 `` `路径` — `期望子串` ``,不写行号(`tests/test_docs_anchors.py` 会拒绝带行号的旧写法);
   子串选能唯一说明事实的整句或定义行(如 `def foo`),不要选 `10 个` 这类会在别处碰巧出现的短串。

@@ -3,7 +3,7 @@
 **实施基线**：`972a1e8`  
 **收尾 HEAD**：`a7827b1`（及本收尾提交）  
 **任务书**：[2026-10-15 工业使用改进计划](industrialization-plan-2026-10-15.md)  
-**进度源**：[执行进度](industrialization-progress-2026-10-15.md) 与 [PROGRESS.md](../../PROGRESS.md)  
+**进度源**：[执行进度](industrialization-progress-2026-10-15.md) 与 [PROGRESS.md](../archive/PROGRESS.md)  
 **状态**：**ALL CARDS COMPLETED / CLOSED OUT** (全部 22 张卡完结，生产试点就绪)
 
 ---

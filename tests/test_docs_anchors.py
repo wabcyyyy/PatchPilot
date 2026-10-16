@@ -105,8 +105,8 @@ def test_p3_7_false_claims_are_gone() -> None:
             root = REPO_ROOT / scope
             candidates = [root] if root.is_file() else [*root.rglob("*.md"), *root.rglob("*.py")]
             for path in candidates:
-                if path.name == "interview-audit-2026-09-26.md":
-                    continue  # 审计报告本身引用假命题原文,属记录而非主张
+                if path.name in {"interview-audit-2026-09-26.md", "PROGRESS.md"}:
+                    continue  # 审计报告/归档总日志引用假命题原文或记录当时文案,属记录而非主张
                 text = path.read_text(encoding="utf-8")
                 assert phrase not in text, f"假命题复活:{path} 仍含 {phrase!r}(P3-7 黑名单)"
 
@@ -197,13 +197,15 @@ def test_markdown_links_point_at_existing_files() -> None:
 
     归档 4 篇过期文档时发现 `docs/archive/README.md` 有一条 `../x.md` 指错目录:
     锚点用例只管「那句话还在不在」,管不到「链接指没指对」。
-    PROGRESS.md 是按天追加的历史日志,其中路径属于当时事实,不纳入本用例
-    ——否则任何后续删除都会把历史日志钉红。
+    PROGRESS.md(2026-10-16 归档)是按天追加的历史日志,其中链接按当时的仓库根
+    目录写——按文件名豁免,不为归档重写历史正文。
     """
     targets = [REPO_ROOT / name for name in _LINK_CHECK_ROOTS]
     targets += sorted((REPO_ROOT / "docs").rglob("*.md"))
     broken: list[str] = []
     for path in targets:
+        if path.name == "PROGRESS.md":
+            continue  # 归档总日志:链接按当时仓库根目录写,不为归档重写历史正文
         body = _FENCE_BLOCK.sub("", path.read_text(encoding="utf-8"))
         for match in _MD_LINK.finditer(body):
             link = match.group(1)

@@ -2,7 +2,7 @@
 
 已执行、已收口、触发停手或已被替代的计划集中在这里。历史正文、勾选状态和数字保留；文件存在不代表所有子任务完成，也不构成新执行授权。
 
-当前升级任务见 [修复 Agent 升级 SPEC](../PatchPilot修复Agent升级SPEC-2026-10-10.md)，交接见 [新对话提示](../work-notes/PatchPilot升级交接Prompt-2026-10-10.md)。历史处置台账见仓库根 [PROGRESS](../../PROGRESS.md)。
+当前升级任务见 [修复 Agent 升级 SPEC](../PatchPilot修复Agent升级SPEC-2026-10-10.md)，交接见 [新对话提示](../work-notes/PatchPilot升级交接Prompt-2026-10-10.md)。升级循环总日志见本目录 [PROGRESS](PROGRESS.md)（2026-10-16 归档）。
 
 ## 已执行计划
 
@@ -27,6 +27,7 @@
 | [S00 基线收据](spec-s00-baseline-2026-10-08.md) | 当时源码、环境及基线身份 |
 | [S 系列收口证据](release-evidence-2026-10-08.md) | 离线验收、后续 Q0 补记与能力边界 |
 | [整改复盘](retrospective-2026-10-08-remediation.md) | 整改过程与证据限制 |
+| [升级循环总日志](PROGRESS.md) | M0–M20 与 G 系列时代的逐卡改动台账(2026-10-16 归档;后续进度写 work-notes 各线文件) |
 | [2026-09-24 面试审查](interview-audit-2026-09-24.md) | 第一轮对抗审查；ADR-0001..0003 的素材来源 |
 | [2026-09-26 面试审查](interview-audit-2026-09-26.md) | 第二轮对抗审查；18 条问题(P3-1..P3-18)与元结论 |
 | [2026-09-26 整改对照](audit-2026-09-26-remediation.md) | 上述 18 条的逐条整改台账 |
