@@ -2151,5 +2151,13 @@ P14-2 & P14-3：
 验证：`tests/test_docs_anchors.py` 全部通过，所有相对链接物理校验存在有效（exit 0）；
 提交以 `44ee8ea` 定位。
 
+## 2026-10-16 · 试点端到端演练闭环、商业模型评测基线与 P21 架构规格
 
-
+在 `scripts/drill_production_boundaries.py` 中新增 `drill_pipeline`：
+- 完整模拟 API 接口受理（HTTP 201）-> 独立 SQLite 数据库持久化 Jobs 队列 -> 独立 Worker 进程（单实例文件锁抢占、心跳租约维持与原子状态流转）-> FINISHED 终态与 resolved 合取判定裁决 -> `report.json` 磁盘取证工件闭环；
+- 5 大边界演练全部通过（准入背压/急停、Fencing Token、原子配额、探针降级映射、端到端解耦流水线全部 exit 0）；提交以 `847bf41` 定位；
+编制商业模型基线评测体系：
+- 新增 `docs/eval-commercial-baseline-guide.md`，规定商业大模型接入基线评测的标准流程、预算护栏（Micro-USD）、停手条件、零网络 dry-run 先行及台账双臂归因对比规则；
+- 新增 `docs/eval-commercial-baseline-manifest-template.json` 显式预登记清单模板（覆盖 BUG-001 ~ BUG-029、hybrid 预算模式、两臂对比及授权防护）；
+制定 Card P21 架构规格：
+- 新增 `docs/work-notes/p21-multi-instance-spec.md`：详细定义企业级可选多实例与多租户扩展蓝图（P21-1 至 P21-6），包括 PostgreSQL 关系后端迁移、分布式作业队列与 Fencing Token 租约、S3/MinIO 分布式对象存储与 Legal Hold 保全、多租户逻辑与配额隔离模型、Active-Active 双控制实例容灾与混沌演练验收套件。

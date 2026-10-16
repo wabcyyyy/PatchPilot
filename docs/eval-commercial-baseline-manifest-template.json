@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "manifest_id": "EXP-COMMERCIAL-BASELINE-2026-TEMPLATE",
+  "question": "商业模型评测基线：评估在相同题目集与门禁约束下，商业大模型对测试失败定位与补丁生成的实际修复率、Token消耗及成本收益分布",
+  "engine": "graph",
+  "model": {
+    "provider": "openai",
+    "name": "deepseek-coder"
+  },
+  "arms": [
+    {
+      "name": "agent",
+      "variables": {
+        "PATCHPILOT_LLM_ENABLED": "true",
+        "PATCHPILOT_LLM_THINKING": "disabled",
+        "PATCHPILOT_CONTEXT_WINDOW_TOKENS": "16000",
+        "PATCHPILOT_TOKEN_ESTIMATE_FACTOR": "1.0"
+      }
+    },
+    {
+      "name": "one_shot",
+      "variables": {
+        "PATCHPILOT_LLM_ENABLED": "true",
+        "PATCHPILOT_LLM_THINKING": "disabled",
+        "PATCHPILOT_CONTEXT_WINDOW_TOKENS": "0",
+        "PATCHPILOT_TOKEN_ESTIMATE_FACTOR": "1.0"
+      }
+    }
+  ],
+  "bugs": [
+    "BUG-001",
+    "BUG-002",
+    "BUG-003",
+    "BUG-014",
+    "BUG-029"
+  ],
+  "repetitions": 2,
+  "budget": {
+    "budget_mode": "hybrid",
+    "token_budget": 400000,
+    "cost_budget_micro_usd": 2000000,
+    "max_model_calls": 30,
+    "model_context_tokens": 16000,
+    "batch_cap_tokens": 8000000,
+    "batch_cap_cost_micro_usd": 20000000,
+    "max_turns": 24
+  },
+  "stop_conditions": [
+    "protocol_400: 端点明确拒绝/400错误立即停手，不盲目重发",
+    "spend_without_booking: turns=0 但产生外部计费立即停手",
+    "batch_cap: 累计费用触及 batch_cap_cost_micro_usd 立即停手",
+    "emergency_stop: 触发系统级紧急停发标志立即停手",
+    "consecutive_failures: 连续 3 次调用返回非 200 状态码立即停手"
+  ],
+  "authorization": {
+    "granted_by": "offline-template(未授权；真实执行前必须替换为审批人姓名与授权日期)",
+    "scope": "商业模型受限基线评测，严格限制在指定 5 道基准题与 20000000 微美元总上限内",
+    "max_cost_micro_usd": 20000000
+  },
+  "outputs_root": "runs/exp-commercial-baseline-2026-template",
+  "registered_upgrades": [
+    "Schema-V3",
+    "AtomicQuotaSettlement",
+    "FencingLeases",
+    "SanitizedPublicView"
+  ],
+  "source_doc": "docs/eval-commercial-baseline-guide.md",
+  "notes": "执行须知：①真实执行必须设置环境变量 OPENAI_API_KEY 与 OPENAI_BASE_URL；②执行前必须先运行 --dry-run 验证 Planned Runs 与配额信封；③执行产生的每笔消耗必须实时结算并追加至 runs/paid-batch-ledger-*.jsonl 台账；④严禁在未授权情况下执行付费批。"
+}

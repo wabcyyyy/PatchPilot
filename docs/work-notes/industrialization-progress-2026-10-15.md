@@ -322,7 +322,23 @@
   - 锚点与文档一致性：`tests/test_docs_anchors.py` 全部通过；
   - 验证所有相对链接真实有效（`test_markdown_links_point_at_existing_files` exit 0）；
 - Commit：`44ee8ea` (`docs(release): pilot deployment runbook, operations guide, and release evidence (P20)`）。
-- 下一张卡：P21（可选多实例与多租户扩展，非首版必做，按需求触发）。
+- 下一张卡：P21 规格编制与试点演练闭环。
+
+### 试点闭环与 P21 规格编制 (2026-10-16)
+
+- 范围：
+  - `scripts/drill_production_boundaries.py`（新增 `drill_pipeline` 解耦端到端演练）；
+  - `docs/eval-commercial-baseline-guide.md` & `docs/eval-commercial-baseline-manifest-template.json`（商业模型评测基线操作指南与显式预登记清单）；
+  - `docs/work-notes/p21-multi-instance-spec.md`（P21 可选多实例与多租户扩展架构规格说明书）。
+- 实现：
+  1. 在 `scripts/drill_production_boundaries.py` 中新增 `drill_pipeline`：完整模拟 API 受理 -> 独立 SQLite 数据库持久化 Jobs 队列 -> 独立 Worker 进程（单实例文件锁、租约管理与原子状态流转）-> FINISHED 终态与 resolved 合取判定 -> `report.json` 磁盘取证工件闭环。五大边界演练全量通过（exit 0）；
+  2. 编制商业模型评测操作指南 `docs/eval-commercial-baseline-guide.md` 与合法预登记清单模板 `docs/eval-commercial-baseline-manifest-template.json`，严格锁定 hybrid 模式、单次与批次预算封包、400/急停停手护栏、零网络 dry-run 先行及台账双臂归因对比规则；
+  3. 制定 Card P21 架构规格 `docs/work-notes/p21-multi-instance-spec.md`：详细定义向 PostgreSQL 关系后端迁移、分布式作业队列与 Fencing Token 租约、S3/MinIO 分布式对象存储与 Legal Hold 保全、多租户逻辑与配额隔离模型、Active-Active 双控制实例容灾与混沌演练验收套件。
+- 验证：
+  - 演练套件执行：`python scripts/drill_production_boundaries.py --all` 全部 5 项边界演练通过（exit 0）；
+  - 商业基线 Dry-Run：`python scripts/run_paid_batch.py --manifest docs/eval-commercial-baseline-manifest-template.json --dry-run` 展开 20 次规划运行，0 请求，0 费用；
+  - 静态与锚点检查：`verify.ps1 -Tests tests/test_production_boundaries.py tests/test_docs_anchors.py` 退出码 0，收据 `.validation/20261016-101635-c0817f11.json`；
+- Commit：`847bf41`（pipeline drill）及后续文档规格提交。
 
 ## 任务状态
 
@@ -347,9 +363,9 @@
 | P16 | DONE | P03/P06/P11/P12/P15 | 本卡 / 0f979a3 / .validation/20261016-031215-0a71c57b.json (14 passed) |
 | P17 | DONE | P00/P06/P08/P09 | 本卡 / 7864618 / .validation/20261016-032556-73ebbc06.json (27 passed) |
 | P18 | READY_FOR_AUTHORIZATION | P15/P16/P17 | 本卡 / a87146d / .validation/20261016-033118-8b894a85.json (dry-run 20 runs) |
-| P19 | DONE | P05–P15/P17 | 本卡 / 090b741 / .validation/20261016-034320-f3f0023c.json (6 passed + drill 4/4) |
+| P19 | DONE | P05–P15/P17 | 本卡 / 090b741 & 847bf41 / .validation/20261016-101635-c0817f11.json (drill 5/5 passed) |
 | P20 | DONE | P00–P19 | 本卡 / 44ee8ea / docs/runbook.md + docs/pilot-release-evidence.md |
-| P21 | OPTIONAL_NOT_STARTED | M3/新规格 | — |
+| P21 | SPEC_READY | M3/新规格 | 本卡 / docs/work-notes/p21-multi-instance-spec.md |
 
 状态建议：TODO / IN_PROGRESS / IMPLEMENTED_PENDING_EVIDENCE / NOT_RUN_ENV /
 READY_FOR_AUTHORIZATION / DONE。没有真实环境证据时不要把关键卡直接记 DONE。

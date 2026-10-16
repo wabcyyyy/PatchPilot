@@ -8,7 +8,9 @@ docs 顶层保留长期规范、设计与当前升级规格。当前交接、审
 [2026-10-15 工业使用改进计划](work-notes/industrialization-plan-2026-10-15.md)；
 执行进度与各卡收据见 [工业化执行进度](work-notes/industrialization-progress-2026-10-15.md)；
 运维值守与应急预案见 [运维值守手册](runbook.md)；
-受控生产试点准入证据见 [受控生产试点发布证据](pilot-release-evidence.md)。
+受控生产试点准入证据见 [受控生产试点发布证据](pilot-release-evidence.md)；
+商业模型评测基线规范见 [商业模型评测指南](eval-commercial-baseline-guide.md)；
+企业级多实例扩展见 [P21 多实例多租户规格](work-notes/p21-multi-instance-spec.md)。
 
 | 要做什么 | 文档 | 使用边界 |
 |---|---|---|
