@@ -26,8 +26,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from app.evals.experiment_manifest import ExperimentManifest, read_manifest
-from app.evals.metrics import RunRow, collect_runs, pair_runs
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from app.evals.experiment_manifest import ExperimentManifest, read_manifest  # noqa: E402
+from app.evals.metrics import RunRow, collect_runs, pair_runs  # noqa: E402
 
 # 无 manifest 时的兼容口径:arm 是登记变量,experiment_policy 由 arm 派生
 ALLOWED_DIFFERENCES: frozenset[str] = frozenset({"arm", "experiment_policy"})

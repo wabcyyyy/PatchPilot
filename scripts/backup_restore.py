@@ -12,9 +12,13 @@ import argparse
 import sys
 from pathlib import Path
 
-from app.config import get_settings
-from app.storage.backup import create_backup, restore_backup, verify_backup
-from app.storage.repository import Repository
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from app.config import get_settings  # noqa: E402
+from app.storage.backup import create_backup, restore_backup, verify_backup  # noqa: E402
+from app.storage.repository import Repository  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -24,17 +28,19 @@ def main(argv: list[str] | None = None) -> int:
     # backup
     p_backup = subparsers.add_parser("backup", help="制作热备份包")
     p_backup.add_argument("--target", required=True, help="备份根目录")
-    p_backup.add_argument("--db", default=None, help="源数据库路径 (默认读配置)")
-    p_backup.add_argument("--runs", default=None, help="源 runs 路径 (默认读配置)")
+    p_backup.add_argument("--db", "--db-path", default=None, help="源数据库路径 (默认读配置)")
+    p_backup.add_argument("--runs", "--runs-root", default=None, help="源 runs 路径 (默认读配置)")
 
     # verify
     p_verify = subparsers.add_parser("verify", help="校验备份包完整性")
-    p_verify.add_argument("--backup", required=True, help="待校验备份目录")
+    p_verify.add_argument("--backup", "--source", required=True, help="待校验备份目录")
 
     # restore
     p_restore = subparsers.add_parser("restore", help="恢复备份到指定空目录")
-    p_restore.add_argument("--backup", required=True, help="备份包路径")
-    p_restore.add_argument("--target", required=True, help="恢复目标空目录")
+    p_restore.add_argument("--backup", "--source", required=True, help="备份包路径")
+    p_restore.add_argument(
+        "--target", "--target-dir", "--target-db", required=True, help="恢复目标空目录"
+    )
     p_restore.add_argument("--overwrite", action="store_true", help="允许覆盖非空目标目录")
 
     args = parser.parse_args(argv)
@@ -43,8 +49,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.action == "backup":
         db_path = Path(args.db) if args.db else settings.db_path
         runs_path = Path(args.runs) if args.runs else settings.runs_root
-        repo = Repository(db_path)
-        manifest = create_backup(repo, args.target, runs_root=runs_path)
+        with Repository(db_path) as repo:
+            manifest = create_backup(repo, args.target, runs_root=runs_path)
         print(f"[OK] Backup created successfully: {manifest['backup_id']}")
         print(f"     Tasks backed up: {manifest['tasks_count']}, Files: {len(manifest['files'])}")
         return 0
