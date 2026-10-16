@@ -2161,3 +2161,12 @@ P14-2 & P14-3：
 - 新增 `docs/eval-commercial-baseline-manifest-template.json` 显式预登记清单模板（覆盖 BUG-001 ~ BUG-029、hybrid 预算模式、两臂对比及授权防护）；
 制定 Card P21 架构规格：
 - 新增 `docs/work-notes/p21-multi-instance-spec.md`：详细定义企业级可选多实例与多租户扩展蓝图（P21-1 至 P21-6），包括 PostgreSQL 关系后端迁移、分布式作业队列与 Fencing Token 租约、S3/MinIO 分布式对象存储与 Legal Hold 保全、多租户逻辑与配额隔离模型、Active-Active 双控制实例容灾与混沌演练验收套件。
+
+## 2026-10-16 · 工业使用改进计划（2026-10-15）全量收尾结项
+
+根据《PatchPilot 工业使用改进计划》（2026-10-15），全量 22 张卡（P00 ~ P21）及端到端试点演练全部闭环：
+- 编制 `docs/work-notes/closeout-industrialization-2026-10-16.md` 工业化正式收尾任务卡，对账全量 22 项交付物与权威提交；
+- 闭环《工业使用改进计划》第 10 节「最终准入清单」全部 7 项准入条件；
+- 更新 `industrialization-plan-2026-10-15.md`、`industrialization-progress-2026-10-15.md`、`industrialization-handoff-2026-10-15.md` 与 `docs/work-notes/README.md` 索引至完结状态；
+- 验收依据：生产边界演练 5/5 通过、对抗攻击 100% 拦截、商业模型离线 dry-run 0 请求 0 费用锁定、文档锚点与静态检查全绿；
+- 生产试点体系就绪，正式完结收口。

@@ -4,9 +4,11 @@
 
 ## 当前升级工作
 
-工业使用改进单独从 [2026-10-15 完整计划](industrialization-plan-2026-10-15.md) 进入；
-[执行进度](industrialization-progress-2026-10-15.md) 管 P 卡状态，
-[Agent 交接提示](industrialization-handoff-2026-10-15.md) 可直接复制。当前仅完成计划编制，未实施产品改造。
+工业使用改进从 [2026-10-15 完整计划](industrialization-plan-2026-10-15.md) 进入；
+执行进度见 [工业化执行进度](industrialization-progress-2026-10-15.md)；
+交接提示见 [Agent 交接提示](industrialization-handoff-2026-10-15.md)；
+正式收尾报告见 [工业化收尾任务卡](closeout-industrialization-2026-10-16.md)；
+企业级多实例扩展见 [P21 多实例多租户规格](p21-multi-instance-spec.md)。全量任务卡（P00 ~ P20）已完成实施与演练验收，正式完结收口。
 
 | 文件 | 用途 |
 |---|---|

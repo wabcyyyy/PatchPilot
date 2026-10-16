@@ -338,7 +338,19 @@
   - 演练套件执行：`python scripts/drill_production_boundaries.py --all` 全部 5 项边界演练通过（exit 0）；
   - 商业基线 Dry-Run：`python scripts/run_paid_batch.py --manifest docs/eval-commercial-baseline-manifest-template.json --dry-run` 展开 20 次规划运行，0 请求，0 费用；
   - 静态与锚点检查：`verify.ps1 -Tests tests/test_production_boundaries.py tests/test_docs_anchors.py` 退出码 0，收据 `.validation/20261016-101635-c0817f11.json`；
-- Commit：`847bf41`（pipeline drill）及后续文档规格提交。
+- Commit：`847bf41`（pipeline drill）及 `a7827b1`（P21 规格与商用基线）。
+
+### 工业使用改进计划完结与正式收尾 (2026-10-16)
+
+- 范围：
+  - `docs/work-notes/closeout-industrialization-2026-10-16.md`（工业使用改进计划正式收尾卡）；
+  - `docs/work-notes/industrialization-plan-2026-10-15.md`（最终准入清单 7 项全部勾选与状态闭环）；
+  - `docs/work-notes/industrialization-handoff-2026-10-15.md` & `docs/work-notes/README.md`（交接状态与索引更新）。
+- 实现：
+  1. 梳理汇总全量 22 张卡（P00 ~ P21）的交付物、权威事实与提交哈希；
+  2. 核对并闭环《工业使用改进计划》第 10 节「最终准入清单」全部 7 项准入条件；
+  3. 确认边界故障演练 5/5 全绿、对抗攻击样本 100% 拦截、商业模型离线基准 dry-run 0 外部网络 0 费用锁定。
+- 验收结论：受控生产试点体系建设全部就绪，准入与发布证据链完整，正式完结收口。
 
 ## 任务状态
 
@@ -365,7 +377,8 @@
 | P18 | READY_FOR_AUTHORIZATION | P15/P16/P17 | 本卡 / a87146d / .validation/20261016-033118-8b894a85.json (dry-run 20 runs) |
 | P19 | DONE | P05–P15/P17 | 本卡 / 090b741 & 847bf41 / .validation/20261016-101635-c0817f11.json (drill 5/5 passed) |
 | P20 | DONE | P00–P19 | 本卡 / 44ee8ea / docs/runbook.md + docs/pilot-release-evidence.md |
-| P21 | SPEC_READY | M3/新规格 | 本卡 / docs/work-notes/p21-multi-instance-spec.md |
+| P21 | SPEC_READY | M3/新规格 | 本卡 / a7827b1 / docs/work-notes/p21-multi-instance-spec.md |
+| 任务书收口 | CLOSED_OUT | P00–P21 | 本卡 / docs/work-notes/closeout-industrialization-2026-10-16.md |
 
 状态建议：TODO / IN_PROGRESS / IMPLEMENTED_PENDING_EVIDENCE / NOT_RUN_ENV /
 READY_FOR_AUTHORIZATION / DONE。没有真实环境证据时不要把关键卡直接记 DONE。
