@@ -213,7 +213,14 @@ def test_custom_fake_task_resume_restores_replay_from_contract(tmp_path: Path) -
     runs.mkdir()
     child_script = tmp_path / "waiting_child.py"
     child_script.write_text(_CHILD, encoding="utf-8")
-    env = {**os.environ, "PATCHPILOT_LLM_ENABLED": "false", "PYTHONIOENCODING": "utf-8"}
+    env = {
+        **os.environ,
+        "PATCHPILOT_LLM_ENABLED": "false",
+        # P12 起僵尸认定要求"job 租约已过期":给子进程 1 秒短租约,
+        # 崩溃后稍等租约到期,恢复语义才与生产一致(其余断言不变)
+        "PATCHPILOT_JOB_LEASE_DURATION_SECONDS": "1",
+        "PYTHONIOENCODING": "utf-8",
+    }
 
     proc = subprocess.run(
         [
@@ -235,9 +242,16 @@ def test_custom_fake_task_resume_restores_replay_from_contract(tmp_path: Path) -
     assert proc.returncode == 7, (proc.returncode, proc.stdout[-400:], proc.stderr[-400:])
     task_id = next(line.split()[1] for line in proc.stdout.splitlines() if line.startswith("TASK "))
 
-    # 新服务实例(同一 db/runs):恢复重新入队,回放脚本从受理契约复原
+    # 新服务实例(同一 db/runs):等子进程的短租约过期后,恢复重新入队,回放脚本从受理契约复原
     service = TaskService(repo=Repository(db), runs_root=runs, bugs_root=BUGS_ROOT)
-    assert service.recover_stale() == 1
+    deadline = time.monotonic() + 30
+    recovered = 0
+    while time.monotonic() < deadline:
+        recovered = service.recover_stale()
+        if recovered:
+            break
+        time.sleep(1)
+    assert recovered == 1
 
     final = _poll(service, task_id, lambda t: t["status"] in TERMINAL)
     assert final["status"] == "FINISHED" and final["verdict"] == "resolved", final

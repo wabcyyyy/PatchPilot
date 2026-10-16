@@ -234,12 +234,14 @@ def approve_acceptance(task_id: str, payload: AcceptanceApproveIn, request: Requ
         return _error(404, "invalid_task", f"task not found: {task_id}")
     try:
         actor_id = str(principal.get("id") or "trusted_user")
+        # approved_by 是 manifest 的信任来源标记(G10:凡经平台 API 的批准一律由平台赋
+        # trusted_user,见 app/agent/control.py 的来源模型);署名归审计事件,不归清单。
         result = _service(request).approve_acceptance(
             task_id,
             proposal_id=payload.proposal_id,
             content_hash=payload.content_hash,
             expected_revision=payload.expected_revision,
-            approved_by=actor_id,
+            approved_by="trusted_user",
         )
         if hasattr(_service(request).repo, "record_audit_event"):
             _service(request).repo.record_audit_event(

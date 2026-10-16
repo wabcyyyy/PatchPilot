@@ -248,12 +248,54 @@ SNAPSHOT_KEYS: tuple[str, ...] = (
     # G14 有界停止:同一组失败连续多少轮后收敛 NEEDS_REVIEW,决定轨迹在哪个轮次、
     # 以什么终态收尾(改这个数就是改运行条件,与 task_timeout_seconds 同族,不进豁免)
     "max_identical_failures",
+    # P 线补分类(2026-10-16,CI 红清单):容器资源/安全限额是执行包络的一部分,
+    # 限额大小能翻转 verify 结果(OOM/PID 耗尽杀掉测试进程),与 docker_image 同族进快照
+    "docker_cpus",
+    "docker_memory",
+    "docker_pids_limit",
+    "docker_cap_drop",
+    "docker_security_opt",
+    # deployment_mode 决定鉴权/受信镜像等强制面的开与关,同一任务在两种模式下
+    # 连"能否被受理"都不同,属运行身份而非运维豁免
+    "deployment_mode",
+    # 任务级美元预算上限:决定"在哪一次请求上停手",与 cost_budget_micro_usd 同族
+    "task_budget_cap_usd",
+    # 主体的日累计额度:超限会改变批内后续任务的停手点与终态,进快照可解释
+    # "为什么这次停在半途"
+    "principal_daily_budget_usd",
+    "principal_daily_token_budget",
 )
 SECRET_KEYS: frozenset[str] = frozenset({"llm_api_key", "api_token"})
 EXEMPT_KEYS: frozenset[str] = frozenset(
     {
         "runs_root",
         "db_path",
+        # P 线补分类(2026-10-16,CI 红清单):
+        # 受理/准入边界:超限在受理即拒绝,不会产生"跑了但不可比"的轨迹,
+        # 与 intake_timeout_seconds/intake_max_files 同族
+        "intake_max_file_bytes",
+        "intake_max_total_bytes",
+        "intake_min_free_disk_bytes",
+        "trusted_docker_images",
+        "allowed_model_endpoints",
+        "admission_queue_limit",
+        "admission_timeout_seconds",
+        "emergency_stop",
+        # 部署拓扑与吞吐旋钮:改并发/轮询/进程形态不改单任务轨迹,
+        # 与 task_max_workers 同族
+        "admission_concurrency_limit",
+        "worker_enabled",
+        "job_lease_duration_seconds",
+        "job_poll_interval_seconds",
+        # 可观测性与运维生命周期:与 log_level/recycle_* 同族
+        "log_format",
+        "readiness_min_disk_free_bytes",
+        "recycle_dry_run_only",
+        "recycle_evidence_retention_days",
+        "recycle_failed_retention_days",
+        # 治理标签:声明数据处理口径的版本,不参与执行与判定路径
+        "data_policy_version",
+        # 以下为 P 线之前既有豁免
         # S06 受理冻结的体量/耗时保护:运维边界而非复现口径(超限在受理即拒绝,
         # 不会产生"跑了但不可比"的轨迹),与 runs_root/db_path 同族进豁免
         "intake_timeout_seconds",

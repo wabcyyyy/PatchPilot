@@ -245,6 +245,17 @@ def test_provenance_carries_new_traceability_fields() -> None:
         "subtask_model",
         # G14 有界停止:同失败连续多少轮后收敛 NEEDS_REVIEW,决定轨迹终点,同题不可比
         "max_identical_failures",
+        # P 线补分类(2026-10-16,与 provenance.py 内注释同源):容器限额是执行包络、
+        # deployment_mode 决定强制面、预算类决定停手点
+        "docker_cpus",
+        "docker_memory",
+        "docker_pids_limit",
+        "docker_cap_drop",
+        "docker_security_opt",
+        "deployment_mode",
+        "task_budget_cap_usd",
+        "principal_daily_budget_usd",
+        "principal_daily_token_budget",
     } == set(SNAPSHOT_KEYS)
     started = datetime.fromisoformat(prov["started_at"])
     assert started.tzinfo is not None

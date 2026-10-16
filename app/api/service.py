@@ -533,6 +533,10 @@ class TaskService:
         worker_id: str = "in-process-worker",
         fencing_token: int | None = None,
     ) -> None:
+        # cancel_event 允许 None(直调 _execute 的旧形态/恢复路径没有现成事件),
+        # 归一成空事件,避免收尾段 is_set() 对 None 崩溃、把已完成任务吞成 NEEDS_REVIEW
+        if cancel_event is None:
+            cancel_event = threading.Event()
         # P3-9/P13: 工作线程首行设置日志上下文 (task_id, request_id, attempt_id, worker_id, actor)
         task_info = self.repo.get_task(task_id) if hasattr(self.repo, "get_task") else None
         actor = (
@@ -592,7 +596,13 @@ class TaskService:
         if hasattr(self.repo, "get_job_by_task_id") and hasattr(self.repo, "claim_next_job"):
             job = self.repo.get_job_by_task_id(task_id)
             if job and job.get("status") == "pending":
-                self.repo.claim_next_job(worker_id="in-process-worker")
+                # 租约时长必须来自 Settings(worker.py 同款):吃仓库默认值会让
+                # job_lease_duration_seconds 配置在这条路径上失效,P12 的僵尸认定
+                # 也随之失真
+                self.repo.claim_next_job(
+                    worker_id="in-process-worker",
+                    lease_duration_seconds=get_settings().job_lease_duration_seconds,
+                )
         try:
             settings = get_settings()
             # S05b/F4:DB 与文件的契约哈希一致才调模型——不一致说明受理证据损坏
