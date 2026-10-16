@@ -78,8 +78,9 @@
 ## 快速开始
 
 ```bash
-# Python 3.11+
-python -m pip install -r requirements.txt -r requirements-dev.txt
+# Python 3.11+;依赖声明在 pyproject.toml,锁定在 uv.lock
+# (uv sync 自动创建 .venv 并安装含 dev 组的全部依赖;下述命令也可用 uv run 前缀执行)
+uv sync
 
 # 日常快速验证（改动文件静态检查 + 少量相关测试；90 秒预算；收据自动保存）
 powershell -NoProfile -ExecutionPolicy Bypass -File verify.ps1
@@ -87,21 +88,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File verify.ps1
 # pytest 临时目录由验证入口放在仓库外，详见 AGENTS.md「pytest 临时目录」。
 
 # 回放模式跑一个完整修复任务(验证平台闭环)
-python -m app.evals.run_single --bug BUG-001 --model fake --engine graph --out runs
+uv run python -m app.evals.run_single --bug BUG-001 --model fake --engine graph --out runs
 
 # 建任务入口(MVP CLI;新任务默认 profile=repair_v2,显式随请求发送;
 # 老口径用 --profile legacy_v1 显式退回)
-python -m app.agent.cli submit --bug-id BUG-001
-python -m app.agent.cli submit --repo-path <path> --issue "缺陷描述"
+uv run python -m app.agent.cli submit --bug-id BUG-001
+uv run python -m app.agent.cli submit --repo-path <path> --issue "缺陷描述"
 
 # 服务启动后查询可受理能力(engine/profile/arm/role/model/预算,与受理层同源)
 curl -s http://127.0.0.1:8001/api/capabilities
 
 # 六个离线演示(全流程/澄清纠偏/委派/崩溃恢复等),分工表见 demo/README.md
-python -m demo.run_issue_only_ticket --out runs/demo-issue-only
+uv run python -m demo.run_issue_only_ticket --out runs/demo-issue-only
 
 # 批量评测 + 生成报告
-python -m app.evals.report --runs runs/m9 --out docs/work-notes/eval-report.md
+uv run python -m app.evals.report --runs runs/m9 --out docs/work-notes/eval-report.md
 ```
 
 接入真实模型:复制 `.env.example` 为 `.env`,配置 OpenAI 兼容端点,并**显式设置

@@ -7,10 +7,13 @@
 - **目标运行时**：Python 3.11 (与 Dockerfile `python:3.11-slim` 和 `ruff` target 严格对齐)；
 - **声明事实源**：`pyproject.toml` 是项目依赖的唯一声明源；
 - **生产与开发分离**：
-  - `requirements.txt`：生产运行依赖 (包含 `fastapi`, `uvicorn`, `pydantic`, `langgraph`, `redis`, `openai` 等)；
-  - `requirements-dev.txt`：本地与 CI 测试依赖 (`pytest`, `ruff`, `httpx` 等)；
-  - 一致性门禁：由 `tests/test_docs_anchors.py::test_requirements_files_match_pyproject` 保证两入口集合逐字一致。
-- **依赖版本锁**：`constraints.lock` 固化所有直接与传递依赖的确切版本，防止上游悄悄升级导致行为漂移。
+  - 运行依赖：`[project] dependencies` (`fastapi`, `uvicorn`, `pydantic`, `langgraph`, `redis`, `openai` 等)；
+  - 开发依赖：`[dependency-groups] dev` (`pytest`, `ruff`, `httpx` 等)，`uv sync` 默认安装；
+  - 一致性门禁：由 `tests/test_docs_anchors.py::test_uv_lock_is_tracked_and_in_sync` 保证锁与声明同步。
+- **依赖版本锁**：`uv.lock` 由 uv 解析并固化所有直接与传递依赖的确切版本，CI 与镜像以
+  `uv sync --frozen` 安装，防止上游悄悄升级导致行为漂移（2026-10-16 起替代原
+  `requirements.txt`/`requirements-dev.txt`/`constraints.lock` 入口；`constraints.lock`
+  保留为 P15 当时的 pin 快照）。
 
 ## 2. Docker 镜像构建与 Digest 追溯
 

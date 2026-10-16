@@ -10,7 +10,7 @@
    只是在"重钉行号",没有一次抓到真实的文档/代码矛盾;旧的 `路径:行号` 写法当场报错;
 3. 已知的假命题文案禁止在任何文档/源码中复活(黑名单);
 4. README 的能力清单(工具条数与名单)以代码里的注册表为准绳逐名对齐;
-5. 依赖声明的两个入口(pyproject 与 requirements*)必须逐条对得上;
+5. 依赖声明以 `pyproject.toml` 为唯一事实源,`uv.lock` 必须入库且与之同步;
 6. 提交进仓库的生成物(interview-guide 站点 HTML)必须与它的 Markdown 事实源逐字节一致。
 
 夜间 GOAL 的「全量 pytest 绿」红线由此物理卡住"改代码不改文档"。
@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import shutil
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -212,28 +214,53 @@ def test_markdown_links_point_at_existing_files() -> None:
     assert not broken, f"链接指向不存在的文件:{'; '.join(broken)}"
 
 
-def _req_specs(relpath: str) -> set[str]:
-    """requirements*.txt 里的依赖条目(去掉行尾注释与空行)。"""
-    return {
-        line.split("#")[0].strip()
-        for line in _read(relpath)
-        if line.strip() and not line.strip().startswith(("#", "-"))
-    }
+def _dep_name(spec: str) -> str:
+    """从依赖声明(PEP 508 片段)取包名,如 "pydantic>=2.7" -> "pydantic"。"""
+    return re.split(r"[><=!~;\[\s]", spec.strip(), maxsplit=1)[0].strip()
 
 
-def test_requirements_files_match_pyproject() -> None:
-    """依赖声明的两个入口必须逐条一致:pyproject 是唯一声明源。
+def test_uv_lock_is_tracked_and_in_sync() -> None:
+    """依赖声明以 pyproject.toml 为唯一事实源,uv.lock 必须入库且与之同步。
 
-    同一份依赖此前漂过一次:`httpx` 只写在 requirements-dev.txt,pyproject 的 dev
-    extra 里没有——照 pyproject 装出来的环境跑不起 starlette TestClient 用例。
-    CI 与镜像走 requirements(`pip install -r requirements.txt -r requirements-dev.txt`),
-    人手装环境走 `.[dev,llm]`,两条路径装出来的集合必须相同,所以在这里对账。
+    同一份依赖此前漂过一次:httpx 只写在 requirements-dev.txt,pyproject 的 dev
+    组里没有——照 pyproject 装出来的环境跑不起 starlette TestClient 用例
+    (2026-10-16 起双入口并入 uv,对账对象从 requirements* 换成 uv.lock)。
+    这里先静态对账锁内 patchpilot 条目的运行依赖与 dev 组名单,再用
+    `uv lock --check` 整体验证锁没有落后于声明;环境没有 uv 时跳过后半段
+    (本地与 CI 均有 uv,由 setup-uv 保证)。
     """
-    cfg = tomllib.loads("\n".join(_read("pyproject.toml")))
-    extras = {name: set(specs) for name, specs in cfg["project"]["optional-dependencies"].items()}
+    lock_path = REPO_ROOT / "uv.lock"
+    assert lock_path.is_file(), "uv.lock 不存在:依赖以 pyproject.toml 声明、以 uv.lock 锁定"
+    tracked = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", "uv.lock"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+    )
+    assert tracked.returncode == 0, "uv.lock 没有入库:锁文件必须提交,不能只留在本地"
 
-    assert _req_specs("requirements.txt") == set(cfg["project"]["dependencies"])
-    assert _req_specs("requirements-dev.txt") == extras.get("dev", set())
+    lock = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+    pkg = next(p for p in lock["package"] if p["name"] == "patchpilot")
+    cfg = tomllib.loads("\n".join(_read("pyproject.toml")))
+
+    locked_runtime = {d["name"] for d in pkg["dependencies"]}
+    declared_runtime = {_dep_name(s) for s in cfg["project"]["dependencies"]}
+    assert locked_runtime == declared_runtime, (
+        f"uv.lock 的运行依赖与 pyproject 不同:{sorted(locked_runtime ^ declared_runtime)}"
+        "(改完依赖先 uv lock 再提交)"
+    )
+    locked_dev = {d["name"] for d in pkg.get("dev-dependencies", {}).get("dev", [])}
+    declared_dev = {_dep_name(s) for s in cfg["dependency-groups"]["dev"]}
+    assert locked_dev == declared_dev, (
+        f"uv.lock 的 dev 组与 pyproject 不同:{sorted(locked_dev ^ declared_dev)}"
+    )
+
+    uv = shutil.which("uv")
+    if uv is None:
+        pytest.skip("uv 不在 PATH,跳过锁同步校验")
+    check = subprocess.run([uv, "lock", "--check"], cwd=REPO_ROOT, capture_output=True, text=True)
+    assert check.returncode == 0, (
+        f"uv.lock 落后于 pyproject.toml(跑 uv lock 刷新):{check.stdout}{check.stderr}"
+    )
 
 
 def test_interview_site_html_matches_its_markdown(tmp_path: Path) -> None:

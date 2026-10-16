@@ -14,8 +14,13 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt pytest
+# 依赖安装走 uv,uv.lock 固化全部传递依赖(与 CI 同一入口);
+# 运行镜像不带 dev 组,pytest 是执行被测测试的运行时需要,单独补装(与原 pip 行为一致)
+COPY --from=ghcr.io/astral-sh/uv:0.11.21 /uv /uvx /bin/
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project --no-dev \
+    && uv pip install --python /app/.venv/bin/python pytest
+ENV PATH="/app/.venv/bin:$PATH"
 
 COPY app ./app
 COPY bugs ./bugs

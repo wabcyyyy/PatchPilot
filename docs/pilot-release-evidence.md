@@ -9,11 +9,10 @@
 - **发布范围**：企业内网受控生产试点（单团队、单控制实例 API、单 Worker、无跨租户共享）；
 - **基线 Commit**：`090b741`（P19 生产边界与故障恢复集成验收完成）；
 - **运行时环境**：Python 3.11.x（`python:3.11-slim`）；
-- **依赖固化事实源**：
+- **依赖固化事实源**（2026-10-16 迁移：requirements*/constraints.lock 入口并入 `uv.lock`，本行以下保留发布当时状态）：
   - 声明文件：`pyproject.toml`
-  - 生产依赖入口：`requirements.txt`
-  - 开发测试入口：`requirements-dev.txt`
-  - 传递依赖锁：`constraints.lock`（全量锁定直接与间接依赖精确版本）
+  - 依赖锁（现）：`uv.lock`（CI/镜像以 `uv sync --frozen` 安装）
+  - 发布当时入口：`requirements.txt` / `requirements-dev.txt` + `constraints.lock`（全量锁定直接与间接依赖精确版本）
 - **数据库 Schema 契约**：
   - 数据库引擎：SQLite 3（WAL 模式 + 强外键约束 + 单实例进程排他锁）
   - Schema 版本：V3（由 `schema_migrations` 表显式版本控制，禁止破坏性回滚）
