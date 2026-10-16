@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -18,15 +19,20 @@ REPO = Path(__file__).resolve().parent.parent
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from fastapi.testclient import TestClient  # noqa: E402
+
 from app.api.admission import (  # noqa: E402
     AdmissionController,
     AdmissionQueueFullError,
     EmergencyStopError,
 )
-from app.config import Settings  # noqa: E402
+from app.api.app import create_app  # noqa: E402
+from app.api.service import TaskService  # noqa: E402
+from app.config import Settings, get_settings  # noqa: E402
 from app.errors import QuotaExceededError  # noqa: E402
 from app.observability.health import check_readiness  # noqa: E402
 from app.storage.repository import Repository  # noqa: E402
+from app.worker.worker import Worker  # noqa: E402
 
 
 def drill_admission() -> bool:
@@ -167,12 +173,99 @@ def drill_readiness() -> bool:
     return True
 
 
+def drill_pipeline() -> bool:
+    print(
+        "[drill:pipeline] 正在演练受控试点端到端解耦链路"
+        " (API 受理 -> Jobs 队列 -> 独立 Worker 执行 -> 状态与工件闭环)..."
+    )
+    old_worker_env = os.environ.get("PATCHPILOT_WORKER_ENABLED")
+    os.environ["PATCHPILOT_WORKER_ENABLED"] = "false"
+    get_settings.cache_clear()
+
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            db_file = Path(td) / "pilot.sqlite3"
+            runs_dir = Path(td) / "runs"
+            runs_dir.mkdir(parents=True, exist_ok=True)
+
+            with Repository(db_file) as repo:
+                # 1. 注册试点操作员主体与凭据
+                repo.create_principal(
+                    principal_id="pilot_operator", name="Operator", role="operator"
+                )
+                _cred, raw_key = repo.issue_credential(principal_id="pilot_operator")
+
+                # 2. API 端点受理任务 (使用 TestClient 模拟 HTTP 请求)
+                app = create_app(db_path=db_file, runs_root=runs_dir)
+                with TestClient(app) as client:
+                    res = client.post(
+                        "/api/tasks",
+                        json={"bug_id": "BUG-003", "engine": "plain", "model": "fake"},
+                        headers={"Authorization": f"Bearer {raw_key}"},
+                    )
+                    if res.status_code != 201:
+                        print(f"  [FAIL] 任务受理失败: status={res.status_code}, body={res.text}")
+                        return False
+                    task_id = res.json()["task_id"]
+
+                if hasattr(app.state, "service") and hasattr(app.state.service, "repo"):
+                    app.state.service.repo.close()
+
+                # 3. 验证 Job 正确入队且处于 pending 状态
+                job = repo.get_job_by_task_id(task_id)
+                if not job or job["status"] != "pending":
+                    print(f"  [FAIL] Job 未正确入队: job={job}")
+                    return False
+
+                # 4. 模拟独立 Worker 进程领取并执行该作业
+                service = TaskService(repo=repo, runs_root=runs_dir)
+                worker = Worker(
+                    repo=repo,
+                    service=service,
+                    runs_root=runs_dir,
+                    lock_path=Path(td) / "worker.lock",
+                    worker_id="pilot-worker-01",
+                )
+                ran = worker.run_once()
+                if not ran:
+                    print("  [FAIL] Worker 领取或执行 Job 失败")
+                    return False
+
+                # 5. 验证状态与工件闭环
+                job_done = repo.get_job_by_task_id(task_id)
+                task_done = repo.get_task(task_id)
+                if not job_done or job_done["status"] != "completed":
+                    print(f"  [FAIL] Job 未标记完成: job={job_done}")
+                    return False
+                if not task_done or task_done["status"] != "FINISHED":
+                    print(f"  [FAIL] Task 未到终态 FINISHED: task={task_done}")
+                    return False
+                if task_done["verdict"] != "resolved":
+                    print(f"  [FAIL] Task verdict 异常: verdict={task_done.get('verdict')}")
+                    return False
+
+                # 6. 验证取证报告工件落盘
+                report_file = runs_dir / task_id / "report.json"
+                if not report_file.is_file():
+                    print(f"  [FAIL] 取证报告 report.json 未落盘: path={report_file}")
+                    return False
+    finally:
+        if old_worker_env is None:
+            os.environ.pop("PATCHPILOT_WORKER_ENABLED", None)
+        else:
+            os.environ["PATCHPILOT_WORKER_ENABLED"] = old_worker_env
+        get_settings.cache_clear()
+
+    print("  [PASS] 试点端到端解耦流水线演练成功。")
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="PatchPilot 生产边界故障演练")
     parser.add_argument("--all", action="store_true", help="执行全部演练场景")
     parser.add_argument(
         "--drill",
-        choices=["admission", "fencing", "quota", "readiness"],
+        choices=["admission", "fencing", "quota", "readiness", "pipeline"],
         help="执行指定演练场景",
     )
     args = parser.parse_args(argv)
@@ -185,6 +278,7 @@ def main(argv: list[str] | None = None) -> int:
         "fencing": drill_fencing,
         "quota": drill_quota,
         "readiness": drill_readiness,
+        "pipeline": drill_pipeline,
     }
 
     selected = list(drills.keys()) if args.all else [args.drill]
