@@ -24,7 +24,7 @@ legacy 计划模式自动识别计划请求并返回预制文本，不能验证�
 
 | 材料 | 能支持什么 | 不能支持什么 |
 |---|---|---|
-| work-notes/eval-report-real.md | 一份早期真实模型批次快照 | 缺模型名/成本/provenance，不作当前修复率依据 |
+| evidence/eval/eval-report-real.md | 一份早期真实模型批次快照 | 缺模型名/成本/provenance，不作当前修复率依据 |
 | [SWE 消融证据](../work-notes/swe-ablation-evidence-2026-10-07.md) | 导入外部真实题、真实模型运行、双跑复核、两臂与后续重复噪声实验的历史记录，含负结果 | 最早两臂跨 graph/plain、判定强度不同；小样本/选择偏差；不能推广为当前版本收益 |
 | [付费批预登记与停手](../archive/paid-batch-preregistration-2026-10-08.md) | 预登记题单、重复设计、负结果与停止条件 | 预登记不等于实施全部目标，更不构成新付费授权 |
 | evidence/agent-upgrade 的离线收据 | 对应当时提交、dirty 与环境下的发布检查 | 不是当前提交 CI 结果或官方 benchmark 成绩 |

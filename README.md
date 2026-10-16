@@ -102,7 +102,7 @@ curl -s http://127.0.0.1:8001/api/capabilities
 uv run python -m demo.run_issue_only_ticket --out runs/demo-issue-only
 
 # 批量评测 + 生成报告
-uv run python -m app.evals.report --runs runs/m9 --out docs/work-notes/eval-report.md
+uv run python -m app.evals.report --runs runs/m9 --out docs/evidence/eval/eval-report.md
 ```
 
 接入真实模型:复制 `.env.example` 为 `.env`,配置 OpenAI 兼容端点,并**显式设置
@@ -165,8 +165,8 @@ tests/          # 项目自身测试(全离线,模型交互用 FakeLLM 回放;�
 | `docs/archive/design.md` | 设计决策与已知边界(已归档,仍被 ADR 锚点引用) |
 | `docs/threat-model.md` | 威胁模型:风险清单、缓解与"明确不防"清单 |
 | `docs/archive/audit-2026-09-19.md` | 全量自检:死代码/冗余架构、安全与逻辑漏洞、承诺落地核查,按 P0–P3 分级 |
-| `docs/work-notes/eval-report.md` | fake 回放批次快照(混合引擎;读数前先读文首口径补注) |
-| `docs/work-notes/eval-report-real.md` | 真实模型批次快照(缺模型名/成本;读数前先读文首口径补注) |
+| `docs/evidence/eval/eval-report.md` | fake 回放批次快照(混合引擎;读数前先读文首口径补注) |
+| `docs/evidence/eval/eval-report-real.md` | 真实模型批次快照(缺模型名/成本;读数前先读文首口径补注) |
 | `docs/work-notes/swe-ablation-evidence-2026-10-07.md` | 真实 SWE-bench 批次 + 两臂消融对照:预登记题单与判据、负面结果、瓶颈定位与协议边界 |
 | `docs/work-notes/interview-evidence-2026-10-07.md` | 同一批实测的"能写 / 不能写"清单:每条主张附证据路径与强度上限 |
 | `docs/postmortems/` | 失败复盘(6 篇) |

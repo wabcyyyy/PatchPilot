@@ -1,7 +1,7 @@
 """评测报告生成:runs 目录 → Markdown 报告(企划书 11.3)。
 
 用法:
-    python -m app.evals.report --runs runs/m9 --out docs/work-notes/eval-report.md
+    python -m app.evals.report --runs runs/m9 --out docs/evidence/eval/eval-report.md
 """
 
 from __future__ import annotations
@@ -146,7 +146,7 @@ def distribution_rows(per_bug: list[RunRow]) -> list[tuple[str, str]]:
 
 
 def render(
-    runs_root: Path, bugs_root: Path, report_out: str = "docs/work-notes/eval-report.md"
+    runs_root: Path, bugs_root: Path, report_out: str = "docs/evidence/eval/eval-report.md"
 ) -> str:
     rows = [annotate(r, bugs_root) for r in collect_runs(runs_root)]
     per_bug = latest_per_bug(rows)
@@ -276,7 +276,7 @@ def render(
 
 
 def render_multi(
-    runs_roots: list[Path], bugs_root: Path, report_out: str = "docs/work-notes/eval-report.md"
+    runs_roots: list[Path], bugs_root: Path, report_out: str = "docs/evidence/eval/eval-report.md"
 ) -> str:
     """多批次对比报告(T10.4):每个批次独立分节,含各自的指标/溯源/复现口径。
 
@@ -306,7 +306,7 @@ def main(argv: list[str] | None = None) -> int:
         help="runs 目录;可多次传入做批次对比(默认 runs/m9)",
     )
     parser.add_argument("--bugs", default="bugs")
-    parser.add_argument("--out", default="docs/work-notes/eval-report.md")
+    parser.add_argument("--out", default="docs/evidence/eval/eval-report.md")
     args = parser.parse_args(argv)
 
     runs_roots = [Path(r) for r in args.runs] if args.runs else [Path("runs/m9")]
