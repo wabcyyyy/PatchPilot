@@ -171,7 +171,8 @@ def apply_patch(workspace: Path | str, diff_text: str) -> PatchApplyResult:
         return PatchApplyResult(False, "git apply --check failed", detail)
 
     py_files = _touched_python_files(diff_text)
-    snapshot = _snapshot_files(ws, py_files)
+    # A syntax rejection must restore the entire transaction, including non-Python files.
+    snapshot = _snapshot_files(ws, list(dict.fromkeys(parse_diff_files(diff_text))))
 
     rc, _, err = run_git(
         ws, "apply", "--whitespace=nowarn", check=False, input_bytes=diff_text.encode("utf-8")

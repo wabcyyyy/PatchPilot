@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from app.adapters.pytest_adapter import run_pytest
+from app.adapters.pytest_output import PytestOutputParser
 from app.agent.runtime import CONTEXT_CAPACITY_EXCEEDED, TaskRuntime
 from app.config import get_settings
 from app.context.repo_instructions import RepoInstructions, load_instructions
@@ -62,7 +63,6 @@ from app.prompts import (
 )
 from app.task_spec import settings_for_policy
 from app.tools.base import ToolContext
-from app.tools.output_filter import refine_traceback
 from app.tools.registry import FINISH_TOOL
 from app.tools.tracker import Tracker
 
@@ -1151,6 +1151,11 @@ class TaskNodes:
             previous_plan=state.get("plan", ""),
             round_no=state["round_no"],
         )
+        from app.graph.attempts import negative_memory
+
+        lessons = negative_memory(state.get("attempts", []))
+        if lessons:
+            prompt += "\n\n" + lessons
         # 计划阶段的能力集合只有 finish(不给检索/写入面),但**证据照样带过去**:
         # 记忆块里是定位阶段真实读过的文件与行范围,不是模型自述的一句结论(T10 的观察点)
         self._begin_assembly("PLAN", state["round_no"], [FINISH_TOOL])
@@ -1590,17 +1595,16 @@ class TaskNodes:
             )
         # 回归集单独失败时也要有反馈(此前只处理 failed 集,回归失败反馈会悬空);
         # failed+regression 的失败签名合并成一组做"连续相同"检测(重复错误 → 换思路提示)
-        failing_cases = [
-            {
-                "name": c.test_name,
-                "signature": c.signature,
-                "traceback": refine_traceback(c.traceback, self.workspace),
-            }
-            for c in [*failed_report.failed_cases, *regression_report.failed_cases]
-        ]
+        diagnosis = PytestOutputParser(self.workspace).parse(failed_report, regression_report)
+        update["test_diagnosis"] = diagnosis
+        failing_cases = diagnosis["failed_cases"]
         if failing_cases:
             signatures, streak = _feedback_streak(
-                state, [f"{c['name']}|{c['signature']}" for c in failing_cases]
+                state,
+                [
+                    f"{c.test_name}|{c.signature}"
+                    for c in [*failed_report.failed_cases, *regression_report.failed_cases]
+                ],
             )
             update["feedback"] = build_feedback(failing_cases, repeat_streak=streak)
             update["last_feedback_signatures"] = signatures
@@ -2187,6 +2191,41 @@ class TaskNodes:
         }
 
     def rollback(self, state: TaskState) -> dict[str, Any]:
+        from app.graph.attempts import AttemptRecord, repeated_patch
+
+        diff = working_tree_diff(self.workspace).diff_text
+        attempt = AttemptRecord.create(
+            round_no=state["round_no"], patch_diff=diff, state=dict(state)
+        )
+        reference = attempt.save(self.report_dir.parent)
+        self._note_memory("record_attempt", attempt=reference)
+        attempts = [a for a in state.get("attempts", []) if a["round_no"] != state["round_no"]]
+        attempts.append(reference)
+        self.tracker.record(
+            tool="failed_attempt",
+            round_no=state["round_no"],
+            state="VERIFY",
+            output_summary=reference,
+        )
+        if repeated_patch(attempts):
+            self.tracker.record(
+                tool="bounded_stop",
+                round_no=state["round_no"],
+                state="VERIFY",
+                error="same ineffective patch generated twice consecutively",
+            )
+            return {
+                "status": "NEEDS_REVIEW",
+                "outcome": "needs_review",
+                "error": "same ineffective patch generated twice consecutively",
+                "preserved_diff": diff,
+                "attempts": attempts,
+            }
+        update = self._rollback_candidate(state)
+        update["attempts"] = attempts
+        return update
+
+    def _rollback_candidate(self, state: TaskState) -> dict[str, Any]:
         # N-12 整改:回滚会 reset 掉工作区,末轮(验证失败/门禁拒绝)的直接证据
         # 必须先取下——否则 runner 落盘的 diff.patch 是回滚后的空 diff,取证现场被毁
         from app.gitops.differ import working_tree_diff
@@ -2279,7 +2318,13 @@ class TaskNodes:
             reapply_candidate(self.workspace, self.report_dir.parent, candidate_id)
             if self.ctx is not None:
                 self.ctx.workspace_revision += 1
-                self._note_memory("mark_stale", from_revision=self.ctx.workspace_revision)
+                from app.context.evidence_lifecycle import invalidate_evidence
+
+                invalidate_evidence(
+                    self.ctx, trigger="continue_from_candidate", round_no=state["round_no"]
+                )
+                if self.memory is not None:
+                    save_memory_state(self.report_dir.parent, self.memory)
             self.tracker.record(
                 tool="continue_from_candidate",
                 round_no=state["round_no"],
@@ -2313,7 +2358,11 @@ class TaskNodes:
         # 代数由 graph 在这里递增(复位是平台动作,不经工具层),并立刻把旧观测标失效。
         if self.ctx is not None:
             self.ctx.workspace_revision += 1
-            self._note_memory("mark_stale", from_revision=self.ctx.workspace_revision)
+            from app.context.evidence_lifecycle import invalidate_evidence
+
+            invalidate_evidence(self.ctx, trigger="rollback", round_no=state["round_no"])
+            if self.memory is not None:
+                save_memory_state(self.report_dir.parent, self.memory)
         self.tracker.record(
             tool="reset_workspace",
             state="PROPOSE_PATCH",

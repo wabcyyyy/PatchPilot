@@ -121,6 +121,28 @@ def symbol_entries(tree: ast.Module) -> list[dict[str, Any]]:
     return out
 
 
+def symbol_details(tree: ast.Module, source: str, start_line: int) -> dict[str, Any]:
+    """Return source-backed details without changing the compact outline contract."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+            if node.lineno != start_line:
+                continue
+            start = min([node.lineno, *(d.lineno for d in node.decorator_list)])
+            end = node.end_lineno or node.lineno
+            lines = source.splitlines()
+            snippet = "\n".join(lines[start - 1 : end])
+            return {
+                "start_line": start,
+                "end_line": end,
+                "signature": next(
+                    line for line in ast.unparse(node).splitlines() if not line.startswith("@")
+                ),
+                "docstring": ast.get_docstring(node) or "",
+                "snippet": snippet,
+            }
+    return {}
+
+
 def _collect(body: list[ast.stmt], out: list[dict[str, Any]], depth: int) -> None:
     for child in body:
         if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):

@@ -134,7 +134,7 @@ def _build_registry() -> dict[str, ToolSpec]:
                 "按路径确定序。优先精确名(大小写不敏感),没有精确命中才回退前缀匹配"
                 "(输出里的 match 字段说明是哪一种);kind 可选 class/function/method,"
                 "只想要方法就传 kind='method'。想知道某个函数/类在哪,先用它,而不是用 "
-                "search_code 全文扫一遍再猜。"
+                "search_code 全文扫一遍再猜。include_details=true 返回起止行、完整签名、Docstring 和代码片段。"
             ),
             parameters=_schema(
                 "find_symbol",
@@ -142,6 +142,7 @@ def _build_registry() -> dict[str, ToolSpec]:
                 {
                     "name": {"type": "string"},
                     "kind": {"type": "string", "enum": list(SYMBOL_KINDS)},
+                    "include_details": {"type": "boolean"},
                 },
                 ["name"],
             ),
@@ -489,7 +490,7 @@ def execute(
         tool=name,
         round_no=round_no,
         state=state,
-        input_payload=_summarize_input(name, args),
+        input_payload=args,
         output_summary=_summarize_output(name, result),
         duration_ms=duration_ms,
         error=result.error,
@@ -589,6 +590,8 @@ def model_payload(result: ToolResult) -> Any:
     第二条绕过 G05 有界协议的路 —— 而旧缺陷恰恰长在"序列化之后再按字符硬切"那一步。
     """
     if not result.ok:
+        if isinstance(result.visible, dict) and "_memory_refs" in result.visible:
+            return result.visible
         return {"error": result.error}
     return result.visible if result.visible is not None else result.output
 
@@ -611,8 +614,9 @@ def _record_memory(
     if memory is None:
         return
     if name in MUTATING_TOOLS and result.ok:
-        # 写之前的观测全部失效:补丁改了文件,那些行范围就不再是现状
-        memory.mark_stale(from_revision=ctx.workspace_revision)
+        from app.context.evidence_lifecycle import invalidate_evidence
+
+        invalidate_evidence(ctx, trigger=name, round_no=round_no)
     if name in SELF_RECORDING_TOOLS:
         return
     detail, path, line_range, verdict = describe_receipt(
@@ -620,6 +624,10 @@ def _record_memory(
     )
     if not detail:
         return
+    from app.context.evidence_lifecycle import receipt_hashes, retain_receipt
+
+    hashes = receipt_hashes(ctx, name, result.output) if result.ok else {}
+    retain_receipt(ctx, name, result)
     ref = result.evidence
     bounded = result.visible.get("_bounded") if isinstance(result.visible, dict) else None
     entry = memory.record_evidence(
@@ -638,7 +646,13 @@ def _record_memory(
         # 观测里写"模型那一屏被折掉了多少行",下一阶段的模型才知道上一阶段看到的是摘要
         omitted_lines=int(bounded.get("omitted_lines") or 0) if isinstance(bounded, dict) else 0,
         verdict=verdict,
+        symbol_name=str(args.get("name") or "") if name == "find_symbol" else "",
+        file_hashes=hashes,
     )
+    if isinstance(model_payload(result), dict):
+        result.visible = {**model_payload(result), "_memory_refs": [entry.ref]}
+    if name == "read_evidence" and isinstance(result.output, dict):
+        entry.stale = bool(result.output.get("stale"))
     if ctx.session is not None:
         ctx.session.memory_version = memory.version
         ctx.session.note_evidence(entry.ref)

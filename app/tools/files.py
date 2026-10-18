@@ -233,6 +233,11 @@ def read_evidence(
         return ToolResult.fail(f"cannot read evidence: {exc}")
     ref = page.ref
     stale = ref.workspace_revision != ctx.workspace_revision
+    if ctx.memory is not None:
+        observations = [e for e in ctx.memory.evidence if e.evidence_id == ref.evidence_id]
+        file_observations = [e for e in observations if e.file_hashes]
+        if file_observations:
+            stale = any(e.stale for e in file_observations)
     payload: dict[str, Any] = {
         "evidence_id": ref.evidence_id,
         "source": ref.source,

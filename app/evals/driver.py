@@ -111,6 +111,7 @@ class TaskResult:
     # 工件收集(report_evidence.collect_run_evidence)。旧报告缺该键 ⇒ 读方不渲染,
     # 不冒充"没有验收/没有候选";收集失败落空结构,不拦报告本身。
     evidence: dict[str, Any] = field(default_factory=dict)
+    artifact_errors: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -147,6 +148,18 @@ def _write_report(result: TaskResult, run_dir: Path) -> None:
     except OSError:
         (run_dir / "report.json").write_text(payload, encoding="utf-8")
         tmp.unlink(missing_ok=True)
+
+    from app.delivery.run_artifacts import export_run_artifacts
+
+    try:
+        export_run_artifacts(run_dir, result.as_dict())
+    except Exception as exc:
+        # Export failure is visible in the primary report; it cannot rewrite acceptance.
+        result.artifact_errors.append(f"{type(exc).__name__}: {exc}")
+        log.exception("task %s: portable artifact export failed", result.task_id)
+        (run_dir / "report.json").write_text(
+            json.dumps(result.as_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
 
 def run_task(

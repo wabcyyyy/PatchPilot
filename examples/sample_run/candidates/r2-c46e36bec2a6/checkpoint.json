@@ -1,0 +1,1 @@
+{"candidate_id": "r2-c46e36bec2a6", "version": 1, "round_no": 2, "gate_ok": true, "verify_failed_ok": true, "verify_regression_ok": true, "verification_attempt_id": "ec3b041fd61246469b3746b1de40bb19", "note": "verify: platform rerun of failed + regression sets", "updated_at": "2026-10-18T12:26:53.018+00:00"}

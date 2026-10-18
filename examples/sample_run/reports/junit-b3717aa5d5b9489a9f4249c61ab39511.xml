@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="2" time="0.208" timestamp="2026-10-18T20:26:39.419280+08:00" hostname="wabcy"><testcase classname="runs.sample-generation-final-20261018.sample-engineering-upgrade.workspace.tests.test_dateparse" name="test_empty_string_returns_none" file="runs\sample-generation-final-20261018\sample-engineering-upgrade\workspace\tests\test_dateparse.py" line="21" time="0.001" /><testcase classname="runs.sample-generation-final-20261018.sample-engineering-upgrade.workspace.tests.test_dateparse" name="test_whitespace_returns_none" file="runs\sample-generation-final-20261018\sample-engineering-upgrade\workspace\tests\test_dateparse.py" line="25" time="0.003"><failure message="ValueError: unrecognized date format: '   '">def test_whitespace_returns_none():
+&gt;       assert parse_date("   ") is None
+               ^^^^^^^^^^^^^^^^^
+
+tests\test_dateparse.py:27: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+value = '   '
+
+    def parse_date(value):
+        """解析日期字符串;空输入返回 None,非法格式抛 ValueError。"""
+        if value is None:
+            return None
+        if value == "":
+            return None
+        for fmt in DATE_FORMATS:
+            try:
+                return datetime.strptime(value, fmt).date()
+            except ValueError:
+                continue
+&gt;       raise ValueError(f"unrecognized date format: {value!r}")
+E       ValueError: unrecognized date format: '   '
+
+src\dateparse.py:19: ValueError</failure></testcase></testsuite></testsuites>

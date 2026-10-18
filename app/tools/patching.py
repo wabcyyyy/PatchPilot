@@ -94,7 +94,7 @@ def apply_patch(ctx: ToolContext, patch_text: str) -> ToolResult:
         return ToolResult.fail("; ".join(str(v) for v in gate.violations))
 
     try:
-        diff_text = compile_block_patch(ctx.workspace, sections)
+        diff_text = compile_block_patch(ctx.workspace, sections, validate_python=True)
     except BlockPatchError as exc:
         return ToolResult.fail(_block_rejected(exc))
 

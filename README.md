@@ -77,6 +77,16 @@
 
 ## 快速开始
 
+无需运行即可查看[示例修复产物](examples/sample_run/README.md)：包含实际 pytest 执行的
+两轮 FakeLLM 回放、失败尝试记录、最终补丁、结构化验收报告与完整轨迹。
+这是平台闭环示例，不作为真实模型效果或 Docker 验证成绩。
+
+工程升级细节见[任务说明](docs/work-notes/engineering-upgrade-2026-10-18.md)：符号检索可用
+`include_details=true` 获取精确源码区间、签名、Docstring 和片段；块编辑在内存预检语法，
+证据按文件 hash 失效，旧工具消息按引用折叠。graph 将失败候选留档传入重规划，并在连续
+两次相同无效补丁时停止。两引擎自动导出 `patch.diff`、`trajectory.json` 和
+`evaluation_report.json`，原有 `diff.patch`、JSONL 轨迹和 `report.json` 继续保留。
+
 ```bash
 # Python 3.11+;依赖声明在 pyproject.toml,锁定在 uv.lock
 # (uv sync 自动创建 .venv 并安装含 dev 组的全部依赖;下述命令也可用 uv run 前缀执行)

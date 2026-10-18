@@ -6,7 +6,7 @@ ToolContext / 模型等工作时对象放在节点闭包里,不进 state。
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Any, TypedDict
 
 # 状态以字面量流转;终态集合的唯一权威在 app/storage/repository.py
 # (P2-2 收敛,含 CANCELLED——引擎不产出它,由 service 收敛)。
@@ -49,6 +49,10 @@ class TaskState(TypedDict, total=False):
     # 反思提示:上一轮反馈的归一化特征串与连续相同轮数(0 = 无失败)
     last_feedback_signatures: list[str]
     repeat_streak: int
+    test_diagnosis: dict[str, Any]
+    attempts: list[dict[str, Any]]
+    memory_version: int
+    memory_evidence_refs: list[str]  # EvidenceItem records live in bound memory_state.json.
     # 自适应分支(卡5):实时计数在 ctx.patch_fail_streak(工具层 apply_patch 写),
     # `_should_branch` 也读 ctx——只有工具层知道每次应用结果。这里的同名字段是
     # 计划书面要求的 state 形态(检查点/轨迹留痕用),由分支合流节点写回

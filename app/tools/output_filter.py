@@ -23,7 +23,7 @@ from typing import Any
 # CPython 帧头:  File "/abs/path.py", line 12, in func
 _FRAME_RE = re.compile(r'^\s*File "(?P<path>[^"]+)", line \d+(?:, in .*)?$')
 # pytest 位置行:src/foo.py:12: AssertionError(缩进版本也认)
-_PYTEST_LOC_RE = re.compile(r"^\s*(?P<path>[^\s:]+\.(?:py|pyx|pxd)):\d+(?::.*)?\s*$")
+_PYTEST_LOC_RE = re.compile(r"^\s*(?P<path>(?:[A-Za-z]:)?[^\s:]+\.(?:py|pyx|pxd)):\d+(?::.*)?\s*$")
 # 最终异常块:E 前缀(pytest 断言重写)或"异常名: 消息"
 _EXCEPTION_RE = re.compile(r"^(?:E\s|[\w.]+(?:Error|Exception|Warning|Exit|Interrupt)\b|assert\b)")
 # 三方/工具链帧:它们只会把模型的注意力引到它改不了的文件上

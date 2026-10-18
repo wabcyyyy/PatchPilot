@@ -27,6 +27,7 @@ unified diff 仍是系统内唯一的事实源:本模块把块编译成带真实
 
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -326,7 +327,7 @@ def _terminators(pre: list[str], pos: int, width: int) -> tuple[str, str]:
     return real, last
 
 
-def _compile_update(section: BlockSection, target: Path) -> str:
+def _compile_update(section: BlockSection, target: Path, *, validate_python: bool = False) -> str:
     pre = _read_lines(target, section.path)
     keys = [_strip_eol(line) for line in pre]
     post = list(pre)
@@ -347,6 +348,8 @@ def _compile_update(section: BlockSection, target: Path) -> str:
             "format", "empty_section", f"{section.path}:块只含上下文行,没有任何改动"
         )
 
+    if validate_python:
+        _check_python(section.path, "".join(post))
     pre_keys = [_key(line) for line in pre]
     post_keys = [_key(line) for line in post]
     body: list[str] = []
@@ -370,7 +373,18 @@ def _body_contents(lines: list[str]) -> list[str]:
     return [raw[1:] for raw in lines if raw and raw != _NO_EOL]
 
 
-def _compile_add(section: BlockSection, target: Path) -> str:
+def _check_python(path: str, source: str) -> None:
+    """Check the in-memory postimage before any workspace file is written."""
+    if not path.endswith(".py"):
+        return
+    try:
+        ast.parse(source, filename=path)
+    except (SyntaxError, ValueError) as exc:
+        location = f"{path}:{getattr(exc, 'lineno', '?')}:{getattr(exc, 'offset', '?')}"
+        raise BlockPatchError("syntax", "python_syntax_error", f"{location}: {exc}") from exc
+
+
+def _compile_add(section: BlockSection, target: Path, *, validate_python: bool = False) -> str:
     if target.exists():
         raise BlockPatchError(
             "context", "add_exists", f"新增目标已存在:{section.path}(改内容请用 Update File)"
@@ -386,6 +400,8 @@ def _compile_add(section: BlockSection, target: Path) -> str:
         content + ("" if no_eol and i == len(contents) - 1 else "\n")
         for i, content in enumerate(contents)
     ]
+    if validate_python:
+        _check_python(section.path, "".join(file_lines))
     body = [f"@@ -0,0 +1,{len(contents)} @@\n", *_emit("+", file_lines)]
     return header + "".join(body)
 
@@ -402,7 +418,9 @@ def _compile_delete(section: BlockSection, target: Path) -> str:
     return header + "".join(body)
 
 
-def compile_block_patch(workspace: Path | str, sections: list[BlockSection]) -> str:
+def compile_block_patch(
+    workspace: Path | str, sections: list[BlockSection], *, validate_python: bool = False
+) -> str:
     """块段 → unified diff(内部唯一事实源)。
 
     每段都自带 `diff --git` 头:门禁的 parse_new_files/parse_new_symlinks 只扫
@@ -414,11 +432,11 @@ def compile_block_patch(workspace: Path | str, sections: list[BlockSection]) -> 
     for section in sections:
         target = _workspace_target(ws, section.path)
         if section.action == "add":
-            out.append(_compile_add(section, target))
+            out.append(_compile_add(section, target, validate_python=validate_python))
         elif section.action == "delete":
             out.append(_compile_delete(section, target))
         else:
-            out.append(_compile_update(section, target))
+            out.append(_compile_update(section, target, validate_python=validate_python))
     return "".join(out)
 
 

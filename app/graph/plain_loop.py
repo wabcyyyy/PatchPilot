@@ -645,6 +645,9 @@ def run_plain_loop(
                 input_payload={"turn": turn_no},
                 output_summary={"placeholder_replies": repaired, "messages": len(messages)},
             )
+        from app.context.evidence_messages import compact_evidence_messages
+
+        messages = compact_evidence_messages(messages, ctx.memory, keep_recent_turns=keep_recent)
         context_tokens = messages_tokens(messages)
         if capacity_ceiling > 0:
             # 先量"压不动的那一段"(头部约束 + 尾部钉住的回合组)。它本身就超出声明容量的

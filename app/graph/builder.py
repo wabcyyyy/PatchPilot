@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
+from functools import wraps
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
@@ -14,18 +17,52 @@ def build_graph(nodes: TaskNodes, checkpointer: Any | None = None) -> Any:
     """按转移表装配图;checkpointer 提供时编译为可恢复图。"""
     graph = StateGraph(TaskState)
 
-    graph.add_node("prepare", nodes.prepare)
-    graph.add_node("baseline", nodes.baseline)
-    graph.add_node("localize", nodes.localize)
+    def traced(
+        action: Callable[[TaskState], dict[str, Any]],
+    ) -> Callable[[TaskState], dict[str, Any]]:
+        @wraps(action)
+        def run(state: TaskState) -> dict[str, Any]:
+            started = time.monotonic()
+            update: dict[str, Any] = {}
+            error: str | None = None
+            try:
+                update = action(state)
+                memory = getattr(nodes, "memory", None)
+                if memory is not None:
+                    update["memory_version"] = memory.version
+                    update["memory_evidence_refs"] = [item.ref for item in memory.evidence]
+                return update
+            except Exception as exc:
+                error = f"{type(exc).__name__}: {exc}"
+                raise
+            finally:
+                nodes.tracker.record(
+                    tool="node_transition",
+                    round_no=state.get("round_no", 0),
+                    state=action.__name__.upper(),
+                    input_payload={"node": action.__name__, "status": state.get("status")},
+                    output_summary={
+                        "status": update.get("status"),
+                        "round_no": update.get("round_no", state.get("round_no", 0)),
+                    },
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                    error=error,
+                )
+
+        return run
+
+    graph.add_node("prepare", traced(nodes.prepare))
+    graph.add_node("baseline", traced(nodes.baseline))
+    graph.add_node("localize", traced(nodes.localize))
     # G10:issue-only 任务的验收清单节点(仅 diagnose 模式经过;repair 任务的
     # 条件边不指向它,超步数与引入前逐字相同)
-    graph.add_node("diagnose", nodes.diagnose)
-    graph.add_node("plan", nodes.plan)
-    graph.add_node("propose", nodes.propose)
-    graph.add_node("apply", nodes.apply)
-    graph.add_node("verify", nodes.verify)
-    graph.add_node("finish", nodes.finish)
-    graph.add_node("rollback", nodes.rollback)
+    graph.add_node("diagnose", traced(nodes.diagnose))
+    graph.add_node("plan", traced(nodes.plan))
+    graph.add_node("propose", traced(nodes.propose))
+    graph.add_node("apply", traced(nodes.apply))
+    graph.add_node("verify", traced(nodes.verify))
+    graph.add_node("finish", traced(nodes.finish))
+    graph.add_node("rollback", traced(nodes.rollback))
 
     graph.add_edge(START, "prepare")
     # G10:diagnose 模式 prepare 后直接进调查(baseline 节点对空集等价于全仓跑)

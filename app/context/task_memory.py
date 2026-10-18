@@ -60,7 +60,7 @@ def _clip(text: str) -> str:
 
 
 @dataclass
-class MemoryEvidence:
+class EvidenceItem:
     """一条**平台观测**:谁在哪个阶段用什么参数拿到了什么,原文在哪一代工作区。"""
 
     ref: str
@@ -77,9 +77,42 @@ class MemoryEvidence:
     omitted_lines: int = 0
     verdict: str = ""  # 平台判定(仅 run_tests 等结构化结果),模型永远写不了这个字段
     stale: bool = False
+    symbol_name: str = ""
+    file_hashes: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def file_path(self) -> str:
+        return self.path
+
+    @property
+    def file_hash(self) -> str:
+        return self.file_hashes.get(self.path, "")
+
+    @property
+    def content_summary(self) -> str:
+        return self.detail
+
+    @property
+    def is_stale(self) -> bool:
+        return self.stale
 
     def as_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        value = asdict(self)
+        # Preserve the identity of old snapshots that lack these optional fields.
+        for key in ("symbol_name", "file_hashes"):
+            if not value[key]:
+                value.pop(key)
+        if self.file_hashes:
+            value.update(
+                file_path=self.file_path,
+                file_hash=self.file_hash,
+                content_summary=self.content_summary,
+                is_stale=self.is_stale,
+            )
+        return value
+
+
+MemoryEvidence = EvidenceItem  # Existing snapshot and caller vocabulary remains valid.
 
 
 @dataclass
@@ -123,6 +156,7 @@ class TaskMemory:
         self.excluded: list[MemoryExclusion] = []
         self.plans: list[str] = []
         self.candidate: dict[str, Any] = {}
+        self.failed_attempts: list[dict[str, Any]] = []
         self._lock = threading.Lock()
         self._refs: set[str] = set()
 
@@ -180,6 +214,8 @@ class TaskMemory:
         retrievable: bool = False,
         omitted_lines: int = 0,
         verdict: str = "",
+        symbol_name: str = "",
+        file_hashes: dict[str, str] | None = None,
     ) -> MemoryEvidence:
         with self._lock:
             entry = MemoryEvidence(
@@ -196,6 +232,8 @@ class TaskMemory:
                 retrievable=retrievable,
                 omitted_lines=omitted_lines,
                 verdict=_clip(verdict),
+                symbol_name=symbol_name,
+                file_hashes=dict(file_hashes or {}),
             )
             self.evidence.append(entry)
             self.version += 1
@@ -213,6 +251,23 @@ class TaskMemory:
                 self.version += 1
         return marked
 
+    def invalidate_files(self, hashes: dict[str, str], *, revision: int) -> list[str]:
+        """Invalidate changed dependencies; old observations without hashes use revisions."""
+        refs: list[str] = []
+        with self._lock:
+            for entry in self.evidence:
+                changed = (
+                    any(hashes.get(path) != digest for path, digest in entry.file_hashes.items())
+                    if entry.file_hashes
+                    else entry.workspace_revision < revision
+                )
+                if changed and not entry.stale:
+                    entry.stale = True
+                    refs.append(entry.ref)
+            if refs:
+                self.version += 1
+        return refs
+
     def record_candidate(
         self, *, candidate_id: str, candidate_hash: str, workspace_revision: int
     ) -> None:
@@ -222,6 +277,15 @@ class TaskMemory:
                 "candidate_hash": candidate_hash[:16],
                 "workspace_revision": workspace_revision,
             }
+            self.version += 1
+
+    def record_attempt(self, attempt: dict[str, Any]) -> None:
+        """Platform-only reference to the exact failed diff and its test diagnosis."""
+        with self._lock:
+            self.failed_attempts = [
+                a for a in self.failed_attempts if a["round_no"] != attempt["round_no"]
+            ]
+            self.failed_attempts.append(dict(attempt))
             self.version += 1
 
     def record_plan(self, plan_text: str, *, degraded: bool = False) -> int:
@@ -360,7 +424,11 @@ class TaskMemory:
         obs = [
             f"- [{e.ref}] {e.stage} r{e.round_no} {e.detail}"
             + (f" 行 {e.line_range}" if e.line_range else "")
-            + (f" [已失效:rev{e.workspace_revision} 改动前]" if e.stale else "")
+            + (
+                " [已失效:该文件已被修改，旧观测已失效，如需查看最新代码请重新调用检索工具]"
+                if e.stale
+                else ""
+            )
             + (
                 f' 原文可取回 read_evidence("{e.evidence_id}")'
                 if e.evidence_id and e.retrievable
@@ -400,7 +468,7 @@ class TaskMemory:
     # ---------- 序列化与身份 ----------
 
     def snapshot(self) -> dict[str, Any]:
-        return {
+        snapshot = {
             "schema_version": MEMORY_SCHEMA_VERSION,
             "task_id": self.task_id,
             "session_id": self.session_id,
@@ -414,6 +482,9 @@ class TaskMemory:
             "hypotheses": [h.as_dict() for h in self.hypotheses[-MAX_ITEMS_PER_KIND:]],
             "excluded": [x.as_dict() for x in self.excluded[-MAX_ITEMS_PER_KIND:]],
         }
+        if self.failed_attempts:
+            snapshot["failed_attempts"] = list(self.failed_attempts)
+        return snapshot
 
     def state_hash(self) -> str:
         """记忆内容的确定性 hash:快照/恢复拿它判断"续跑的这次看到的还是同一份记忆吗"。"""
@@ -433,10 +504,16 @@ class TaskMemory:
         candidate = raw.get("candidate")
         memory.candidate = dict(candidate) if isinstance(candidate, dict) else {}
         memory.plans = [str(x) for x in (raw.get("plans") or [])]
+        memory.failed_attempts = list(raw.get("failed_attempts") or [])
         for row in raw.get("evidence") or []:
             if isinstance(row, dict):
                 with contextlib.suppress(TypeError):  # 少一个字段就丢一条,不整份作废
-                    memory.evidence.append(MemoryEvidence(**row))
+                    legacy = {
+                        key: value
+                        for key, value in row.items()
+                        if key not in {"file_path", "file_hash", "content_summary", "is_stale"}
+                    }
+                    memory.evidence.append(MemoryEvidence(**legacy))
         for row in raw.get("hypotheses") or []:
             if isinstance(row, dict):
                 with contextlib.suppress(TypeError):

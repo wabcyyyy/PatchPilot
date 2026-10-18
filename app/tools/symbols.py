@@ -19,7 +19,7 @@ import logging
 from typing import Any
 
 from app.config import get_settings
-from app.context.ast_outline import SYMBOL_KINDS, parse_source, symbol_entries
+from app.context.ast_outline import SYMBOL_KINDS, parse_source, symbol_details, symbol_entries
 from app.tools.base import ToolContext, ToolResult
 from app.tools.files import search_scope
 from app.tools.paths import looks_like_text, relpath_within
@@ -60,7 +60,9 @@ def describe_file(ctx: ToolContext, path: str) -> ToolResult:
     )
 
 
-def find_symbol(ctx: ToolContext, name: str, kind: str | None = None) -> ToolResult:
+def find_symbol(
+    ctx: ToolContext, name: str, kind: str | None = None, include_details: bool = False
+) -> ToolResult:
     """全仓符号定义搜索:回答"X 在哪里定义"。结果按路径确定序,受 max_symbol_results 上限。
 
     匹配语义:先要**精确名**(大小写不敏感);精确名为空才退到**前缀名**——
@@ -105,6 +107,8 @@ def find_symbol(ctx: ToolContext, name: str, kind: str | None = None) -> ToolRes
                 "line": entry["start_line"],
                 "signature": entry["signature"],
             }
+            if include_details:
+                item.update(symbol_details(tree, text, entry["start_line"]))
             (exact if lowered == target else prefix).append(item)
 
     found = exact or prefix
