@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -110,3 +111,29 @@ def test_green_xml_requires_platform_identity_confirmation(
     evaluation = json.loads((tmp_path / "evaluation_report.json").read_text())
     assert evaluation["target_tests"]["status"] == expected
     assert evaluation["regression_tests"]["status"] == "not_run"
+
+
+def test_bounded_evidence_page_references_its_own_raw_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.config import get_settings
+
+    ctx = _ctx(tmp_path)
+    (ctx.workspace / "a.py").write_text("value = '" + "x" * 12000 + "'\n", encoding="utf-8")
+    monkeypatch.setattr(get_settings(), "tool_visible_max_chars", 1000)
+    original = execute(ctx, "read_file", {"path": "a.py"})
+    assert original.evidence is not None
+    page = execute(ctx, "read_evidence", {"evidence_id": original.evidence.evidence_id})
+    assert page.evidence is not None and page.evidence.evidence_id != original.evidence.evidence_id
+    raw = json.dumps(page.output, ensure_ascii=False, default=str)
+    assert page.evidence.sha256 == hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    assert ctx.evidence is not None
+    cursor = ""
+    parts: list[str] = []
+    while True:
+        recovered = ctx.evidence.read(page.evidence.evidence_id, cursor=cursor)
+        parts.append(recovered.text)
+        if not recovered.next_cursor:
+            break
+        cursor = recovered.next_cursor
+    assert "".join(parts) == raw

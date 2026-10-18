@@ -536,6 +536,9 @@ def _apply_visible_view(
     if settings.evidence_enabled:
         from app.context.evidence_lifecycle import retain_receipt
 
+        # read_evidence already carries the source item's reference. A bounded
+        # page reply needs a new reference to its own raw JSON, not that source.
+        result.evidence = None
         retain_receipt(ctx, name, result)
         ref = result.evidence
     visible = report.value if isinstance(report.value, dict) else {"value": report.value}
