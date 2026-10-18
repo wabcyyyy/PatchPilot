@@ -2211,7 +2211,9 @@ class TaskNodes:
         if (
             duplicate_limit > 0
             and state["round_no"] < self.max_rounds
-            and not self._should_branch(state)
+            and state.get("status") == "VERIFY"
+            and (state.get("test_diagnosis") or {}).get("failure_count", 0) > 0
+            and (state.get("branching_used", False) or self.branch_model_factory is None)
             and repeated_patch(attempts, limit=max(2, duplicate_limit))
         ):
             error = (

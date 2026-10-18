@@ -20,6 +20,14 @@ from tests.test_engineering_upgrade import _ctx
 from tests.test_resume import _StubGraph
 
 
+def test_small_success_receipt_does_not_expose_run_specific_ids(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    result = execute(ctx, "read_file", {"path": "a.py"})
+    assert result.ok and result.evidence is not None and result.evidence.retrievable
+    assert "evidence" not in model_payload(result)
+    assert model_payload(result)["_memory_refs"] == ["E1"]
+
+
 def test_evidence_write_failure_preserves_successful_edit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
