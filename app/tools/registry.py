@@ -17,7 +17,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.context.ast_outline import SYMBOL_KINDS
-from app.context.evidence import EvidenceNotStored, EvidenceRef, build_store
+from app.context.evidence import EvidenceRef
 from app.diagnosis.tool import propose_acceptance
 from app.tools.base import ToolContext, ToolResult
 from app.tools.commands import run_command, write_repro
@@ -534,14 +534,10 @@ def _apply_visible_view(
     raw_json = json.dumps(payload, ensure_ascii=False, default=str)
     ref: EvidenceRef | None = None
     if settings.evidence_enabled:
-        if ctx.evidence is None:
-            ctx.evidence = build_store(ctx.report_dir, ctx.task_id)
-        try:
-            ref = ctx.evidence.save(
-                raw_json, source=name, workspace_revision=ctx.workspace_revision
-            )
-        except EvidenceNotStored as exc:
-            ref = exc.ref  # 拒落也带着身份:字节数/hash 仍然可对上,只是取不回来
+        from app.context.evidence_lifecycle import retain_receipt
+
+        retain_receipt(ctx, name, result)
+        ref = result.evidence
     visible = report.value if isinstance(report.value, dict) else {"value": report.value}
     visible["_bounded"] = report.metadata(visible_max_chars=cap)
     if ref is None:
@@ -651,6 +647,8 @@ def _record_memory(
     )
     if isinstance(model_payload(result), dict):
         result.visible = {**model_payload(result), "_memory_refs": [entry.ref]}
+        if ref is not None:
+            result.visible["evidence"] = ref.as_dict()
     if name == "read_evidence" and isinstance(result.output, dict):
         entry.stale = bool(result.output.get("stale"))
     if ctx.session is not None:

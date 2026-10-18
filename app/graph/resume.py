@@ -106,6 +106,28 @@ def _read_final_report(run_dir: Path) -> dict[str, Any] | None:
         return None
 
 
+def _invalidate_resumed_workspace(nodes: TaskNodes, run_dir: Path, round_no: int) -> None:
+    """A trusted resume reset changes code just as an explicit edit or rollback does."""
+    from app.context.evidence_lifecycle import invalidate_evidence
+    from app.context.task_memory import save_memory_state
+    from app.graph.loop_state import save_loop_snapshot
+
+    ctx = getattr(nodes, "ctx", None)
+    if ctx is None or ctx.memory is None:
+        return
+    ctx.workspace_revision = (
+        max([ctx.workspace_revision, *(item.workspace_revision for item in ctx.memory.evidence)])
+        + 1
+    )
+    invalidate_evidence(ctx, trigger="resume_reset_workspace", round_no=round_no)
+    save_memory_state(run_dir, ctx.memory)
+    snapshot = getattr(nodes, "resume_snapshot", None)
+    if snapshot is not None and snapshot.session_id:
+        snapshot.memory_version = ctx.memory.version
+        snapshot.memory_hash = ctx.memory.state_hash()
+        save_loop_snapshot(run_dir, snapshot)
+
+
 def binding_mismatch(
     loop_snapshot: Any, session: Any, memory: Any, runtime: Any = None
 ) -> tuple[list[str], dict[str, Any]]:
@@ -336,6 +358,7 @@ def prepare_resume(
     if node in PRE_RESET_NODES and baseline:
         try:
             reset_workspace(run_dir / "workspace", baseline)
+            _invalidate_resumed_workspace(nodes, run_dir, round_no)
             reset_done = True
         except Exception as exc:  # 复位失败绝不带着脏工作区续跑:那正是本规则要防的事
             log.exception("task %s: resume workspace reset failed", task_id)
@@ -461,6 +484,7 @@ def _decide_revalidate(
 
     try:
         reapply_candidate(run_dir / "workspace", run_dir, candidate_id)
+        _invalidate_resumed_workspace(nodes, run_dir, round_no)
     except Exception as exc:
         return _reject(f"candidate reapply failed: {exc}")
 

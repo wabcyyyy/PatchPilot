@@ -6,7 +6,7 @@ import hashlib
 import json
 from typing import TYPE_CHECKING, Any
 
-from app.context.evidence import EvidenceNotStored, build_store
+from app.context.evidence import KIND_TOOL_PAYLOAD, EvidenceNotStored, EvidenceRef, build_store
 from app.tools.paths import relpath_within
 
 if TYPE_CHECKING:
@@ -78,3 +78,17 @@ def retain_receipt(ctx: ToolContext, name: str, result: ToolResult) -> None:
         )
     except EvidenceNotStored as exc:
         result.evidence = exc.ref
+    except OSError as exc:
+        data = raw.encode("utf-8", errors="replace")
+        result.evidence = EvidenceRef(
+            evidence_id="",
+            task_id=ctx.task_id,
+            source=name,
+            kind=KIND_TOOL_PAYLOAD,
+            workspace_revision=ctx.workspace_revision,
+            sha256=hashlib.sha256(data).hexdigest(),
+            raw_bytes=len(data),
+            raw_lines=len(data.splitlines()),
+            retrievable=False,
+            reason=f"evidence persistence failed: {type(exc).__name__}",
+        )

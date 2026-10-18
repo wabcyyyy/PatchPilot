@@ -23,8 +23,13 @@ def _tests(run_dir: Path, label: str, report: dict[str, Any]) -> dict[str, Any]:
         return {"status": "not_run", "artifact": None}
     parsed = parse_junit_xml(path)
     key = "verify_failed_ok" if label == "failed" else "verify_regression_ok"
+    # XML counts alone cannot confirm requested identities, timeout or cancellation.
+    # A false/default flag with green XML is inconclusive, not a failed test.
+    status = "failed" if parsed.failed or parsed.errors or parsed.skipped else "inconclusive"
+    if report.get(key) and parsed.all_passed:
+        status = "passed"
     return {
-        "status": "passed" if report.get(key) else "failed",
+        "status": status,
         "artifact": path.relative_to(run_dir).as_posix(),
         "passed": parsed.passed,
         "failed": parsed.failed,
