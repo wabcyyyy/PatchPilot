@@ -650,7 +650,7 @@ def _record_memory(
     )
     if isinstance(model_payload(result), dict):
         result.visible = {**model_payload(result), "_memory_refs": [entry.ref]}
-        if ref is not None:
+        if ref is not None and not ref.retrievable:
             result.visible["evidence"] = ref.as_dict()
     if name == "read_evidence" and isinstance(result.output, dict):
         entry.stale = bool(result.output.get("stale"))

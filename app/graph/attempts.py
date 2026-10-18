@@ -49,11 +49,14 @@ class AttemptRecord:
         return reference
 
 
-def repeated_patch(attempts: list[dict[str, Any]]) -> bool:
-    if len(attempts) < 2:
+def repeated_patch(attempts: list[dict[str, Any]], *, limit: int = 2) -> bool:
+    if limit < 2 or len(attempts) < limit:
         return False
-    previous, current = attempts[-2:]
-    return bool(current.get("changed_files")) and previous["patch_hash"] == current["patch_hash"]
+    window = attempts[-limit:]
+    current = window[-1]
+    return bool(current.get("changed_files")) and all(
+        attempt["patch_hash"] == current["patch_hash"] for attempt in window
+    )
 
 
 def negative_memory(attempts: list[dict[str, Any]]) -> str:

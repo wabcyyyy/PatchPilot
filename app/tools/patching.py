@@ -96,6 +96,10 @@ def apply_patch(ctx: ToolContext, patch_text: str) -> ToolResult:
     try:
         diff_text = compile_block_patch(ctx.workspace, sections, validate_python=True)
     except BlockPatchError as exc:
+        if exc.reason == "python_syntax_error":
+            # Preflight moves the rejection earlier, preserving the existing
+            # invalid-candidate signal used by adaptive replanning.
+            ctx.patch_fail_streak += 1
         return ToolResult.fail(_block_rejected(exc))
 
     gate = run_gates(

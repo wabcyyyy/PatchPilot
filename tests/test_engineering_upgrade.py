@@ -208,12 +208,16 @@ def test_graph_failure_memory_reaches_next_plan_and_exports_real_results(tmp_pat
     assert (run_dir / "patch.diff").read_bytes() == (run_dir / "diff.patch").read_bytes()
 
 
-def test_same_failed_candidate_stops_on_second_attempt(tmp_path: Path) -> None:
+def test_same_failed_candidate_stops_on_second_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.config import get_settings
     from app.evals.bugset import load_bug
     from app.graph.runner import run_task_graph
     from app.llm.fake import FakeLLM
     from scripts.sample_run import sample_script
 
+    monkeypatch.setattr(get_settings(), "max_identical_failures", 2)
     script = sample_script()
     first_failure = script[:8]
     # G14 retains the named candidate. Resubmitting it unchanged must not spend round 3.

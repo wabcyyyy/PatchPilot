@@ -2207,17 +2207,26 @@ class TaskNodes:
             state="VERIFY",
             output_summary=reference,
         )
-        if repeated_patch(attempts):
+        duplicate_limit = int(self._policy_value("max_identical_failures") or 0)
+        if (
+            duplicate_limit > 0
+            and state["round_no"] < self.max_rounds
+            and not self._should_branch(state)
+            and repeated_patch(attempts, limit=max(2, duplicate_limit))
+        ):
+            error = (
+                f"same ineffective patch generated {max(2, duplicate_limit)} times consecutively"
+            )
             self.tracker.record(
                 tool="bounded_stop",
                 round_no=state["round_no"],
                 state="VERIFY",
-                error="same ineffective patch generated twice consecutively",
+                error=error,
             )
             return {
                 "status": "NEEDS_REVIEW",
                 "outcome": "needs_review",
-                "error": "same ineffective patch generated twice consecutively",
+                "error": error,
                 "preserved_diff": diff,
                 "attempts": attempts,
             }

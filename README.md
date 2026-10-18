@@ -83,8 +83,7 @@
 
 工程升级细节见[任务说明](docs/work-notes/engineering-upgrade-2026-10-18.md)：符号检索可用
 `include_details=true` 获取精确源码区间、签名、Docstring 和片段；块编辑在内存预检语法，
-证据按文件 hash 失效，旧工具消息按引用折叠。graph 将失败候选留档传入重规划，并在连续
-两次相同无效补丁时停止。两引擎自动导出 `patch.diff`、`trajectory.json` 和
+证据按文件 hash 失效，旧工具消息按引用折叠。graph 将失败候选留档传入重规划，并按已有重复失败阈值停止（0 关闭，设为 2 时可第二次停止），保留分支与轮数优先级。两引擎自动导出 `patch.diff`、`trajectory.json` 和
 `evaluation_report.json`，原有 `diff.patch`、JSONL 轨迹和 `report.json` 继续保留。
 
 ```bash
